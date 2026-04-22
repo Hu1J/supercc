@@ -24,8 +24,8 @@ def _resolve_path(file_path: str) -> str:
     # 相对路径：尝试从 config 里的 approved_directory 解析
     candidates = []
     try:
-        from supercc.config import load_config, resolve_config_path
-        cfg_path, data_dir = resolve_config_path()
+        from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
+        cfg_path, _ = resolve_config_path()
         config = load_config(cfg_path)
         approved = config.claude.approved_directory
         if approved:
@@ -63,8 +63,8 @@ def _get_session_manager() -> "SessionManager":
     """延迟初始化 SessionManager。"""
     from supercc.config import resolve_config_path
     from supercc.claude.session_manager import SessionManager
-    _, data_dir = resolve_config_path()
-    db_path = os.path.join(data_dir, "sessions.db")
+    _, _ = resolve_config_path()
+    db_path = SESSIONS_DB_PATH
     return SessionManager(db_path=db_path)
 
 

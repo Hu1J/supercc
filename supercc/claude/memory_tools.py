@@ -241,9 +241,9 @@ _mcp_server_lock = threading.Lock()
 def _get_user_open_id() -> str | None:
     """从当前活跃会话获取 user_open_id。"""
     from supercc.claude.session_manager import SessionManager
-    from supercc.config import resolve_config_path
-    _, data_dir = resolve_config_path()
-    db_path = os.path.join(data_dir, "sessions.db")
+    from supercc.config import resolve_config_path, SESSIONS_DB_PATH
+    _, _ = resolve_config_path()
+    db_path = SESSIONS_DB_PATH
     sm = SessionManager(db_path=db_path)
     session = sm.get_active_session_by_chat_id()
     return session.user_id if session else None

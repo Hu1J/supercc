@@ -90,7 +90,7 @@ import filelock
 
 _active_lock: "filelock.FileLock | None" = None
 
-from supercc.config import load_config, resolve_config_path
+from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
 from supercc.feishu.client import FeishuClient, IncomingMessage
 from supercc.feishu.ws_client import FeishuWSClient
 from supercc.feishu.message_handler import MessageHandler
@@ -153,7 +153,7 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
 
 def _get_active_chat_id(data_dir: str) -> str | None:
     """Get the most recent active session's chat_id."""
-    db_path = os.path.join(data_dir, "sessions.db")
+    db_path = SESSIONS_DB_PATH
     if not os.path.exists(db_path):
         return None
     try:
@@ -221,7 +221,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
         max_turns=config.claude.max_turns,
         approved_directory=config.claude.approved_directory,
     )
-    db_path = os.path.join(data_dir, "sessions.db")
+    db_path = SESSIONS_DB_PATH
     session_manager = SessionManager(db_path=db_path)
     formatter = ReplyFormatter()
 
@@ -501,9 +501,9 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     from supercc.config import load_config
     config = load_config(config_path)
 
-    # 2. Locate sessions.db (in {project}/.supercc/)
+    # 2. Locate sessions.db (in ~/.supercc/)
     data_dir = str(Path(config_path).parent.resolve())
-    db_path = os.path.join(data_dir, "sessions.db")
+    db_path = SESSIONS_DB_PATH
     if not os.path.exists(db_path):
         print("Error: sessions.db not found. Has SuperCC ever been run?")
         return
@@ -947,7 +947,7 @@ def main(args=None):
         try:
             cfg_path, data_dir = resolve_config_path()
             config = load_config(cfg_path)
-            db_path = os.path.join(data_dir, "sessions.db")
+            db_path = SESSIONS_DB_PATH
 
             from supercc.feishu.client import FeishuClient
             from supercc.claude.session_manager import SessionManager

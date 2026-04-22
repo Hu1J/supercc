@@ -8,7 +8,8 @@ This directory is created automatically by `supercc` and contains the config for
 - `skills/` — Private skills for this project
 - `cron_jobs.json` — Cron job definitions
 
-Note: sessions.db, memories.db, and logs live in {project}/.supercc/ (per-project).
+Note: sessions.db and memories.db live in ~/.supercc/ (home dir, shared across projects).
+Other data (cron, logs, skills, media, pid) lives in {project}/.supercc/.
 
 ## Git Ignore
 

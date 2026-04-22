@@ -29,14 +29,14 @@ _CST = ZoneInfo("Asia/Shanghai")
 from pathlib import Path
 from typing import Optional
 
-from supercc.config import Config
+from supercc.config import Config, SESSIONS_DB_PATH
 from supercc.claude.integration import ClaudeIntegration
 from supercc.feishu.client import FeishuClient
 
 
 def _get_active_chat_id(data_dir: str) -> str | None:
     """Get the most recent active session's chat_id."""
-    db_path = os.path.join(data_dir, "sessions.db")
+    db_path = SESSIONS_DB_PATH
     if not os.path.exists(db_path):
         return None
     try:

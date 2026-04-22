@@ -7,6 +7,9 @@ from typing import List, Dict
 
 import yaml
 
+# sessions.db 固定放在家目录下，不同项目通过 session.project_path 区分
+SESSIONS_DB_PATH = str(Path.home() / ".supercc" / "sessions.db")
+
 
 @dataclass
 class GroupConfigEntry:
@@ -44,7 +47,7 @@ class ClaudeConfig:
 
 @dataclass
 class StorageConfig:
-    db_path: str = "~/.supercc/sessions.db"
+    db_path: str = SESSIONS_DB_PATH
 
 
 @dataclass
@@ -211,7 +214,8 @@ This directory is created automatically by `supercc` and contains the config for
 - `skills/` — Private skills for this project
 - `cron_jobs.json` — Cron job definitions
 
-Note: sessions.db, memories.db, and logs live in {project}/.supercc/ (per-project).
+Note: sessions.db and memories.db live in ~/.supercc/ (home dir, shared across projects).
+Other data (cron, logs, skills, media, pid) lives in {project}/.supercc/.
 
 ## Git Ignore
 
