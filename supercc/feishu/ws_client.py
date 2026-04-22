@@ -8,7 +8,9 @@ import re
 from typing import Callable, Awaitable
 from unittest.mock import MagicMock
 
+import yaml
 import lark_oapi as lark
+
 
 from supercc.feishu.client import IncomingMessage
 
@@ -99,6 +101,7 @@ class FeishuWSClient:
         bot_open_id: str = "",
         domain: str = "feishu",
         on_message: MessageCallback | None = None,
+        config_path: str = "",
     ):
         self.app_id = app_id
         self.app_secret = app_secret
@@ -109,6 +112,7 @@ class FeishuWSClient:
         self._ws_client = None
         self._handler = None
         self._probed_bot_open_id: str | None = None
+        self._config_path = config_path
 
     @property
     def bot_open_id(self) -> str:
@@ -146,11 +150,30 @@ class FeishuWSClient:
                 if bot_id:
                     self._probed_bot_open_id = bot_id
                     logger.info(f"Auto-probed bot_open_id: {self._probed_bot_open_id}")
+                    self._write_back_bot_open_id(bot_id)
                     return self._probed_bot_open_id
             logger.warning(f"bot probe API failed: code={resp.code} msg={getattr(resp, 'msg', '')}")
         except Exception as e:
             logger.warning(f"bot probe API error: {e}")
         return None
+
+    def _write_back_bot_open_id(self, bot_id: str) -> None:
+        """Write the probed bot_open_id back to config.yaml if config_path is set."""
+        if not self._config_path:
+            return
+        try:
+            with open(self._config_path) as f:
+                raw = yaml.safe_load(f)
+            if raw.get("feishu", {}).get("bot_open_id") == bot_id:
+                return  # already set to same value
+            if "feishu" not in raw:
+                raw["feishu"] = {}
+            raw["feishu"]["bot_open_id"] = bot_id
+            with open(self._config_path, "w") as f:
+                yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+            logger.info(f"Wrote bot_open_id={bot_id} back to {self._config_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write bot_open_id back to config: {e}")
 
     def _build_event_handler(self):
         """Build EventDispatcherHandler with p2p message callback registered."""
