@@ -61,7 +61,7 @@ class SwitchResult:
 
 def _pid_file_path(project_path: str) -> str:
     """Return the PID file path for a project."""
-    return os.path.join(Path.home(), ".supercc", "supercc.pid")
+    return os.path.join(project_path, ".supercc", "supercc.pid")
 
 
 def _config_file_path(project_path: str) -> str:
@@ -152,7 +152,7 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
         raw["claude"] = {}
     raw["claude"]["approved_directory"] = target_path
 
-    # Remove storage section (sessions now live in ~/.supercc/)
+    # Remove storage section (sessions now live in per-project .supercc/)
     raw.pop("storage", None)
 
     # Ensure .supercc dir exists in target
@@ -175,7 +175,7 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
     Path(pid_file).unlink(missing_ok=True)
 
     # Start SuperCC via the installed binary
-    data_dir = os.path.join(Path.home(), ".supercc")
+    data_dir = os.path.join(target_path, ".supercc")
     stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
     proc = subprocess.Popen(

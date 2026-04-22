@@ -211,7 +211,7 @@ This directory is created automatically by `supercc` and contains the config for
 - `skills/` — Private skills for this project
 - `cron_jobs.json` — Cron job definitions
 
-Note: sessions.db, memories.db, and logs live in ~/.supercc/ (shared across all instances).
+Note: sessions.db, memories.db, and logs live in {project}/.supercc/ (per-project).
 
 ## Git Ignore
 
@@ -224,7 +224,7 @@ def resolve_config_path() -> tuple[str, str]:
     """Resolve config and data directories.
 
     Config lives in project dir: {cwd}/.supercc/config.yaml
-    Data (sessions, logs, PID) lives in home dir: ~/.supercc/
+    Data (sessions, logs, PID) also lives in {cwd}/.supercc/.
 
     Auto-creates both directories if not found.
     """
@@ -237,6 +237,5 @@ def resolve_config_path() -> tuple[str, str]:
     readme_path = cfg_dir / "README.md"
     readme_path.write_text(README_CONTENT, errors="replace")
 
-    data_dir = str(Path.home() / ".supercc")
-    Path(data_dir).mkdir(exist_ok=True)
+    data_dir = str(cfg_dir)
     return (str(cfg_path), data_dir)

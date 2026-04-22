@@ -56,7 +56,7 @@ class RestartResult:
 
 def _pid_file_path(project_path: str) -> str:
     """Return the PID file path for a project."""
-    return os.path.join(Path.home(), ".supercc", "supercc.pid")
+    return os.path.join(project_path, ".supercc", "supercc.pid")
 
 
 def _read_pid(pid_file: str) -> Optional[int]:
@@ -126,7 +126,7 @@ def _restart_to(file_lock=None, package: str = "supercc"):
     Yields RestartStep objects (5 steps total).
     """
     current_path = os.getcwd()
-    data_dir = os.path.join(Path.home(), ".supercc")
+    data_dir = os.path.join(current_path, ".supercc")
     pid_file = os.path.join(data_dir, "supercc.pid")
     instance_lock = os.path.join(data_dir, ".instance.lock")
 
@@ -266,7 +266,7 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
 
     Note: caller is responsible for cleaning up stale pid/lock files before calling.
     """
-    data_dir = os.path.join(Path.home(), ".supercc")
+    data_dir = os.path.join(project_path, ".supercc")
     pid_file = os.path.join(data_dir, "supercc.pid")
 
     stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")

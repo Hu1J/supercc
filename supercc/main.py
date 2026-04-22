@@ -1,7 +1,6 @@
 """CLI entry point — starts WebSocket long connection to Feishu.
 
-Config is stored in .supercc/ subdirectory of the current working directory.
-Sessions and data live in ~/.supercc/.
+Config, sessions, and data all live in .supercc/ subdirectory of the current working directory.
 """
 from __future__ import annotations
 
@@ -437,10 +436,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
 
 def list_bridges() -> None:
-    """List SuperCC instances by checking the global ~/.supercc/ directory."""
-    home_data_dir = os.path.join(Path.home(), ".supercc")
-    pid_file = os.path.join(home_data_dir, "supercc.pid")
-    print(f"\nSuperCC data directory: {home_data_dir}")
+    """List SuperCC instances by checking the current directory's .supercc/ directory."""
+    project_data_dir = os.path.join(os.getcwd(), ".supercc")
+    pid_file = os.path.join(project_data_dir, "supercc.pid")
+    print(f"\nSuperCC data directory: {project_data_dir}")
     print(f"{'PID':<8} {'Status':<20}")
     print("-" * 40)
 
@@ -502,7 +501,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     from supercc.config import load_config
     config = load_config(config_path)
 
-    # 2. Locate sessions.db (in ~/.supercc/)
+    # 2. Locate sessions.db (in {project}/.supercc/)
     data_dir = str(Path(config_path).parent.resolve())
     db_path = os.path.join(data_dir, "sessions.db")
     if not os.path.exists(db_path):
