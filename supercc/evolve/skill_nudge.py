@@ -169,6 +169,8 @@ SKILL_NUDGE_PROMPT = """\
 - 只创建真正有价值的 Skill，不要为了"有"而创建
 - 如果有相关 Skill 已存在，优先更新它而不是创建新的
 - 更新 Skill 时只改正文 instructions，不要动 frontmatter 的 name/description
+- **删除**：Skill 只有在确定无价值时才删除，且**删除前必须先向用户确认**，得到肯定答复后再执行删除
+- 新建和更新不需要确认，发现就直接做
 """
 
 

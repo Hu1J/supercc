@@ -124,29 +124,45 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
         logger.info("[skill_optimize] job already registered, skipping")
         return
 
-    prompt = """【Skill 优化扫描】
+    prompt = """【Skill 优化扫描 — 直接动手，不要只给建议】
 
-请扫描 {SKILLS_DIR}/ 目录下所有 Skill，分析哪些值得更新或新建。
+你是熟练的工程师，直接动手解决问题，不要只给建议。发现确定的问题就立即修复。
 
 **操作步骤：**
 1. 先查看 {SKILLS_DIR}/ 目录下已有的 Skill
-2. 把完整内容直接写入 {SKILLS_DIR}/<skill-name>/SKILL.md
-3. 格式：YAML frontmatter (name/description/author/version) + Markdown body
-4. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，在 {SKILLS_DIR}/ 目录下执行 `git add <skill-name>/ && git commit -m "<中文 commit message>"`，commit message 必须用中文，清晰说明本次改动内容
+2. 发现有以下情况就直接动手：
+   - **过时/错误内容** → 直接更新 SKILL.md（不要给建议）
+   - **多个 Skill 内容重复** → 合并到最完整的一个，删除其余
+   - **发现新的值得推广的模式** → 直接新建 Skill
+   - **Skill 内容已无价值** → **必须先问用户确认**（删除是唯一需要确认的操作）
 
-请给出优化建议列表。"""
+3. 删除前必须先向用户确认，格式：
+   ```
+   发现 Skill「<skill-name>」可能过时，确定要删除吗？
+   ```
+   用户确认后才能删除，用户拒绝则跳过
+
+4. 每次操作后立即 `git add` + `git commit`，不要等到最后才提交
+
+5. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，在 {SKILLS_DIR}/ 目录下执行：
+   ```
+   cd {SKILLS_DIR} && git add <skill-name>/ && git commit -m "<中文 commit message>"
+   ```
+   commit message 必须用中文，清晰说明本次改动内容
+
+完成后输出简短报告：做了哪些新建/更新/合并/删除操作。"""
 
     try:
         create_job(
             prompt=prompt,
-            schedule="0 3 * * *",  # 每天凌晨3点执行
+            schedule="0 9 * * *",  # 每天早上9点执行
             chat_id=chat_id,
             name="Skill 优化扫描",
             repeat=None,
             data_dir=data_dir,
-            notify_at="0 9 * * *",  # 早上9点通知结果
+            verbose=True,  # 流式推送 tool calls 到飞书
         )
-        logger.info("[skill_optimize] registered daily scan at 3am, notify at 9am")
+        logger.info("[skill_optimize] registered daily scan at 9am")
     except Exception as e:
         logger.warning(f"[skill_optimize] failed to register: {e}")
 
@@ -226,7 +242,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
     formatter = ReplyFormatter()
 
     # Initialize Hermes-style skill nudge
-    from supercc.skill_nudge import make_nudge
+    from supercc.evolve.skill_nudge import make_nudge
     skill_nudge = make_nudge(config.skill_nudge)
 
     handler = MessageHandler(
@@ -421,14 +437,14 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     cron_scheduler.start()
 
     # Ensure skills directory is a git repo (init if needed)
-    from supercc.skill_nudge import _ensure_skills_git_repo
+    from supercc.evolve.skill_nudge import _ensure_skills_git_repo
     _ensure_skills_git_repo(Path(data_dir) / "skills")
 
     # Register daily skill optimization scan
     _register_skill_optimization_job(data_dir, cron_scheduler)
 
     # Register nightly dream job (memory refinement at 3am)
-    from supercc.dream import register_dream_job
+    from supercc.evolve.dream import register_dream_job
     register_dream_job(data_dir)
 
     # CLI 进程在第一条消息到达时才会建立连接（_ensure_connected 懒加载）。

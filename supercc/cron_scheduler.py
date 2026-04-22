@@ -628,7 +628,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     # Snapshot before state for skill scan jobs
     before_state = None
     if is_skill_scan:
-        from supercc.skill_nudge import _get_skill_git_state
+        from supercc.evolve.skill_nudge import _get_skill_git_state
         before_state = _get_skill_git_state(skills_dir)
         prompt = prompt.replace("{SKILLS_DIR}", str(skills_dir))
 
@@ -717,7 +717,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
         # For skill scan jobs, detect changes via git state comparison
         if is_skill_scan and before_state is not None:
-            from supercc.skill_nudge import _detect_skill_changes
+            from supercc.evolve.skill_nudge import _detect_skill_changes
             from supercc.adapter.feishu.format.reply_formatter import should_use_card
 
             async def _skill_send(cid, text):
@@ -893,7 +893,7 @@ class CronScheduler:
         # Poll skill changes on every tick (independent of job scheduling)
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
-            from supercc.skill_nudge import poll_skill_changes_and_notify
+            from supercc.evolve.skill_nudge import poll_skill_changes_and_notify
             from supercc.adapter.feishu.client import FeishuClient
             feishu = FeishuClient(
                 app_id=self.config.channels.feishu.app_id,

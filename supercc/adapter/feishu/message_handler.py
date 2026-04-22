@@ -17,7 +17,7 @@ from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUID
 from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
 from supercc.claude.cron_tools import CRON_GUIDE
 from supercc.claude.session_manager import SessionManager
-from supercc.skill_nudge import SkillNudge, trigger_skill_review
+from supercc.evolve.skill_nudge import SkillNudge, trigger_skill_review
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
