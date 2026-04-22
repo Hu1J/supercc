@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-23
+
+### Fixed
+
+- **restart bug 彻底修复**：`restarter.py` 中 `_start_bridge()` 改用 `sys.executable -m supercc start` 启动新实例，彻底解决 `pysupercc` 命令不存在导致的 `[Errno 2] No such file or directory` 错误。`supercc/__init__.py` 中 `__version__` 直接使用 `pysupercc` 包名查询版本，不再有 supercc fallback。
+
 ## [0.1.0] - 2026-04-22
 
 ### Added
