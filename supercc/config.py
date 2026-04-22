@@ -99,6 +99,15 @@ def load_config(path: str, data_dir: str = "") -> Config:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
+    # Migrate old-format config (feishu at top level) to new channels: format
+    if "channels" not in raw and "feishu" in raw:
+        raw["channels"] = {
+            "feishu": raw.pop("feishu"),
+            "dingtalk": {"enabled": False},
+        }
+        with open(path, "w") as f:
+            yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
     # Deserialize groups: convert raw dicts to GroupConfigEntry objects
     # Filter out unknown fields to tolerate future config additions gracefully.
     _known_group_keys = {"enabled", "require_mention", "allow_from"}

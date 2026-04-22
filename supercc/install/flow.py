@@ -70,14 +70,22 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
             existing = yaml.safe_load(f) or {}
 
     config = {
-        "feishu": {
-            "app_id": result.app_id,
-            "app_secret": result.app_secret,
-            "bot_name": "Claude",
-            "bot_open_id": "",  # auto-probed at startup; manual override goes here
-            "domain": result.domain,
-            # Preserve existing groups (auto-registered group chat configs)
-            "groups": existing.get("feishu", {}).get("groups", {}),
+        "channels": {
+            "feishu": {
+                "enabled": True,
+                "app_id": result.app_id,
+                "app_secret": result.app_secret,
+                "bot_name": "Claude",
+                "bot_open_id": "",  # auto-probed at startup; manual override goes here
+                "domain": result.domain,
+                # Preserve existing groups (auto-registered group chat configs)
+                "groups": existing.get("channels", {}).get("feishu", {}).get("groups", {})
+                          if isinstance(existing.get("channels"), dict)
+                          else existing.get("feishu", {}).get("groups", {}),
+            },
+            "dingtalk": {
+                "enabled": False,
+            },
         },
         "auth": {
             "allowed_users": [result.user_open_id],
