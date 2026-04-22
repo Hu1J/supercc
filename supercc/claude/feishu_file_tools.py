@@ -13,7 +13,7 @@ MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
 def _resolve_path(file_path: str) -> str:
     """将相对路径尝试解析为绝对路径。
 
-    尝试顺序：原始路径 → 当前工作目录 → bridge 配置的 approved_directory。
+    尝试顺序：原始路径 → 当前工作目录 → SuperCC 配置的 approved_directory。
     只在相对路径且原路径不存在时才尝试解析。
     """
     if os.path.isabs(file_path) and os.path.exists(file_path):
