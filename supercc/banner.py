@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -149,6 +150,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     """Build and print a welcome banner — dragon art + project path only."""
     import os
     import shutil
+    import subprocess
     tools = tools or []
 
     # Dynamically center logo in terminal width
@@ -160,16 +162,32 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     leading = max(0, (content_width - logo_width) // 2)
     centered_logo = '\n'.join([(' ' * leading) + line for line in logo_lines])
 
+    # Get current git branch
+    git_branch = ""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, timeout=5,
+            cwd=cwd
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            git_branch = result.stdout.strip()
+    except Exception:
+        pass
+
+    slogan = "[dim #C9A457]自进化超级 AI · 越用越懂你[/]"
+    branch_display = git_branch if git_branch else "无 git 仓库"
+    info_line = f"[dim #8B7355]当前项目: {cwd}  Git分支: [dim #C9A457]{branch_display}[/]"
+
     layout = Table.grid(padding=(0, 1))
     layout.add_column(justify="left")
     layout.add_row(centered_logo)
-    layout.add_row(f"[dim #888]{cwd}[/]")
 
     title_color = "#FFD700"
     border_color = "#CD7F32"
     outer = Panel(
         layout,
-        title=f"[bold {title_color}]{model} · Hu1J[/]",
+        title=f"[bold {title_color}]🐲 {model} · Hu1J[/]",
         border_style=border_color,
         padding=(1, 2),
     )
@@ -177,6 +195,9 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     try:
         console.print()
         console.print(outer)
+        console.print(Align.center(slogan))
+        console.print()  # 空行
+        console.print(Align.center(info_line))
         console.print()
     except (OSError, IOError):
         pass
