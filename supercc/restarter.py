@@ -344,25 +344,6 @@ def check_version() -> tuple[str, str]:
         raise RestartError(f"检查版本失败: {e}")
 
 
-def check_supercc() -> tuple[bool, str]:
-    """Check if supercc package exists on PyPI.
-
-    Returns (exists, latest_version). version is "unknown" if we can't determine.
-    """
-    import httpx
-    try:
-        response = httpx.get(
-            "https://pypi.org/pypi/supercc/json",
-            timeout=15,
-        )
-        if response.status_code == 200:
-            latest_ver = response.json()["info"]["version"]
-            return (True, latest_ver)
-        return (False, "unknown")
-    except Exception:
-        return (False, "unknown")
-
-
 # Step labels for update CLI display
 _UPDATE_CLI_STEP_LABELS = [
     "检查更新", "检查新版本", "下载完成",
@@ -391,8 +372,7 @@ class UpdateStep:
 def _do_update(file_lock=None):
     """Check version, install update if needed, restart.
 
-    Yields UpdateStep. When supercc exists on PyPI, installs supercc instead of
-    supercc (migration has already been run by the caller beforehand).
+    Yields UpdateStep.
     """
     import packaging.version
 
@@ -406,24 +386,12 @@ def _do_update(file_lock=None):
     )
 
     has_update = packaging.version.parse(latest_ver) > packaging.version.parse(current_ver)
-    supercc_exists, supercc_ver = check_supercc()
 
-    if supercc_exists:
-        # supercc 优先：迁移已由调用方提前执行，直接安装 supercc
-        package = "supercc"
-        yield UpdateStep(
-            step=2, total=8,
-            label=_UPDATE_CLI_STEP_LABELS[1],
-            status="done",
-            detail=f"supercc {current_ver} → supercc {supercc_ver}",
-        )
-        _pip_install("supercc")
-    elif has_update:
-        # 正常更新 supercc
-        package = "supercc"
+    if has_update:
+        package = "pysupercc"
         yield UpdateStep(step=2, total=8, label=_UPDATE_CLI_STEP_LABELS[1], status="done",
                         detail=f"{current_ver} → {latest_ver}")
-        _pip_install("supercc")
+        _pip_install(package)
     else:
         # 已是最新，无需更新
         yield UpdateStep(
@@ -472,7 +440,6 @@ async def run_update(file_lock, feishu: "FeishuClient",
 
     Sends a rich progress card to Feishu, updating it as each step completes.
     When status == "skip" (already latest), sends an "already latest" card and returns.
-    When supercc exists on PyPI, runs migration first then installs supercc automatically.
 
     Returns:
         True if an actual update (pip install) was performed, False if already latest (skipped).
@@ -482,21 +449,6 @@ async def run_update(file_lock, feishu: "FeishuClient",
 
     current_path = os.getcwd()
     total = 8
-
-    # 检查是否需要迁移到 supercc
-    current_ver, latest_ver = check_version()
-    supercc_exists, supercc_ver = check_supercc()
-    import packaging.version
-    has_update = packaging.version.parse(latest_ver) > packaging.version.parse(current_ver)
-    migrating_to_supercc = supercc_exists
-
-    # 如果 supercc 存在，先运行迁移（必须在 pip install 之前）
-    if migrating_to_supercc:
-        from supercc.migration import run_migration, MigrationError
-        try:
-            run_migration(current_path)
-        except MigrationError as e:
-            logger.warning(f"Migration failed: {e}")
 
     for step_obj in _do_update(file_lock=file_lock):
         if step_obj.status == "skip":
@@ -514,20 +466,12 @@ async def run_update(file_lock, feishu: "FeishuClient",
                  else f"步骤 {step_obj.step}")
 
         if step_obj.status == "final":
-            if migrating_to_supercc:
-                final_card = (
-                    f"## ✅ 迁移完成\n\n"
-                    f"**当前目录**: `{current_path}`\n"
-                    f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                    f"🎉 已升级到 SuperCC，继续在飞书中对话吧。"
-                )
-            else:
-                final_card = (
-                    f"## ✅ 更新完成\n\n"
-                    f"**当前目录**: `{current_path}`\n"
-                    f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                    f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
-                )
+            final_card = (
+                f"## ✅ 更新完成\n\n"
+                f"**当前目录**: `{current_path}`\n"
+                f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
+                f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
+            )
             await feishu.send_interactive_reply(chat_id, final_card, reply_to_message_id)
         else:
             detail_line = (
@@ -555,7 +499,6 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
 
     When status == "skip", sends "already latest" card and returns immediately
     without sending progress cards.
-    When supercc exists on PyPI, runs migration first then installs supercc automatically.
     """
     import asyncio
     import logging
@@ -572,21 +515,6 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
                 await feishu.send_interactive_reply(chat_id, card_md, "")
             except Exception:
                 pass  # non-fatal, CLI continues
-
-        # 检查是否需要迁移到 supercc
-        current_ver, latest_ver = check_version()
-        supercc_exists, supercc_ver = check_supercc()
-        import packaging.version
-        has_update = packaging.version.parse(latest_ver) > packaging.version.parse(current_ver)
-        migrating_to_supercc = supercc_exists
-
-        # 如果 supercc 存在，先运行迁移（必须在 pip install 之前）
-        if migrating_to_supercc:
-            from supercc.migration import run_migration, MigrationError
-            try:
-                run_migration(os.getcwd())
-            except MigrationError as e:
-                logger.warning(f"Migration failed: {e}")
 
         # Materialize steps to check final status before sending any cards
         steps = list(_do_update(file_lock=file_lock))
@@ -618,20 +546,12 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
                      else f"步骤 {step_obj.step}")
 
             if step_obj.status == "final":
-                if migrating_to_supercc:
-                    card = (
-                        f"## ✅ 迁移完成\n\n"
-                        f"**当前目录**: `{os.getcwd()}`\n"
-                        f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                        f"🎉 已升级到 SuperCC，继续在飞书中对话吧。"
-                    )
-                else:
-                    card = (
-                        f"## ✅ 更新完成\n\n"
-                        f"**当前目录**: `{os.getcwd()}`\n"
-                        f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                        f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
-                    )
+                card = (
+                    f"## ✅ 更新完成\n\n"
+                    f"**当前目录**: `{os.getcwd()}`\n"
+                    f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
+                    f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
+                )
                 await _send(card)
             else:
                 detail_line = (
