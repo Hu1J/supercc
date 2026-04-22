@@ -1,7 +1,7 @@
 [project]
-name = "cc-feishu-bridge"
-version = "0.6.5"
-description = "Claude Code Feishu Bridge — 在飞书中与本地 Claude Code 对话"
+name = "supercc"
+version = "0.1.0"
+description = "SuperCC — 在飞书中与本地 Claude Code 对话，具备记忆自优化和技能自进化能力"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -23,7 +23,7 @@ authors = [
 ]
 
 [project.scripts]
-cc-feishu-bridge = "cc_feishu_bridge.main:main"
+supercc = "cc_feishu_bridge.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

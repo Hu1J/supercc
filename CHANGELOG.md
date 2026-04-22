@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-22
+
+### Added
+
+- **SuperCC 正式发布**：从 cc-feishu-bridge 迁移而来首个版本，功能与 cc-feishu-bridge v0.6.5 完全一致，后续将在此仓库独立开发。
+
+### Note
+
+此仓库从 cc-feishu-bridge 迁移，版本号重置为 0.1.0。cc-feishu-bridge 已停止维护。
+
 ## [0.6.5] - 2026-04-22
 
 ### Added
