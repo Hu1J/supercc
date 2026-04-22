@@ -13,3 +13,4 @@ build/
 .superpowers/
 .DS_Store
 .gstack/
+.supercc/
