@@ -8,7 +8,6 @@ import re
 from typing import Callable, Awaitable
 from unittest.mock import MagicMock
 
-import yaml
 import lark_oapi as lark
 
 
@@ -162,24 +161,12 @@ class FeishuWSClient:
         if not self._config_path:
             return
         try:
-            with open(self._config_path) as f:
-                raw = yaml.safe_load(f)
-
-            # Migrate old-format config to new channels: format
-            if "channels" not in raw and "feishu" in raw:
-                raw["channels"] = {
-                    "feishu": raw.pop("feishu"),
-                    "dingtalk": {"enabled": False},
-                }
-
-            feishu_cfg = raw.get("channels", {}).get("feishu", {})
-            if feishu_cfg.get("bot_open_id") == bot_id:
+            from supercc.config import load_config, write_config
+            cfg = load_config(self._config_path)
+            if cfg.channels.feishu.bot_open_id == bot_id:
                 return  # already set to same value
-            if "channels" not in raw:
-                raw["channels"] = {"feishu": {}, "dingtalk": {"enabled": False}}
-            raw["channels"]["feishu"]["bot_open_id"] = bot_id
-            with open(self._config_path, "w") as f:
-                yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+            cfg.channels.feishu.bot_open_id = bot_id
+            write_config(self._config_path, cfg)
             logger.info(f"Wrote bot_open_id={bot_id} back to {self._config_path}")
         except Exception as e:
             logger.warning(f"Failed to write bot_open_id back to config: {e}")
