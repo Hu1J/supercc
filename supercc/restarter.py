@@ -259,7 +259,7 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
 
     Args:
         project_path: Path to the project directory.
-        package: Package name to start (determines binary).
+        package: Unused, kept for backward compat.
         timeout: Timeout in seconds.
 
     Returns the PID of the started process.
@@ -273,8 +273,7 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
     stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
     try:
-        # Use sys.executable to find the Python that has supercc installed,
-        # then run "supercc start" (the console script entry point, NOT the pip package name)
+        # Hardcode supercc — migration is done, pip package name no longer matters here
         proc = subprocess.Popen(
             [sys.executable, "-m", "supercc", "start"],
             cwd=project_path,
