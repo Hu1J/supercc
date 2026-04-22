@@ -482,12 +482,12 @@ class MessageHandler:
                 return HandlerResult(success=True)
 
             # 检查是否有新版本
-            update_note = ""
+            title = f"🐲 **SuperCC v{__version__}**"
             try:
                 from supercc.restarter import check_version
                 current_ver, latest_ver = await asyncio.to_thread(check_version)
                 if _ver_gt(current_ver, latest_ver):
-                    update_note = f"\n|  | 🌟可更新 v{latest_ver}🌟 |"
+                    title = f"🐲 **SuperCC v{__version__} — 🌟可更新 v{latest_ver}🌟**"
             except Exception:
                 pass  # 版本检查失败不影响主流程
 
@@ -500,7 +500,7 @@ class MessageHandler:
                         {
                             "tag": "markdown",
                             "content": (
-                                f"🐉 **SuperCC v{__version__}**\n\n"
+                                f"{title}\n\n"
                                 f"| 项目 | 值 |\n"
                                 f"|------|----|\n"
                                 f"| 进程ID | `{os.getpid()}` |\n"
@@ -508,7 +508,6 @@ class MessageHandler:
                                 f"| 消息数 | {session.message_count} |\n"
                                 f"| 累计费用 | `${session.total_cost:.4f}` |\n"
                                 f"| 工作目录 | `{session.project_path}` |"
-                                f"{update_note}"
                             ),
                         },
                     ]
