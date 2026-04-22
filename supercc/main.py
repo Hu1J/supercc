@@ -288,45 +288,6 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
         logger.exception(f"Error handling message: {e}")
 
 
-def ensure_skill_installed() -> None:
-    """Install or update bundled skills to ~/.claude/skills/.
-
-    Idempotent: skips individual skills if version matches.
-    Skill content is bundled inside the package so this works via pip or PyInstaller.
-    """
-    import os
-
-    skills = [
-        ("supercc.skill_md", "SKILL_MD", "SKILL_NAME", "SKILL_VERSION"),
-    ]
-
-    for module_path, md_attr, name_attr, ver_attr in skills:
-        try:
-            mod = __import__(module_path, fromlist=[md_attr, name_attr, ver_attr])
-            skill_md = getattr(mod, md_attr)
-            skill_name = getattr(mod, name_attr)
-            skill_version = getattr(mod, ver_attr)
-        except Exception:
-            logger.warning(f"Could not load skill from {module_path}, skipping.")
-            continue
-
-        dest_dir = os.path.expanduser(f"~/.claude/skills/{skill_name}")
-        dest_path = os.path.join(dest_dir, "skill.md")
-        version_marker = os.path.join(dest_dir, ".version")
-
-        current_version = ""
-        if os.path.exists(version_marker):
-            current_version = open(version_marker).read().strip()
-        if current_version == skill_version:
-            logger.info(f"Skill {skill_name} v{skill_version} already installed, skipping.")
-            continue
-
-        os.makedirs(dest_dir, exist_ok=True)
-        open(dest_path, "w", encoding="utf-8").write(skill_md)
-        open(version_marker, "w").write(skill_version)
-        logger.info(f"Installed skill {skill_name} v{skill_version} to {dest_dir}")
-
-
 def write_pid(pid_file: str) -> None:
     """Write current PID to file."""
     Path(pid_file).write_text(str(os.getpid()))
@@ -422,9 +383,6 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     signal.signal(signal.SIGTERM, cleanup)
 
     logger.info(f"Starting SuperCC (WS mode) — data: {data_dir}")
-
-    # Auto-install Claude skill for file sending
-    ensure_skill_installed()
 
     # Create media subdirectories
     for sub in ("received_images", "received_files"):

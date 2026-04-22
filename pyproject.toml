@@ -17,6 +17,7 @@ dependencies = [
     "jieba>=0.42.1",
     "scikit-learn>=1.0",
     "croniter>=2.0",
+    "rich>=13.0",
 ]
 authors = [
     { name = "Hu1J", email = "2948696442@qq.com" },
