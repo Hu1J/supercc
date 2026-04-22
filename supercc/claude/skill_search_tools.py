@@ -50,7 +50,8 @@ def _fmt_results(results: list[SkillMeta], query: str) -> str:
     "SkillSearch",
     "在网上搜索 Claude Code Skill（语义搜索或按名字搜索），并行查询多个来源："
     "skills.sh, GitHub (openai/anthropics/VoltAgent), Hermes Index, "
-    "ClawHub, Claude Marketplace, LobeHub, Well-Known Skills。",
+    "ClawHub, Claude Marketplace, LobeHub, Well-Known Skills。"
+    "搜到后安装到 ~/.claude/skills/（Claude Code 会自动加载）。",
     {"query": str, "limit": int},
 )
 async def skill_search(args: dict) -> dict:
