@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Optional
 import yaml
 
 if TYPE_CHECKING:
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
 
 
 class SwitchError(Exception): pass

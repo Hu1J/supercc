@@ -12,7 +12,7 @@ import yaml
 import lark_oapi as lark
 
 
-from supercc.feishu.client import IncomingMessage
+from supercc.adapter.feishu.client import IncomingMessage
 
 logger = logging.getLogger(__name__)
 

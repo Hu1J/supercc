@@ -50,12 +50,12 @@ FEISHU_FILE_GUIDE = """
 def _get_feishu_client() -> "FeishuClient":
     """延迟初始化 FeishuClient（读取 config.yaml）。"""
     from supercc.config import load_config, resolve_config_path
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
     cfg_path, _ = resolve_config_path()
     config = load_config(cfg_path)
     return FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
     )
 
 
@@ -77,8 +77,8 @@ def _get_chat_id() -> Optional[str]:
 
 async def _send_single_file(file_path: str, chat_id: str) -> str:
     """发送单个文件，返回 msg_id 或抛出异常。"""
-    from supercc.feishu.media import guess_file_type
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.media import guess_file_type
+    from supercc.adapter.feishu.client import FeishuClient
 
     feishu = _get_feishu_client()
     resolved_path = _resolve_path(file_path)

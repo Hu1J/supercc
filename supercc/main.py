@@ -91,10 +91,10 @@ import filelock
 _active_lock: "filelock.FileLock | None" = None
 
 from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
-from supercc.feishu.client import FeishuClient, IncomingMessage
-from supercc.feishu.ws_client import FeishuWSClient
-from supercc.feishu.message_handler import MessageHandler
-from supercc.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
+from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.ws_client import FeishuWSClient
+from supercc.adapter.feishu.message_handler import MessageHandler
+from supercc.adapter.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
@@ -208,9 +208,9 @@ class ColoredFormatter(logging.Formatter):
 def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
     """Create MessageHandler with all dependencies wired up."""
     feishu = FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
-        bot_name=config.feishu.bot_name,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
         data_dir=data_dir,
     )
     setup_error_notifier(feishu)
@@ -239,7 +239,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
         approved_directory=config.claude.approved_directory,
         config=config,
         data_dir=data_dir,
-        feishu_groups=config.feishu.groups,
+        feishu_groups=config.channels.feishu.groups,
         config_path=config_path,
         skill_nudge=skill_nudge,
     )
@@ -382,11 +382,11 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     _ensure_claude_md(config.claude.approved_directory)
 
     ws_client = FeishuWSClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
-        bot_name=config.feishu.bot_name,
-        bot_open_id=config.feishu.bot_open_id,
-        domain=config.feishu.domain,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        bot_open_id=config.channels.feishu.bot_open_id,
+        domain=config.channels.feishu.domain,
         on_message=lambda msg: handle_message(msg, handler),
         config_path=config_path,
     )
@@ -520,16 +520,16 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     print(f"Sending to chat: {chat_id}")
 
     # 4. Create FeishuClient
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
     feishu = FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
     )
 
     # 5. Process each file
     import asyncio
     try:
-        from supercc.feishu.media import guess_file_type
+        from supercc.adapter.feishu.media import guess_file_type
     except ImportError:
         guess_file_type = None
 
@@ -606,11 +606,11 @@ def _run_memory_command(args) -> None:
     try:
         cfg_path, data_dir = resolve_config_path()
         config = load_config(cfg_path)
-        from supercc.feishu.client import FeishuClient
+        from supercc.adapter.feishu.client import FeishuClient
         from supercc.claude.session_manager import SessionManager
         feishu_client = FeishuClient(
-            app_id=config.feishu.app_id,
-            app_secret=config.feishu.app_secret,
+            app_id=config.channels.feishu.app_id,
+            app_secret=config.channels.feishu.app_secret,
         )
         sm = SessionManager(db_path=os.path.join(data_dir, "sessions.db"))
         session = sm.get_active_session_by_chat_id()
@@ -950,11 +950,11 @@ def main(args=None):
             config = load_config(cfg_path)
             db_path = SESSIONS_DB_PATH
 
-            from supercc.feishu.client import FeishuClient
+            from supercc.adapter.feishu.client import FeishuClient
             from supercc.claude.session_manager import SessionManager
             feishu = FeishuClient(
-                app_id=config.feishu.app_id,
-                app_secret=config.feishu.app_secret,
+                app_id=config.channels.feishu.app_id,
+                app_secret=config.channels.feishu.app_secret,
             )
             sm = SessionManager(db_path=db_path)
             session = sm.get_active_session_by_chat_id()

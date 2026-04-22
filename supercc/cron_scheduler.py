@@ -31,7 +31,7 @@ from typing import Optional
 
 from supercc.config import Config, SESSIONS_DB_PATH
 from supercc.claude.integration import ClaudeIntegration
-from supercc.feishu.client import FeishuClient
+from supercc.adapter.feishu.client import FeishuClient
 
 
 def _get_active_chat_id(data_dir: str) -> str | None:
@@ -600,9 +600,9 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # Create Feishu client for delivery
     feishu = FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
-        bot_name=config.feishu.bot_name,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
         data_dir=data_dir,
     )
     _log("FEISHU_CLIENT_CREATED")
@@ -886,11 +886,11 @@ class CronScheduler:
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
             from supercc.skill_nudge import poll_skill_changes_and_notify
-            from supercc.feishu.client import FeishuClient
+            from supercc.adapter.feishu.client import FeishuClient
             feishu = FeishuClient(
-                app_id=self.config.feishu.app_id,
-                app_secret=self.config.feishu.app_secret,
-                bot_name=self.config.feishu.bot_name,
+                app_id=self.config.channels.feishu.app_id,
+                app_secret=self.config.channels.feishu.app_secret,
+                bot_name=self.config.channels.feishu.bot_name,
                 data_dir=self.data_dir,
             )
 
@@ -912,12 +912,12 @@ class CronScheduler:
         due_pending = pending_store.get_due()
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
-            from supercc.feishu.client import FeishuClient
+            from supercc.adapter.feishu.client import FeishuClient
             from supercc.format.reply_formatter import should_use_card, optimize_markdown_style
             feishu = FeishuClient(
-                app_id=self.config.feishu.app_id,
-                app_secret=self.config.feishu.app_secret,
-                bot_name=self.config.feishu.bot_name,
+                app_id=self.config.channels.feishu.app_id,
+                app_secret=self.config.channels.feishu.app_secret,
+                bot_name=self.config.channels.feishu.bot_name,
                 data_dir=self.data_dir,
             )
             for entry in due_pending:

@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from supercc.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
@@ -1359,7 +1359,7 @@ class MessageHandler:
             文件/音频用 [File: /path] / [Audio: /path] 格式告知 AI 附件内容，
             AI 会通过 Read 工具读取本地文件。
         """
-        from supercc.feishu.media import (
+        from supercc.adapter.feishu.media import (
             make_image_path,
             make_file_path,
             save_bytes,

@@ -24,13 +24,27 @@ GroupConfig = Dict[str, GroupConfigEntry]
 
 
 @dataclass
-class FeishuConfig:
-    app_id: str
-    app_secret: str
+class FeishuChannelConfig:
+    enabled: bool = True
+    app_id: str = ""
+    app_secret: str = ""
     bot_name: str = "Claude"
     bot_open_id: str = ""        # 机器人的 open_id，用于检测群聊 @CC
     domain: str = "feishu"
     groups: dict = field(default_factory=dict)  # group_id -> GroupConfigEntry dict
+
+
+@dataclass
+class DingTalkChannelConfig:
+    enabled: bool = False
+    app_key: str = ""
+    app_secret: str = ""
+
+
+@dataclass
+class ChannelsConfig:
+    feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
+    dingtalk: DingTalkChannelConfig = field(default_factory=DingTalkChannelConfig)
 
 
 @dataclass
@@ -54,7 +68,7 @@ class SkillNudgeConfig:
 
 @dataclass
 class Config:
-    feishu: FeishuConfig
+    channels: ChannelsConfig
     auth: AuthConfig
     claude: ClaudeConfig
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
@@ -88,18 +102,23 @@ def load_config(path: str, data_dir: str = "") -> Config:
     # Deserialize groups: convert raw dicts to GroupConfigEntry objects
     # Filter out unknown fields to tolerate future config additions gracefully.
     _known_group_keys = {"enabled", "require_mention", "allow_from"}
-    raw_groups = raw.get("feishu", {}).get("groups", {})
+    raw_groups = raw.get("channels", {}).get("feishu", {}).get("groups", {})
     groups = {
         gid: GroupConfigEntry(**{k: v for k, v in gentry.items() if k in _known_group_keys})
         for gid, gentry in raw_groups.items()
     }
 
-    feishu_raw = raw.get("feishu", {}).copy()
+    feishu_raw = raw.get("channels", {}).get("feishu", {}).copy()
     feishu_raw["groups"] = groups
-    feishu_cfg = FeishuConfig(**feishu_raw)
+    feishu_cfg = FeishuChannelConfig(**feishu_raw)
+
+    dingtalk_raw = raw.get("channels", {}).get("dingtalk", {})
+    dingtalk_cfg = DingTalkChannelConfig(**dingtalk_raw)
+
+    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
 
     return Config(
-        feishu=feishu_cfg,
+        channels=channels_cfg,
         auth=AuthConfig(**raw.get("auth", {})),
         claude=ClaudeConfig(**raw.get("claude", {})),
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
@@ -119,6 +138,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 groups: dict | None = None) -> None:
     """Save a complete config to a YAML file."""
     feishu_cfg = {
+        "enabled": True,
         "app_id": feishu_app_id,
         "app_secret": feishu_app_secret,
         "bot_name": bot_name,
@@ -135,7 +155,10 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
             for gid, entry in groups.items()
         }
     config = {
-        "feishu": feishu_cfg,
+        "channels": {
+            "feishu": feishu_cfg,
+            "dingtalk": {"enabled": False},
+        },
         "auth": {
             "allowed_users": allowed_users,
         },
@@ -162,11 +185,11 @@ def register_group_config(config_path: str, group_id: str, entry: GroupConfigEnt
     with open(config_path) as f:
         raw = yaml.safe_load(f)
 
-    feishu_section = raw.get("feishu")
+    channels = raw.get("channels", {})
+    feishu_section = channels.get("feishu")
     if feishu_section is None:
-        # Config file has no feishu section — create it with a groups subkey
-        raw["feishu"] = {"groups": {}}
-        feishu_section = raw["feishu"]
+        channels.setdefault("feishu", {"groups": {}})
+        feishu_section = channels["feishu"]
 
     groups = feishu_section.get("groups", {})
     if group_id in groups:
@@ -178,6 +201,7 @@ def register_group_config(config_path: str, group_id: str, entry: GroupConfigEnt
         "allow_from": entry.allow_from,
     }
     feishu_section["groups"] = groups
+    raw["channels"] = channels
 
     with open(config_path, "w") as f:
         yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)

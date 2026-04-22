@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 def test_ws_client_initializes():
-    from supercc.feishu.ws_client import FeishuWSClient
+    from supercc.adapter.feishu.ws_client import FeishuWSClient
     client = FeishuWSClient(
         app_id="test_app_id",
         app_secret="test_secret",
@@ -17,7 +17,7 @@ def test_ws_client_initializes():
 
 
 def test_on_message_callback():
-    from supercc.feishu.ws_client import FeishuWSClient
+    from supercc.adapter.feishu.ws_client import FeishuWSClient
     cb = AsyncMock()
     client = FeishuWSClient(app_id="id", app_secret="secret", on_message=cb)
 

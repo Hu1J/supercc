@@ -9,7 +9,7 @@ class TestGroupChatMentionDetection:
 
     def test_group_chat_event_with_bot_mention_sets_mention_bot_true(self):
         """When bot is @mentioned in group chat, mention_bot=True."""
-        from supercc.feishu.ws_client import FeishuWSClient
+        from supercc.adapter.feishu.ws_client import FeishuWSClient
 
         cb = AsyncMock()
         client = FeishuWSClient(
@@ -61,7 +61,7 @@ class TestGroupChatMentionDetection:
 
     def test_group_chat_event_without_mention_sets_mention_bot_false(self):
         """Group chat message without @CC has mention_bot=False."""
-        from supercc.feishu.ws_client import FeishuWSClient
+        from supercc.adapter.feishu.ws_client import FeishuWSClient
 
         cb = AsyncMock()
         client = FeishuWSClient(
@@ -106,7 +106,7 @@ class TestGroupChatMentionDetection:
 
     def test_p2p_event_still_works(self):
         """P2P messages are not treated as group chat."""
-        from supercc.feishu.ws_client import FeishuWSClient
+        from supercc.adapter.feishu.ws_client import FeishuWSClient
 
         cb = AsyncMock()
         client = FeishuWSClient(
@@ -155,7 +155,7 @@ class TestGroupAccessControl:
 
     def test_no_group_config_defaults_to_require_mention(self):
         """With no group config, mention is required."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
 
         handler = MessageHandler(
             feishu_client=MagicMock(),
@@ -186,7 +186,7 @@ class TestGroupAccessControl:
 
     def test_disabled_group_rejects_all(self):
         """Group with enabled=False is always rejected."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
         from supercc.config import GroupConfigEntry
 
         handler = MessageHandler(
@@ -211,7 +211,7 @@ class TestGroupAccessControl:
 
     def test_require_mention_false_bypasses_mention_check(self):
         """Group with require_mention=False responds to all group messages."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
         from supercc.config import GroupConfigEntry
 
         handler = MessageHandler(
@@ -236,7 +236,7 @@ class TestGroupAccessControl:
 
     def test_allow_from_restricts_sender(self):
         """Group with allow_from only allows listed users."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
         from supercc.config import GroupConfigEntry
 
         handler = MessageHandler(
@@ -270,7 +270,7 @@ class TestGroupAccessControl:
 
     def test_p2p_message_passes_without_check(self):
         """P2P messages always pass group access check."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
 
         handler = MessageHandler(
             feishu_client=MagicMock(),
@@ -296,7 +296,7 @@ class TestGroupAutoRegistration:
 
     def test_unknown_group_auto_registered_in_memory(self):
         """First time seeing a group, it gets auto-registered in memory."""
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
         from supercc.config import GroupConfigEntry
 
         handler = MessageHandler(
@@ -329,7 +329,7 @@ class TestGroupAutoRegistration:
         """When config_path is set, auto-registration calls register_group_config."""
         import tempfile
         import os
-        from supercc.feishu.message_handler import MessageHandler
+        from supercc.adapter.feishu.message_handler import MessageHandler
         from supercc.config import GroupConfigEntry, register_group_config
 
         # Create a temp config file
@@ -378,30 +378,30 @@ class TestStripMentionPrefix:
 
     def test_strips_user_mention_from_command(self):
         """'@_user_1 /git' should become '/git'."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("@_user_1 /git") == "/git"
 
     def test_strips_user_mention_with_space(self):
         """'@_user_1  hello' should become 'hello'."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("@_user_1  hello") == "hello"
 
     def test_passthrough_without_mention(self):
         """Plain '/status' should pass through unchanged."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("/status") == "/status"
 
     def test_passthrough_plain_text(self):
         """Plain text without mention passes through."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("hello world") == "hello world"
 
     def test_passthrough_empty_string(self):
         """Empty string passes through."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("") == ""
 
     def test_large_user_number(self):
         """'@_user_123456 /stop' should become '/stop'."""
-        from supercc.feishu.message_handler import _strip_mention_prefix
+        from supercc.adapter.feishu.message_handler import _strip_mention_prefix
         assert _strip_mention_prefix("@_user_123456 /stop") == "/stop"
