@@ -647,9 +647,9 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     async def _on_stream(claude_msg):
         try:
             if claude_msg.tool_name:
-                from supercc.format.reply_formatter import ReplyFormatter
-                from supercc.format.edit_diff import _DiffMarker, _MemoryCardMarker
-                from supercc.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
+                from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
+                from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+                from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
                 formatter = ReplyFormatter()
                 result = formatter.format_tool_call(claude_msg.tool_name, claude_msg.tool_input)
 
@@ -710,7 +710,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         # For skill scan jobs, detect changes via git state comparison
         if is_skill_scan and before_state is not None:
             from supercc.skill_nudge import _detect_skill_changes
-            from supercc.format.reply_formatter import should_use_card
+            from supercc.adapter.feishu.format.reply_formatter import should_use_card
 
             async def _skill_send(cid, text):
                 if should_use_card(text):
@@ -762,7 +762,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         running_jobs.discard(job_id)
         return
 
-    from supercc.format.reply_formatter import should_use_card, optimize_markdown_style
+    from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
     header = f"⏰ **{job_name}**"
     body = optimize_markdown_style(response.strip(), card_version=2)
     text = f"{header}\n\n{body}"
@@ -913,7 +913,7 @@ class CronScheduler:
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
             from supercc.adapter.feishu.client import FeishuClient
-            from supercc.format.reply_formatter import should_use_card, optimize_markdown_style
+            from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
             feishu = FeishuClient(
                 app_id=self.config.channels.feishu.app_id,
                 app_secret=self.config.channels.feishu.app_secret,

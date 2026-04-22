@@ -99,7 +99,7 @@ from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.session_manager import SessionManager
-from supercc.format.reply_formatter import ReplyFormatter
+from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.cron_scheduler import CronScheduler
 from supercc.claude.cron_tools import set_cron_scheduler
 
