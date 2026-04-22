@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.db
+*.spec
+data/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.venv/
+.cc-feishu-bridge/
+.superpowers/
+.DS_Store
+.gstack/

@@ -1,0 +1,21 @@
+feishu:
+  app_id: cli_xxx
+  app_secret: xxx
+  bot_name: Claude
+
+auth:
+  allowed_users:
+    - ou_xxx
+
+claude:
+  cli_path: claude
+  max_turns: 50
+  approved_directory: /Users/you/projects
+
+storage:
+  db_path: ./data/sessions.db
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  webhook_path: /feishu/webhook
