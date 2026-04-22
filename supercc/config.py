@@ -10,6 +10,42 @@ import yaml
 # sessions.db 固定放在家目录下，不同项目通过 session.project_path 区分
 SESSIONS_DB_PATH = str(Path.home() / ".supercc" / "sessions.db")
 
+# ── 全局单例 ──────────────────────────────────────────────────────────────────
+_cfg_instance: Config | None = None
+_cfg_path: str | None = None
+
+
+def init_config(path: str, data_dir: str = "") -> Config:
+    """初始化全局单例 Config 对象。
+
+    应用启动时调用一次，之后所有地方用 get_config() 获取同一对象。
+    所有变更直接修改返回的 cfg 对象，最后 write_config(cfg) 写回磁盘。
+    """
+    global _cfg_instance, _cfg_path
+    _cfg_instance = load_config(path, data_dir)
+    _cfg_path = path
+    return _cfg_instance
+
+
+def get_config() -> Config:
+    """获取全局单例 Config 对象。
+
+    必须在 init_config() 之后调用。
+    """
+    if _cfg_instance is None:
+        raise RuntimeError("Config not initialized. Call init_config(path) first.")
+    return _cfg_instance
+
+
+def write_config(cfg: Config) -> None:
+    """将 cfg 对象写回磁盘（使用 init_config 时保存的路径）。
+
+    所有对 config 的变更完成后调用此方法持久化。
+    """
+    if _cfg_path is None:
+        raise RuntimeError("Config path not set. Call init_config(path) first.")
+    _write_config_to_path(_cfg_path, cfg)
+
 
 @dataclass
 class GroupConfigEntry:
@@ -167,14 +203,11 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
         ),
         bypass_accepted=bypass_accepted,
     )
-    write_config(path, cfg)
+    _write_config_to_path(path, cfg)
 
 
-def write_config(path: str, cfg: Config) -> None:
-    """Unified config write — single entry point for all yaml.dump operations.
-
-    All callers should: load_config() → modify cfg → write_config(path, cfg).
-    """
+def _write_config_to_path(path: str, cfg: Config) -> None:
+    """内部函数：将 cfg 写入指定路径。保留 path 参数给跨场景使用。"""
     _known_group_keys = {"enabled", "require_mention", "allow_from"}
     feishu_groups_raw = {}
     for gid, entry in cfg.channels.feishu.groups.items():
@@ -235,7 +268,7 @@ def register_group_config(config_path: str, group_id: str, entry: GroupConfigEnt
         return False  # already registered
 
     cfg.channels.feishu.groups[group_id] = entry
-    write_config(config_path, cfg)
+    _write_config_to_path(config_path, cfg)
     return True  # newly registered
 
 
@@ -243,7 +276,7 @@ def accept_bypass_warning(config_path: str) -> None:
     """Record that the bypass permissions risk warning has been accepted."""
     cfg = load_config(config_path)
     cfg.bypass_accepted = True
-    write_config(config_path, cfg)
+    _write_config_to_path(config_path, cfg)
 
 
 README_CONTENT = """# .supercc
