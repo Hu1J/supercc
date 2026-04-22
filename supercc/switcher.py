@@ -147,6 +147,13 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
     with open(current_config_path) as f:
         raw = yaml.safe_load(f)
 
+    # Migrate old-format config (feishu at top level) to new channels: format
+    if "channels" not in raw and "feishu" in raw:
+        raw["channels"] = {
+            "feishu": raw.pop("feishu"),
+            "dingtalk": {"enabled": False},
+        }
+
     # Rewrite claude.approved_directory to target path
     if "claude" not in raw:
         raw["claude"] = {}

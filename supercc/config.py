@@ -194,6 +194,13 @@ def register_group_config(config_path: str, group_id: str, entry: GroupConfigEnt
     with open(config_path) as f:
         raw = yaml.safe_load(f)
 
+    # Migrate old-format config (feishu at top level) to new channels: format
+    if "channels" not in raw and "feishu" in raw:
+        raw["channels"] = {
+            "feishu": raw.pop("feishu"),
+            "dingtalk": {"enabled": False},
+        }
+
     channels = raw.get("channels", {})
     feishu_section = channels.get("feishu")
     if feishu_section is None:

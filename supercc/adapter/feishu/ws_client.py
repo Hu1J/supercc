@@ -164,11 +164,20 @@ class FeishuWSClient:
         try:
             with open(self._config_path) as f:
                 raw = yaml.safe_load(f)
-            if raw.get("feishu", {}).get("bot_open_id") == bot_id:
+
+            # Migrate old-format config to new channels: format
+            if "channels" not in raw and "feishu" in raw:
+                raw["channels"] = {
+                    "feishu": raw.pop("feishu"),
+                    "dingtalk": {"enabled": False},
+                }
+
+            feishu_cfg = raw.get("channels", {}).get("feishu", {})
+            if feishu_cfg.get("bot_open_id") == bot_id:
                 return  # already set to same value
-            if "feishu" not in raw:
-                raw["feishu"] = {}
-            raw["feishu"]["bot_open_id"] = bot_id
+            if "channels" not in raw:
+                raw["channels"] = {"feishu": {}, "dingtalk": {"enabled": False}}
+            raw["channels"]["feishu"]["bot_open_id"] = bot_id
             with open(self._config_path, "w") as f:
                 yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
             logger.info(f"Wrote bot_open_id={bot_id} back to {self._config_path}")
