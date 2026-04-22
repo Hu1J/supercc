@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 # ASCII Art & Branding
 # =========================================================================
 
-SUPERCC_LOGO = """[bold #FFD700]    ███████╗██╗  ██╗███████╗███████╗██████╗ ███████╗███████╗[/]
-[bold #FFD700]    ██╔════╝██║  ██║██║  ██║██╔════╝██╔══██╗██╔════╝██╔════╝[/]
-[#FFBF00]███████╗██║  ██║███████║█████╗  ██████╔╝██║     ██║[/]
-[#FFBF00]╚════██║██║  ██║██╔════╝██╔══╝  ██╔══██╗██║     ██║[/]
-[#CD7F32]    ███████║███████║██║     ███████╗██║  ██║███████╗███████╗[/]
-[#CD7F32]    ╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝[/]"""
+SUPERCC_LOGO = """[bold #FFD700]███████╗██╗  ██╗███████╗███████╗██████╗ ███████╗███████╗[/]
+[bold #FFD700]██╔════╝██║  ██║██║  ██║██╔════╝██╔══██╗██╔════╝██╔════╝[/]
+[#FFBF00]███████╗██║  ██║███████║█████╗  ██████╔╝██║     ██║     [/]
+[#FFBF00]╚════██║██║  ██║██╔════╝██╔══╝  ██╔══██╗██║     ██║     [/]
+[#CD7F32]███████║███████║██║     ███████╗██║  ██║███████╗███████╗[/]
+[#CD7F32]╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝[/]"""
 
 
 
@@ -148,11 +148,21 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          context_length: int = None):
     """Build and print a welcome banner — dragon art + project path only."""
     import os
+    import shutil
     tools = tools or []
 
+    # Dynamically center logo in terminal width
+    term_width = shutil.get_terminal_size().columns
+    logo_lines = SUPERCC_LOGO.split('\n')
+    logo_width = max(len(Text.from_markup(line).plain) for line in logo_lines)
+    # Panel: 2 border + 2*2 padding = 6 chars overhead
+    content_width = term_width - 6
+    leading = max(0, (content_width - logo_width) // 2)
+    centered_logo = '\n'.join([(' ' * leading) + line for line in logo_lines])
+
     layout = Table.grid(padding=(0, 1))
-    layout.add_column(justify="center")
-    layout.add_row(SUPERCC_LOGO)
+    layout.add_column(justify="left")
+    layout.add_row(centered_logo)
     layout.add_row(f"[dim #888]{cwd}[/]")
 
     title_color = "#FFD700"

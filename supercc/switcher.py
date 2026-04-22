@@ -164,8 +164,8 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
 
     # Start SuperCC via the installed binary
     data_dir = os.path.join(target_path, ".supercc")
-    stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
-    stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
+    stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
+    stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
     proc = subprocess.Popen(
         ["supercc", "start"],
         cwd=target_path,
