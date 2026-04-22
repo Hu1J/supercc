@@ -275,7 +275,7 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
     try:
         # Hardcode supercc — migration is done, pip package name no longer matters here
         proc = subprocess.Popen(
-            [sys.executable, "-m", "supercc", "start"],
+            ["supercc", "start"],
             cwd=project_path,
             stdin=subprocess.DEVNULL,
             stdout=stdout_log,
