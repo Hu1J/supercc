@@ -733,7 +733,7 @@ def main(args=None):
     try:
         from importlib.metadata import version as _get_version
 
-        _version = _get_version("supercc")
+        _version = _get_version("pysupercc")
     except Exception:
         _version = "dev"
 
