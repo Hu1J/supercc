@@ -355,7 +355,7 @@ def confirm_risk_warning(config_path: str) -> bool:
                 print("已记录，下次启动将不再提示。")
                 return True
             elif response in ("no", "n", ""):
-                print("Cancelled — not starting the bridge.")
+                print("Cancelled — not starting SuperCC.")
                 return False
             else:
                 print("Please enter 'yes' or 'no': ", end="")
@@ -365,7 +365,7 @@ def confirm_risk_warning(config_path: str) -> bool:
 
 
 def start_bridge(config_path: str, data_dir: str) -> None:
-    """Start the bridge: load config and run WebSocket connection."""
+    """Start SuperCC: load config and run WebSocket connection."""
     # Acquire exclusive lock before starting — prevents multiple instances in the same directory
     lock_file = os.path.join(data_dir, ".instance.lock")
     lock = filelock.FileLock(lock_file, timeout=1)
@@ -405,7 +405,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
-    logger.info(f"Starting Feishu bridge (WS mode) — data: {data_dir}")
+    logger.info(f"Starting SuperCC (WS mode) — data: {data_dir}")
 
     # Auto-install Claude skill for file sending
     ensure_skill_installed()
@@ -506,7 +506,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     data_dir = str(Path(config_path).parent.resolve())
     db_path = os.path.join(data_dir, "sessions.db")
     if not os.path.exists(db_path):
-        print("Error: sessions.db not found. Has the bridge ever been run?")
+        print("Error: sessions.db not found. Has SuperCC ever been run?")
         return
 
     # 3. Find the most recently active session's chat_id
@@ -514,7 +514,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     sm = SessionManager(db_path=db_path)
     session = sm.get_active_session_by_chat_id()
     if not session or not session.chat_id:
-        print("Error: no active chat session found. Make sure the bridge has been used.")
+        print("Error: no active chat session found. Make sure SuperCC has been used.")
         return
     chat_id = session.chat_id
     print(f"Sending to chat: {chat_id}")
@@ -600,7 +600,7 @@ def _run_memory_command(args) -> None:
         print("关键词用逗号分隔（若有多个）")
         return
 
-    # Try to send results to Feishu if we're in a bridge session
+    # Try to send results to Feishu if we're in a SuperCC session
     feishu_client = None
     feishu_chat_id = None
     try:
@@ -616,7 +616,7 @@ def _run_memory_command(args) -> None:
         session = sm.get_active_session_by_chat_id()
         feishu_chat_id = session.chat_id if session and session.chat_id else None
     except Exception:
-        pass  # Not in a bridge session, skip Feishu push
+        pass  # Not in a SuperCC session, skip Feishu push
 
     async def _send_feishu(text: str):
         if feishu_client and feishu_chat_id:
@@ -764,7 +764,7 @@ def main(args=None):
         _version = "dev"
 
     parser = argparse.ArgumentParser(
-        description="Claude Code Feishu Bridge — data stored in .supercc/"
+        description="SuperCC — 超级 Claude Code，支持飞书等多平台"
     )
     parser.add_argument(
         "-v", "--version",
@@ -780,25 +780,25 @@ def main(args=None):
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # start (default)
-    start_parser = subparsers.add_parser("start", help="Start the bridge (default)")
+    start_parser = subparsers.add_parser("start", help="Start SuperCC (default)")
 
     # list
     list_parser = subparsers.add_parser("list", help="List all running instances")
 
     # stop
-    stop_parser = subparsers.add_parser("stop", help="Stop the bridge instance in the current directory")
+    stop_parser = subparsers.add_parser("stop", help="Stop the SuperCC instance in the current directory")
 
-    restart_parser = subparsers.add_parser("restart", help="Restart current bridge instance")
+    restart_parser = subparsers.add_parser("restart", help="Restart current SuperCC instance")
     update_parser = subparsers.add_parser("update", help="Check for updates and restart if needed")
 
     # send
     send_parser = subparsers.add_parser("send", help="Send a file or image to the active Feishu chat")
     send_parser.add_argument("files", nargs="+", help="Path(s) to the file(s) to send")
-    send_parser.add_argument("--config", required=True, help="Path to config.yaml for this bridge instance")
+    send_parser.add_argument("--config", required=True, help="Path to config.yaml for this SuperCC instance")
 
     switch_parser = subparsers.add_parser(
         "switch",
-        help="Switch to another project's bridge instance",
+        help="Switch to another project's SuperCC instance",
     )
     switch_parser.add_argument(
         "target",
@@ -923,7 +923,7 @@ def main(args=None):
             return
         pid_file = os.path.join(data_dir, "supercc.pid")
         if not os.path.exists(pid_file):
-            print("当前目录无运行中的 bridge 实例。")
+            print("当前目录无运行中的 SuperCC 实例。")
             return
         try:
             pid = int(Path(pid_file).read_text().strip())
@@ -1008,9 +1008,9 @@ def main(args=None):
     logging.getLogger().addHandler(fh)
     write_log_banner(log_file, _version)
     if is_installed:
-        logger.info(f"Config found, starting bridge...")
+        logger.info(f"Config found, starting SuperCC...")
     else:
-        logger.info("Install complete, starting bridge...")
+        logger.info("Install complete, starting SuperCC...")
     start_bridge(cfg_path, data_dir)
 
 

@@ -1,4 +1,4 @@
-"""Project switcher — stops current bridge, starts target bridge with rewritten config."""
+"""Project switcher — stops current SuperCC, starts target SuperCC with rewritten config."""
 from __future__ import annotations
 
 import os
@@ -23,20 +23,20 @@ class StartupTimeoutError(SwitchError): pass
 
 # Step labels for CLI display (short, single line)
 _CLI_STEP_LABELS = [
-    "停止目标 bridge",
+    "停止目标 SuperCC",
     "拷贝 config.yaml",
-    "启动目标 bridge",
-    "确认目标 bridge 运行中",
-    "停止当前 bridge",
+    "启动目标 SuperCC",
+    "确认目标 SuperCC 运行中",
+    "停止当前 SuperCC",
 ]
 
 # Step labels for Feishu messages (detailed, emoji)
 _FEISHU_STEP_LABELS = [
-    "🛑 停止目标 bridge 进程",
+    "🛑 停止目标 SuperCC 进程",
     "📋 拷贝 config.yaml 至目标目录",
-    "🚀 在目标目录启动 bridge",
-    "✅ 确认目标 bridge 运行正常",
-    "🛑 关闭当前 bridge",
+    "🚀 在目标目录启动 SuperCC",
+    "✅ 确认目标 SuperCC 运行正常",
+    "🛑 关闭当前 SuperCC",
 ]
 
 
@@ -110,7 +110,7 @@ def _kill_process(pid: int, sig: int, timeout: float) -> bool:
 
 
 def _stop_bridge(project_path: str) -> bool:
-    """Stop the bridge for a project. Uses SIGTERM then SIGKILL. Returns True if stopped, False if failed."""
+    """Stop the SuperCC instance for a project. Uses SIGTERM then SIGKILL. Returns True if stopped, False if failed."""
     pid_file = _pid_file_path(project_path)
     pid = _read_pid(pid_file)
 
@@ -164,7 +164,7 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
 
 
 def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
-    """Start the bridge for target project using subprocess.Popen with start_new_session=True.
+    """Start the SuperCC instance for target project using subprocess.Popen with start_new_session=True.
 
     Returns the PID of the started process.
     Raises StartupTimeoutError if pid file doesn't appear within timeout.
@@ -174,7 +174,7 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
     # Remove stale pid file if exists
     Path(pid_file).unlink(missing_ok=True)
 
-    # Start bridge via the installed binary
+    # Start SuperCC via the installed binary
     data_dir = os.path.join(Path.home(), ".supercc")
     stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
@@ -194,11 +194,11 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
             return pid
         # Check if process crashed
         if proc.poll() is not None:
-            raise StartupTimeoutError(f"Bridge process exited unexpectedly during startup")
+            raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
         time.sleep(0.2)
 
     raise StartupTimeoutError(
-        f"PID file did not appear within {timeout}s after starting bridge"
+        f"PID file did not appear within {timeout}s after starting SuperCC"
     )
 
 
@@ -206,21 +206,21 @@ def switch_to(target_path: str):
     """Execute the full project switch flow, yielding SwitchStep as each step completes.
 
     Steps (stops on error, no rollback):
-    1. Stop target bridge (if running)
+    1. Stop target SuperCC (if running)
     2. Copy config.yaml to target (rewrite storage.db_path) — skipped if current project not initialized
-    3. Start bridge in target
-    4. Verify target bridge is running
-    5. Stop current bridge
+    3. Start SuperCC in target
+    4. Verify target SuperCC is running
+    5. Stop current SuperCC
 
     Yields SwitchStep for each step. Caller prints/logs/sends Feishu messages.
     Raises SwitchError on fatal failure.
     """
     current_path = os.getcwd()
 
-    # Step 1: Stop target bridge
+    # Step 1: Stop target SuperCC
     yield SwitchStep(step=1, total=5, label=_CLI_STEP_LABELS[0], status="done")
     if not _stop_bridge(target_path):
-        raise TargetStopError(f"无法停止目标 bridge")
+        raise TargetStopError(f"无法停止目标 SuperCC")
 
     # Step 2: Copy and fix config.yaml (skipped if current project not initialized)
     yield SwitchStep(step=2, total=5, label=_CLI_STEP_LABELS[1], status="done")
@@ -229,24 +229,24 @@ def switch_to(target_path: str):
     except Exception as e:
         raise SwitchError(f"无法拷贝配置文件到目标: {e}")
 
-    # Step 3: Start target bridge
+    # Step 3: Start target SuperCC
     yield SwitchStep(step=3, total=5, label=_CLI_STEP_LABELS[2], status="done")
     target_pid: Optional[int] = None
     try:
         target_pid = _start_bridge(target_path)
     except StartupTimeoutError as e:
-        raise StartupTimeoutError(f"目标 bridge 启动超时: {e}")
+        raise StartupTimeoutError(f"目标 SuperCC 启动超时: {e}")
 
-    # Step 4: Verify target bridge is running
+    # Step 4: Verify target SuperCC is running
     yield SwitchStep(step=4, total=5, label=_CLI_STEP_LABELS[3], status="done", detail=f"PID {target_pid}")
 
-    # Step 5: Stop current bridge
+    # Step 5: Stop current SuperCC
     yield SwitchStep(step=5, total=5, label=_CLI_STEP_LABELS[4], status="done")
     if not _stop_bridge(current_path):
-        raise CurrentStopError(f"无法停止当前 bridge")
+        raise CurrentStopError(f"无法停止当前 SuperCC")
 
     yield SwitchStep(step=5, total=5, label="切换完成", status="final",
-                     detail=f"新 bridge PID {target_pid}", success=True, target_pid=target_pid)
+                     detail=f"新 SuperCC 实例 PID {target_pid}", success=True, target_pid=target_pid)
 
     return SwitchResult(success=True, target_path=target_path, target_pid=target_pid)
 

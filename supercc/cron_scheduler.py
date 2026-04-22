@@ -353,7 +353,7 @@ def create_job(
         chat_id: Feishu chat_id to deliver output to
         name: Optional friendly name
         repeat: None = infinite, int = max runs
-        data_dir: Bridge data directory
+        data_dir: SuperCC data directory
         verbose: If True, stream tool calls to Feishu in real-time (default False)
         notify_at: Optional cron expression for when to send notification.
                    If set, execution happens at `schedule` but notification is sent

@@ -95,7 +95,7 @@ def _kill_process(pid: int, sig: int, timeout: float) -> bool:
 
 
 def _stop_bridge(project_path: str) -> bool:
-    """Stop the bridge for a project. Uses SIGTERM then SIGKILL. Returns True if stopped, False if failed."""
+    """Stop the SuperCC instance for a project. Uses SIGTERM then SIGKILL. Returns True if stopped, False if failed."""
     pid_file = _pid_file_path(project_path)
     pid = _read_pid(pid_file)
 
@@ -117,7 +117,7 @@ def _stop_bridge(project_path: str) -> bool:
 
 
 def _restart_to(file_lock=None, package: str = "supercc"):
-    """Restart bridge in the current directory.
+    """Restart SuperCC in the current directory.
 
     Args:
         file_lock: FileLock object acquired by main.py; released before
@@ -179,7 +179,7 @@ async def run_restart(file_lock, feishu: "FeishuClient",
                 f"## ✅ 重启完成\n\n"
                 f"**当前目录**: `{current_path}`\n"
                 f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                f"🎉 Bridge 已重启，可以在飞书中继续对话了。"
+                f"🎉 SuperCC 已重启，可以在飞书中继续对话了。"
             )
             await feishu.send_interactive_reply(chat_id, final_card, reply_to_message_id)
         else:
@@ -227,7 +227,7 @@ def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None):
                     f"## ✅ 重启完成\n\n"
                     f"**当前目录**: `{os.getcwd()}`\n"
                     f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                    f"🎉 Bridge 已重启，可以在飞书中继续对话了。"
+                    f"🎉 SuperCC 已重启，可以在飞书中继续对话了。"
                 )
                 await _send(card)
             else:
@@ -254,7 +254,7 @@ def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None):
 
 
 def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 60.0) -> int:
-    """Start the bridge for project using subprocess.Popen with start_new_session=True.
+    """Start the SuperCC instance for project using subprocess.Popen with start_new_session=True.
 
     Args:
         project_path: Path to the project directory.
@@ -293,13 +293,13 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
             if proc.poll() is not None:
                 stdout_log.close()
                 stderr_log.close()
-                raise StartupTimeoutError(f"Bridge process exited unexpectedly during startup")
+                raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
             time.sleep(0.2)
 
         stdout_log.close()
         stderr_log.close()
         raise StartupTimeoutError(
-            f"PID file did not appear within {timeout}s after starting bridge"
+            f"PID file did not appear within {timeout}s after starting SuperCC"
         )
     except Exception:
         stdout_log.close()
@@ -318,7 +318,7 @@ def _get_package_name() -> str:
         with open(Path(__file__).resolve().parent.parent / "pyproject.toml") as f:
             return yaml.safe_load(f)["project"]["name"]
     except Exception:
-        return "cc-feishu-bridge"  # fallback
+        return "pysupercc"  # fallback
 
 
 def check_version() -> tuple[str, str]:
@@ -470,7 +470,7 @@ async def run_update(file_lock, feishu: "FeishuClient",
                 f"## ✅ 更新完成\n\n"
                 f"**当前目录**: `{current_path}`\n"
                 f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
+                f"🎉 SuperCC 已更新，可以在飞书中继续对话了。"
             )
             await feishu.send_interactive_reply(chat_id, final_card, reply_to_message_id)
         else:
@@ -550,7 +550,7 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
                     f"## ✅ 更新完成\n\n"
                     f"**当前目录**: `{os.getcwd()}`\n"
                     f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                    f"🎉 Bridge 已更新，可以在飞书中继续对话了。"
+                    f"🎉 SuperCC 已更新，可以在飞书中继续对话了。"
                 )
                 await _send(card)
             else:
