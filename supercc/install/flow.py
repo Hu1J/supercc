@@ -5,12 +5,67 @@ import asyncio
 import logging
 from pathlib import Path
 
-import yaml
-
 from supercc.install.api import FeishuInstallAPI, AppRegistrationResult
 from supercc.install.qr import print_qr
 
 logger = logging.getLogger(__name__)
+
+
+def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted: bool = False) -> None:
+    """Write the app credentials and defaults to config.yaml.
+
+    Uses init_config + get_config + write_config to preserve existing settings
+    (e.g. groups) when re-running the install flow.
+    """
+    from supercc.config import (
+        init_config, get_config, write_config, _write_config_to_path,
+        Config, ChannelsConfig, FeishuChannelConfig, AuthConfig, ClaudeConfig,
+    )
+
+    Path(config_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Fresh install (file doesn't exist or is empty): create new config directly
+    if not Path(config_path).exists() or Path(config_path).stat().st_size == 0:
+        cfg = Config(
+            channels=ChannelsConfig(
+                feishu=FeishuChannelConfig(
+                    enabled=True,
+                    app_id=result.app_id,
+                    app_secret=result.app_secret,
+                    bot_name="Claude",
+                    bot_open_id="",
+                    domain=result.domain,
+                    groups={},
+                ),
+            ),
+            auth=AuthConfig(allowed_users=[result.user_open_id]),
+            claude=ClaudeConfig(
+                cli_path="claude",
+                max_turns=50,
+                approved_directory=str(Path(config_path).resolve().parent.parent),
+            ),
+            bypass_accepted=bypass_accepted,
+        )
+        _write_config_to_path(config_path, cfg)
+        print(f"\n✅ 配置已保存到 {config_path}")
+        return
+
+    # Re-install or update: use singleton pattern to preserve existing groups
+    init_config(config_path)
+    cfg = get_config()
+    cfg.channels.feishu.enabled = True
+    cfg.channels.feishu.app_id = result.app_id
+    cfg.channels.feishu.app_secret = result.app_secret
+    cfg.channels.feishu.bot_name = "Claude"
+    cfg.channels.feishu.bot_open_id = ""  # auto-probed at startup
+    cfg.channels.feishu.domain = result.domain
+    cfg.auth.allowed_users = [result.user_open_id]
+    cfg.claude.cli_path = "claude"
+    cfg.claude.max_turns = 50
+    cfg.claude.approved_directory = str(Path(config_path).resolve().parent.parent)
+    cfg.bypass_accepted = bypass_accepted
+    write_config(cfg)
+    print(f"\n✅ 配置已保存到 {config_path}")
 
 
 async def run_install_flow(config_path: str = "config.yaml") -> AppRegistrationResult:
@@ -55,43 +110,3 @@ async def run_install_flow(config_path: str = "config.yaml") -> AppRegistrationR
 
     save_config(result, config_path)
     return result
-
-
-def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted: bool = False) -> None:
-    """Write the app credentials and defaults to config.yaml.
-
-    Preserves existing 'groups' section so re-running
-    the install flow does not wipe group registrations.
-    """
-    # Merge with existing config to preserve groups, etc.
-    existing = {}
-    if Path(config_path).exists():
-        with open(config_path) as f:
-            existing = yaml.safe_load(f) or {}
-
-    config = {
-        "feishu": {
-            "app_id": result.app_id,
-            "app_secret": result.app_secret,
-            "bot_name": "Claude",
-            "bot_open_id": "",  # auto-probed at startup; manual override goes here
-            "domain": result.domain,
-            # Preserve existing groups (auto-registered group chat configs)
-            "groups": existing.get("feishu", {}).get("groups", {}),
-        },
-        "auth": {
-            "allowed_users": [result.user_open_id],
-        },
-        "claude": {
-            "cli_path": "claude",
-            "max_turns": 50,
-            "approved_directory": str(Path(config_path).resolve().parent.parent),
-        },
-        "bypass_accepted": bypass_accepted,
-    }
-
-    Path(config_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-
-    print(f"\n✅ 配置已保存到 {config_path}")

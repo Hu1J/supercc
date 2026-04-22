@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from supercc.feishu.media import (
+from supercc.adapter.feishu.media import (
     sanitize_filename,
     mime_to_ext,
     file_type_to_mime,

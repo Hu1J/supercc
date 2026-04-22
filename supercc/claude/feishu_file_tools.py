@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import os
-import threading
 from typing import Optional
+
+from claude_agent_sdk import tool
+from supercc.config import SESSIONS_DB_PATH
+
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
+
+
+FEISHU_FILE_GUIDE = """
+【飞书文件发送】当用户要求发送文件/图片/截图/压缩包时，调用 mcp__SuperCC__FeishuSendFile(file_paths: list[str])，MCP 自动从当前会话获取 chat_id。
+"""
 
 
 def _resolve_path(file_path: str) -> str:
@@ -24,10 +32,9 @@ def _resolve_path(file_path: str) -> str:
     # 相对路径：尝试从 config 里的 approved_directory 解析
     candidates = []
     try:
-        from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
-        cfg_path, _ = resolve_config_path()
-        config = load_config(cfg_path)
-        approved = config.claude.approved_directory
+        from supercc.config import get_config
+        cfg = get_config()
+        approved = cfg.claude.approved_directory
         if approved:
             candidates.append(os.path.join(approved, file_path))
     except Exception:
@@ -42,20 +49,15 @@ def _resolve_path(file_path: str) -> str:
     # 找不到就返回原路径，让后面的 open() 报文件不存在
     return file_path
 
-FEISHU_FILE_GUIDE = """
-【飞书文件发送】当用户要求发送文件/图片/截图/压缩包时，调用 mcp__feishu_file__FeishuSendFile(file_paths: list[str])，MCP 自动从当前会话获取 chat_id。
-"""
-
 
 def _get_feishu_client() -> "FeishuClient":
     """延迟初始化 FeishuClient（读取 config.yaml）。"""
-    from supercc.config import load_config, resolve_config_path
-    from supercc.feishu.client import FeishuClient
-    cfg_path, _ = resolve_config_path()
-    config = load_config(cfg_path)
+    from supercc.config import get_config
+    from supercc.adapter.feishu.client import FeishuClient
+    cfg = get_config()
     return FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
+        app_id=cfg.channels.feishu.app_id,
+        app_secret=cfg.channels.feishu.app_secret,
     )
 
 
@@ -64,8 +66,7 @@ def _get_session_manager() -> "SessionManager":
     from supercc.config import resolve_config_path
     from supercc.claude.session_manager import SessionManager
     _, _ = resolve_config_path()
-    db_path = SESSIONS_DB_PATH
-    return SessionManager(db_path=db_path)
+    return SessionManager(db_path=SESSIONS_DB_PATH)
 
 
 def _get_chat_id() -> Optional[str]:
@@ -77,8 +78,8 @@ def _get_chat_id() -> Optional[str]:
 
 async def _send_single_file(file_path: str, chat_id: str) -> str:
     """发送单个文件，返回 msg_id 或抛出异常。"""
-    from supercc.feishu.media import guess_file_type
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.media import guess_file_type
+    from supercc.adapter.feishu.client import FeishuClient
 
     feishu = _get_feishu_client()
     resolved_path = _resolve_path(file_path)
@@ -99,79 +100,59 @@ async def _send_single_file(file_path: str, chat_id: str) -> str:
     return msg_id
 
 
-def _build_feishu_file_mcp_server():
-    from claude_agent_sdk import tool, create_sdk_mcp_server
+# ── tool ──────────────────────────────────────────────────────────────────────
 
-    @tool(
-        "FeishuSendFile",
-        "发送本地文件或图片到飞书用户（通过当前活跃会话的 chat_id）。"
-        "支持多文件并发上传，自动判断文件类型（图片直接发送，其他文件先上传再发送）。"
-        "每个文件需在 30MB 以内。",
-        {"file_paths": list},
-    )
-    async def feishu_send_file(args: dict) -> dict:
-        file_paths: list = args.get("file_paths", [])
-        if not file_paths:
-            return {"content": [{"type": "text", "text": "未提供文件路径"}], "is_error": True}
+@tool(
+    "FeishuSendFile",
+    "发送本地文件或图片到飞书用户（通过当前活跃会话的 chat_id）。"
+    "支持多文件并发上传，自动判断文件类型（图片直接发送，其他文件先上传再发送）。"
+    "每个文件需在 30MB 以内。",
+    {"file_paths": list},
+)
+async def feishu_send_file(args: dict) -> dict:
+    file_paths: list = args.get("file_paths", [])
+    if not file_paths:
+        return {"content": [{"type": "text", "text": "未提供文件路径"}], "is_error": True}
 
-        # 获取 chat_id
-        chat_id = _get_chat_id()
-        if not chat_id:
-            return {
-                "content": [{"type": "text", "text": "未找到活跃飞书会话，请先在飞书里发一条消息"}],
-                "is_error": True,
-            }
+    # 获取 chat_id
+    chat_id = _get_chat_id()
+    if not chat_id:
+        return {
+            "content": [{"type": "text", "text": "未找到活跃飞书会话，请先在飞书里发一条消息"}],
+            "is_error": True,
+        }
 
-        # 验证所有文件
-        errors = []
-        for fp in file_paths:
-            if not os.path.exists(fp):
-                errors.append(f"文件不存在: {fp}")
-            elif os.path.getsize(fp) > MAX_FILE_SIZE:
-                errors.append(f"{os.path.basename(fp)} 超过 30MB 限制")
-        if errors:
-            return {"content": [{"type": "text", "text": "\n".join(errors)}], "is_error": True}
+    # 验证所有文件
+    errors = []
+    for fp in file_paths:
+        if not os.path.exists(fp):
+            errors.append(f"文件不存在: {fp}")
+        elif os.path.getsize(fp) > MAX_FILE_SIZE:
+            errors.append(f"{os.path.basename(fp)} 超过 30MB 限制")
+    if errors:
+        return {"content": [{"type": "text", "text": "\n".join(errors)}], "is_error": True}
 
-        # 并发发送
-        async def send_one(fp: str) -> tuple[str, str | None]:
-            try:
-                msg_id = await _send_single_file(fp, chat_id)
-                return (fp, None)
-            except Exception as e:
-                return (fp, str(e))
+    # 并发发送
+    async def send_one(fp: str) -> tuple[str, str | None]:
+        try:
+            msg_id = await _send_single_file(fp, chat_id)
+            return (fp, None)
+        except Exception as e:
+            return (fp, str(e))
 
-        results = await asyncio.gather(*[send_one(fp) for fp in file_paths])
+    results = await asyncio.gather(*[send_one(fp) for fp in file_paths])
 
-        ok = [fp for fp, err in results if err is None]
-        fail = [(fp, err) for fp, err in results if err is not None]
+    ok = [fp for fp, err in results if err is None]
+    fail = [(fp, err) for fp, err in results if err is not None]
 
-        lines = []
-        if ok:
-            lines.append(f"✅ 已发送 {len(ok)} 个文件")
-            for fp in ok:
-                lines.append(f"  • {os.path.basename(fp)}")
-        if fail:
-            lines.append(f"❌ 失败 {len(fail)} 个")
-            for fp, err in fail:
-                lines.append(f"  • {os.path.basename(fp)}: {err}")
+    lines = []
+    if ok:
+        lines.append(f"✅ 已发送 {len(ok)} 个文件")
+        for fp in ok:
+            lines.append(f"  • {os.path.basename(fp)}")
+    if fail:
+        lines.append(f"❌ 失败 {len(fail)} 个")
+        for fp, err in fail:
+            lines.append(f"  • {os.path.basename(fp)}: {err}")
 
-        return {"content": [{"type": "text", "text": "\n".join(lines)}]}
-
-    return create_sdk_mcp_server(
-        name="feishu_file",
-        version="1.0.0",
-        tools=[feishu_send_file],
-    )
-
-
-_mcp_server = None
-_mcp_server_lock = threading.Lock()
-
-
-def get_feishu_file_mcp_server():
-    global _mcp_server
-    if _mcp_server is None:
-        with _mcp_server_lock:
-            if _mcp_server is None:
-                _mcp_server = _build_feishu_file_mcp_server()
-    return _mcp_server
+    return {"content": [{"type": "text", "text": "\n".join(lines)}]}

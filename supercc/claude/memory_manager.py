@@ -40,25 +40,25 @@ def get_memory_manager() -> "MemoryManager":
 
 
 MEMORY_SYSTEM_GUIDE = """
-【记忆系统】工具前缀: mcp__memory__
+【记忆系统】工具前缀: mcp__SuperCC__
 
-收到用户提问，或 CC 开始在项目上开发前，先用 mcp__memory__MemorySearchProj 搜索项目记忆，看有没有相关信息。
+收到用户提问，或 CC 开始在项目上开发前，先用 mcp__SuperCC__MemorySearchProj 搜索项目记忆，看有没有相关信息。
 搜索没有 → 自己研究 → 成功后主动问"需要记住吗？"
-用户确认后用 mcp__memory__MemoryAddProj（关键词逗号分隔）
+用户确认后用 mcp__SuperCC__MemoryAddProj（关键词逗号分隔）
 
 ## 项目记忆（按项目隔离）
-mcp__memory__MemoryAddProj — 新增项目记忆（关键词逗号分隔）
-mcp__memory__MemoryDeleteProj — 删除项目记忆
-mcp__memory__MemoryUpdateProj — 编辑项目记忆
-mcp__memory__MemoryListProj — 列出项目记忆
-mcp__memory__MemorySearchProj — 搜索项目记忆
+mcp__SuperCC__MemoryAddProj — 新增项目记忆（关键词逗号分隔）
+mcp__SuperCC__MemoryDeleteProj — 删除项目记忆
+mcp__SuperCC__MemoryUpdateProj — 编辑项目记忆
+mcp__SuperCC__MemoryListProj — 列出项目记忆
+mcp__SuperCC__MemorySearchProj — 搜索项目记忆
 
 ## 用户偏好（按飞书用户隔离，MCP 自动从当前会话获取 user_open_id）
-mcp__memory__MemoryAddUser — 新增用户偏好（title + content + keywords 三样必填，关键词逗号分隔）
-mcp__memory__MemoryUpdateUser — 更新用户偏好（id + title + content + keywords）
-mcp__memory__MemoryDeleteUser — 删除用户偏好（只需 id）
-mcp__memory__MemoryListUser — 列出当前用户偏好
-mcp__memory__MemorySearchUser — 搜索用户偏好
+mcp__SuperCC__MemoryAddUser — 新增用户偏好（title + content + keywords 三样必填，关键词逗号分隔）
+mcp__SuperCC__MemoryUpdateUser — 更新用户偏好（id + title + content + keywords）
+mcp__SuperCC__MemoryDeleteUser — 删除用户偏好（只需 id）
+mcp__SuperCC__MemoryListUser — 列出当前用户偏好
+mcp__SuperCC__MemorySearchUser — 搜索用户偏好
 """
 
 

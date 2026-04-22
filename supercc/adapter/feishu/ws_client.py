@@ -8,11 +8,10 @@ import re
 from typing import Callable, Awaitable
 from unittest.mock import MagicMock
 
-import yaml
 import lark_oapi as lark
 
 
-from supercc.feishu.client import IncomingMessage
+from supercc.adapter.feishu.client import IncomingMessage
 
 logger = logging.getLogger(__name__)
 
@@ -162,16 +161,13 @@ class FeishuWSClient:
         if not self._config_path:
             return
         try:
-            with open(self._config_path) as f:
-                raw = yaml.safe_load(f)
-            if raw.get("feishu", {}).get("bot_open_id") == bot_id:
+            from supercc.config import get_config, write_config
+            cfg = get_config()
+            if cfg.channels.feishu.bot_open_id == bot_id:
                 return  # already set to same value
-            if "feishu" not in raw:
-                raw["feishu"] = {}
-            raw["feishu"]["bot_open_id"] = bot_id
-            with open(self._config_path, "w") as f:
-                yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
-            logger.info(f"Wrote bot_open_id={bot_id} back to {self._config_path}")
+            cfg.channels.feishu.bot_open_id = bot_id
+            write_config(cfg)
+            logger.info(f"Wrote bot_open_id={bot_id} back to config")
         except Exception as e:
             logger.warning(f"Failed to write bot_open_id back to config: {e}")
 

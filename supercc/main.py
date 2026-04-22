@@ -90,16 +90,16 @@ import filelock
 
 _active_lock: "filelock.FileLock | None" = None
 
-from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
-from supercc.feishu.client import FeishuClient, IncomingMessage
-from supercc.feishu.ws_client import FeishuWSClient
-from supercc.feishu.message_handler import MessageHandler
-from supercc.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
+from supercc.config import init_config, get_config, resolve_config_path, SESSIONS_DB_PATH
+from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.ws_client import FeishuWSClient
+from supercc.adapter.feishu.message_handler import MessageHandler
+from supercc.adapter.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.session_manager import SessionManager
-from supercc.format.reply_formatter import ReplyFormatter
+from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.cron_scheduler import CronScheduler
 from supercc.claude.cron_tools import set_cron_scheduler
 
@@ -124,29 +124,45 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
         logger.info("[skill_optimize] job already registered, skipping")
         return
 
-    prompt = """【Skill 优化扫描】
+    prompt = """【Skill 优化扫描 — 直接动手，不要只给建议】
 
-请扫描 {SKILLS_DIR}/ 目录下所有 Skill，分析哪些值得更新或新建。
+你是熟练的工程师，直接动手解决问题，不要只给建议。发现确定的问题就立即修复。
 
 **操作步骤：**
 1. 先查看 {SKILLS_DIR}/ 目录下已有的 Skill
-2. 把完整内容直接写入 {SKILLS_DIR}/<skill-name>/SKILL.md
-3. 格式：YAML frontmatter (name/description/author/version) + Markdown body
-4. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，在 {SKILLS_DIR}/ 目录下执行 `git add <skill-name>/ && git commit -m "<中文 commit message>"`，commit message 必须用中文，清晰说明本次改动内容
+2. 发现有以下情况就直接动手：
+   - **过时/错误内容** → 直接更新 SKILL.md（不要给建议）
+   - **多个 Skill 内容重复** → 合并到最完整的一个，删除其余
+   - **发现新的值得推广的模式** → 直接新建 Skill
+   - **Skill 内容已无价值** → **必须先问用户确认**（删除是唯一需要确认的操作）
 
-请给出优化建议列表。"""
+3. 删除前必须先向用户确认，格式：
+   ```
+   发现 Skill「<skill-name>」可能过时，确定要删除吗？
+   ```
+   用户确认后才能删除，用户拒绝则跳过
+
+4. 每次操作后立即 `git add` + `git commit`，不要等到最后才提交
+
+5. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，在 {SKILLS_DIR}/ 目录下执行：
+   ```
+   cd {SKILLS_DIR} && git add <skill-name>/ && git commit -m "<中文 commit message>"
+   ```
+   commit message 必须用中文，清晰说明本次改动内容
+
+完成后输出简短报告：做了哪些新建/更新/合并/删除操作。"""
 
     try:
         create_job(
             prompt=prompt,
-            schedule="0 3 * * *",  # 每天凌晨3点执行
+            schedule="0 9 * * *",  # 每天早上9点执行
             chat_id=chat_id,
             name="Skill 优化扫描",
             repeat=None,
             data_dir=data_dir,
-            notify_at="0 9 * * *",  # 早上9点通知结果
+            verbose=True,  # 流式推送 tool calls 到飞书
         )
-        logger.info("[skill_optimize] registered daily scan at 3am, notify at 9am")
+        logger.info("[skill_optimize] registered daily scan at 9am")
     except Exception as e:
         logger.warning(f"[skill_optimize] failed to register: {e}")
 
@@ -208,9 +224,9 @@ class ColoredFormatter(logging.Formatter):
 def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
     """Create MessageHandler with all dependencies wired up."""
     feishu = FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
-        bot_name=config.feishu.bot_name,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
         data_dir=data_dir,
     )
     setup_error_notifier(feishu)
@@ -226,7 +242,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
     formatter = ReplyFormatter()
 
     # Initialize Hermes-style skill nudge
-    from supercc.skill_nudge import make_nudge
+    from supercc.evolve.skill_nudge import make_nudge
     skill_nudge = make_nudge(config.skill_nudge)
 
     handler = MessageHandler(
@@ -239,7 +255,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
         approved_directory=config.claude.approved_directory,
         config=config,
         data_dir=data_dir,
-        feishu_groups=config.feishu.groups,
+        feishu_groups=config.channels.feishu.groups,
         config_path=config_path,
         skill_nudge=skill_nudge,
     )
@@ -270,45 +286,6 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
         await handler.handle(message)
     except Exception as e:
         logger.exception(f"Error handling message: {e}")
-
-
-def ensure_skill_installed() -> None:
-    """Install or update bundled skills to ~/.claude/skills/.
-
-    Idempotent: skips individual skills if version matches.
-    Skill content is bundled inside the package so this works via pip or PyInstaller.
-    """
-    import os
-
-    skills = [
-        ("supercc.skill_md", "SKILL_MD", "SKILL_NAME", "SKILL_VERSION"),
-    ]
-
-    for module_path, md_attr, name_attr, ver_attr in skills:
-        try:
-            mod = __import__(module_path, fromlist=[md_attr, name_attr, ver_attr])
-            skill_md = getattr(mod, md_attr)
-            skill_name = getattr(mod, name_attr)
-            skill_version = getattr(mod, ver_attr)
-        except Exception:
-            logger.warning(f"Could not load skill from {module_path}, skipping.")
-            continue
-
-        dest_dir = os.path.expanduser(f"~/.claude/skills/{skill_name}")
-        dest_path = os.path.join(dest_dir, "skill.md")
-        version_marker = os.path.join(dest_dir, ".version")
-
-        current_version = ""
-        if os.path.exists(version_marker):
-            current_version = open(version_marker).read().strip()
-        if current_version == skill_version:
-            logger.info(f"Skill {skill_name} v{skill_version} already installed, skipping.")
-            continue
-
-        os.makedirs(dest_dir, exist_ok=True)
-        open(dest_path, "w", encoding="utf-8").write(skill_md)
-        open(version_marker, "w").write(skill_version)
-        logger.info(f"Installed skill {skill_name} v{skill_version} to {dest_dir}")
 
 
 def write_pid(pid_file: str) -> None:
@@ -377,16 +354,16 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         print("如果确认没有实例在运行，请删除 .instance.lock 文件后重试。")
         sys.exit(1)
 
-    config = load_config(config_path)
+    config = init_config(config_path)
     handler = create_handler(config, data_dir, config_path=config_path)
     _ensure_claude_md(config.claude.approved_directory)
 
     ws_client = FeishuWSClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
-        bot_name=config.feishu.bot_name,
-        bot_open_id=config.feishu.bot_open_id,
-        domain=config.feishu.domain,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        bot_open_id=config.channels.feishu.bot_open_id,
+        domain=config.channels.feishu.domain,
         on_message=lambda msg: handle_message(msg, handler),
         config_path=config_path,
     )
@@ -407,9 +384,6 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     logger.info(f"Starting SuperCC (WS mode) — data: {data_dir}")
 
-    # Auto-install Claude skill for file sending
-    ensure_skill_installed()
-
     # Create media subdirectories
     for sub in ("received_images", "received_files"):
         sub_dir = os.path.join(data_dir, sub)
@@ -421,14 +395,14 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     cron_scheduler.start()
 
     # Ensure skills directory is a git repo (init if needed)
-    from supercc.skill_nudge import _ensure_skills_git_repo
+    from supercc.evolve.skill_nudge import _ensure_skills_git_repo
     _ensure_skills_git_repo(Path(data_dir) / "skills")
 
     # Register daily skill optimization scan
     _register_skill_optimization_job(data_dir, cron_scheduler)
 
     # Register nightly dream job (memory refinement at 3am)
-    from supercc.dream import register_dream_job
+    from supercc.evolve.dream import register_dream_job
     register_dream_job(data_dir)
 
     # CLI 进程在第一条消息到达时才会建立连接（_ensure_connected 懒加载）。
@@ -499,8 +473,8 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     if not os.path.exists(config_path):
         print(f"Error: config file not found: {config_path}")
         return
-    from supercc.config import load_config
-    config = load_config(config_path)
+    from supercc.config import init_config
+    config = init_config(config_path)
 
     # 2. Locate sessions.db (in ~/.supercc/)
     data_dir = str(Path(config_path).parent.resolve())
@@ -520,16 +494,16 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     print(f"Sending to chat: {chat_id}")
 
     # 4. Create FeishuClient
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
     feishu = FeishuClient(
-        app_id=config.feishu.app_id,
-        app_secret=config.feishu.app_secret,
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
     )
 
     # 5. Process each file
     import asyncio
     try:
-        from supercc.feishu.media import guess_file_type
+        from supercc.adapter.feishu.media import guess_file_type
     except ImportError:
         guess_file_type = None
 
@@ -604,13 +578,13 @@ def _run_memory_command(args) -> None:
     feishu_client = None
     feishu_chat_id = None
     try:
-        cfg_path, data_dir = resolve_config_path()
-        config = load_config(cfg_path)
-        from supercc.feishu.client import FeishuClient
+        _, data_dir = resolve_config_path()
+        config = get_config()
+        from supercc.adapter.feishu.client import FeishuClient
         from supercc.claude.session_manager import SessionManager
         feishu_client = FeishuClient(
-            app_id=config.feishu.app_id,
-            app_secret=config.feishu.app_secret,
+            app_id=config.channels.feishu.app_id,
+            app_secret=config.channels.feishu.app_secret,
         )
         sm = SessionManager(db_path=os.path.join(data_dir, "sessions.db"))
         session = sm.get_active_session_by_chat_id()
@@ -759,7 +733,7 @@ def main(args=None):
     try:
         from importlib.metadata import version as _get_version
 
-        _version = _get_version("supercc")
+        _version = _get_version("pysupercc")
     except Exception:
         _version = "dev"
 
@@ -946,15 +920,16 @@ def main(args=None):
         feishu = None
         chat_id = None
         try:
-            cfg_path, data_dir = resolve_config_path()
-            config = load_config(cfg_path)
+            cfg_path, _ = resolve_config_path()
+            init_config(cfg_path)
+            config = get_config()
             db_path = SESSIONS_DB_PATH
 
-            from supercc.feishu.client import FeishuClient
+            from supercc.adapter.feishu.client import FeishuClient
             from supercc.claude.session_manager import SessionManager
             feishu = FeishuClient(
-                app_id=config.feishu.app_id,
-                app_secret=config.feishu.app_secret,
+                app_id=config.channels.feishu.app_id,
+                app_secret=config.channels.feishu.app_secret,
             )
             sm = SessionManager(db_path=db_path)
             session = sm.get_active_session_by_chat_id()
@@ -987,10 +962,12 @@ def main(args=None):
     else:
         cfg_path, data_dir = resolve_config_path()
 
+    # Initialize singleton before any get_config() calls
+    init_config(cfg_path)
+
     # Risk warning must be acknowledged before starting (skip if already accepted)
     if is_installed:
-        from supercc.config import load_config
-        config = load_config(cfg_path)
+        config = get_config()
         if config.bypass_accepted:
             logger.info("Bypass warning already accepted, skipping.")
         else:

@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import re
 
-from supercc.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
-from supercc.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
+from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card
@@ -159,6 +159,8 @@ class ReplyFormatter:
             "MemoryAdd": "🧠",
             "MemoryDelete": "🧠",
             "MemoryClear": "🧠",
+            "FeishuSendFile": "📬",
+            "SkillSearch": "🎯",
         }
 
     def format_text(self, text: str) -> str:
@@ -218,25 +220,30 @@ class ReplyFormatter:
             return f"🤖 **{tool_name}**\n`{tool_input}`"
 
         # Memory MCP tools → 卡片标记（触发 Feishu Interactive Card）
-        elif tool_name and tool_name.startswith("mcp__memory__"):
+        elif tool_name and tool_name.startswith("mcp__SuperCC__Memory"):
+            short_name = tool_name.replace("mcp__SuperCC__", "")
             return self._format_memory_tool(
                 tool_name, tool_input,
                 memory_manager=kwargs.get("memory_manager"),
                 default_project_path=kwargs.get("default_project_path", ""),
             )
 
-        # Read → 提取 file_path，用 backtick 包裹
-        elif tool_name == "Read":
-            return self._format_read_tool(tool_input)
-
         # Cron MCP tools → ⏰ 时钟图标
-        elif tool_name and tool_name.startswith("mcp__cron__"):
+        elif tool_name and tool_name.startswith("mcp__SuperCC__Cron"):
+            short_name = tool_name.replace("mcp__SuperCC__", "")
             icon = "⏰"
-            short = tool_name.replace("mcp__cron__", "")
-            msg = f"{icon} **{short}**"
+            msg = f"{icon} **{short_name}**"
             if tool_input and len(tool_input) <= FEISHU_MAX_MESSAGE_LENGTH - len(msg) - 5:
                 msg += f"\n`{tool_input}`"
             return msg
+
+        # 其他 mcp__SuperCC__ 工具（非 Memory/Cron）→ 去掉前缀后走通用逻辑
+        elif tool_name and tool_name.startswith("mcp__SuperCC__"):
+            tool_name = tool_name.replace("mcp__SuperCC__", "")
+
+        # Read → 提取 file_path，用 backtick 包裹
+        elif tool_name == "Read":
+            return self._format_read_tool(tool_input)
 
         # 其他工具 → backtick 格式（原有逻辑）
         icon = self.tool_icons.get(tool_name, "🤖")
@@ -274,7 +281,7 @@ class ReplyFormatter:
         except json.JSONDecodeError:
             args = {}
 
-        short = tool_name.replace("mcp__memory__", "")
+        short = tool_name.replace("mcp__SuperCC__", "")
         # MemoryAddProj → add_proj → card_type="add", scope="proj"
         # MemoryListUser → list_user → card_type="list", scope="user"
         parts = re.split(r"(?=[A-Z])", short.replace("Memory", ""))

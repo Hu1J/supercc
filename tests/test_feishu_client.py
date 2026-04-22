@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import asyncio
 import pytest
 from unittest.mock import MagicMock, patch
-from supercc.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 
 
 def test_parse_incoming_text_message():

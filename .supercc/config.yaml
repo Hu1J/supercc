@@ -1,0 +1,29 @@
+auth:
+  allowed_users:
+  - ou_f1351bcb60e0d57b57bade5b550ed328
+bypass_accepted: true
+channels:
+  dingtalk:
+    app_key: ''
+    app_secret: ''
+    enabled: false
+  feishu:
+    app_id: cli_a941090a98a11bca
+    app_secret: k2Bqsu16c57VZJZNVJLg7eokenIognLS
+    bot_name: Claude
+    bot_open_id: ou_aefdfff57b5e3fcdd92f43fe6206cf01
+    domain: feishu
+    enabled: true
+    groups:
+      oc_da713f64b5c4ae3cb36082bb448b0958:
+        allow_from: []
+        enabled: true
+        require_mention: true
+claude:
+  approved_directory: /Users/x/Desktop/创业项目/supercc
+  cli_path: claude
+  max_turns: 50
+skill_nudge:
+  current_user: ''
+  enabled: true
+  interval: 10

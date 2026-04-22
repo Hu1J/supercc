@@ -9,18 +9,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from supercc.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
 from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
-from supercc.claude.cron_tools import CRON_SYSTEM_GUIDE
+from supercc.claude.cron_tools import CRON_GUIDE
 from supercc.claude.session_manager import SessionManager
-from supercc.skill_nudge import SkillNudge, trigger_skill_review
-from supercc.format.reply_formatter import ReplyFormatter
-from supercc.format.edit_diff import _DiffMarker, _MemoryCardMarker
-from supercc.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
+from supercc.evolve.skill_nudge import SkillNudge, trigger_skill_review
+from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
+from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +193,12 @@ class MessageHandler:
                 self.claude_memory._init_options()
 
             async def stream_callback(claude_msg):
-                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__memory__"):
-                    result = self.formatter.format_tool_call(claude_msg.tool_name, claude_msg.tool_input)
+                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                    result = self.formatter.format_tool_call(
+                        claude_msg.tool_name, claude_msg.tool_input,
+                        memory_manager=self.memory_manager,
+                        default_project_path=getattr(self, "_current_project_path", ""),
+                    )
                     if isinstance(result, _MemoryCardMarker):
                         card_md = self._render_memory_card(result)
                         await self._safe_send(message.chat_id, message.message_id, self.formatter.format_text(card_md))
@@ -427,7 +431,7 @@ class MessageHandler:
         system_prompt_append = (
             MEMORY_SYSTEM_GUIDE
             + FEISHU_FILE_GUIDE
-            + CRON_SYSTEM_GUIDE
+            + CRON_GUIDE
             + self.memory_manager.inject_context(
                 user_open_id=message.user_open_id,
                 project_path=project_path,
@@ -464,25 +468,53 @@ class MessageHandler:
         elif cmd == "/status":
             import os
             from supercc import __version__
+
+            def _ver_gt(current: str, latest: str) -> bool:
+                """简单版本比较：只比较数字段。"""
+                import re
+                def nums(v):
+                    return [int(x) for x in re.findall(r'\d+', v)]
+                return nums(latest) > nums(current)
+
             session = self.sessions.get_active_session(message.user_open_id)
             if not session:
-                return HandlerResult(
-                    success=True,
-                    response_text="暂无活跃会话",
-                )
+                await self._safe_send(message.chat_id, message.message_id, "暂无活跃会话")
+                return HandlerResult(success=True)
+
+            # 检查是否有新版本
+            title = f"🐲 **SuperCC v{__version__}**"
+            try:
+                from supercc.restarter import check_version
+                current_ver, latest_ver = await asyncio.to_thread(check_version)
+                if _ver_gt(current_ver, latest_ver):
+                    title = f"🐲 **SuperCC v{__version__} — 🌟可更新 v{latest_ver}🌟**"
+            except Exception:
+                pass  # 版本检查失败不影响主流程
+
             sdk_sid = session.sdk_session_id or "(未建立)"
-            return HandlerResult(
-                success=True,
-                response_text=(
-                    f"📊 会话状态\n"
-                    f"版本: {__version__}\n"
-                    f"PID: {os.getpid()}\n"
-                    f"会话ID: {sdk_sid}\n"
-                    f"消息数: {session.message_count}\n"
-                    f"累计费用: ${session.total_cost:.4f}\n"
-                    f"工作目录: {session.project_path}"
-                ),
-            )
+            card = {
+                "schema": "2.0",
+                "config": {"wide_screen_mode": True},
+                "body": {
+                    "elements": [
+                        {
+                            "tag": "markdown",
+                            "content": (
+                                f"{title}\n\n"
+                                f"| 项目 | 值 |\n"
+                                f"|------|----|\n"
+                                f"| 进程ID | `{os.getpid()}` |\n"
+                                f"| 会话ID | `{sdk_sid}` |\n"
+                                f"| 消息数 | {session.message_count} |\n"
+                                f"| 累计费用 | `${session.total_cost:.4f}` |\n"
+                                f"| 工作目录 | `{session.project_path}` |"
+                            ),
+                        },
+                    ]
+                },
+            }
+            await self.feishu.send_card(message.chat_id, card)
+            return HandlerResult(success=True)
 
         elif cmd == "/stop":
             return await self._handle_stop(message)
@@ -622,7 +654,7 @@ class MessageHandler:
         except json.JSONDecodeError:
             args = {}
 
-        short = marker.tool_name.replace("mcp__memory__", "")
+        short = marker.tool_name.replace("mcp__SuperCC__", "")
         scope = "proj" if "Proj" in short else "user"
         card_type = marker.card_type or ""
 
@@ -999,7 +1031,7 @@ class MessageHandler:
                         await accumulator.flush()
                         # 记忆工具传入 memory_manager 和默认 project_path
                         kwargs = {}
-                        if claude_msg.tool_name.startswith("mcp__memory__"):
+                        if claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
                             kwargs["memory_manager"] = self.memory_manager
                             kwargs["default_project_path"] = getattr(self, "_current_project_path", "")
                         result = self.formatter.format_tool_call(
@@ -1359,7 +1391,7 @@ class MessageHandler:
             文件/音频用 [File: /path] / [Audio: /path] 格式告知 AI 附件内容，
             AI 会通过 Read 工具读取本地文件。
         """
-        from supercc.feishu.media import (
+        from supercc.adapter.feishu.media import (
             make_image_path,
             make_file_path,
             save_bytes,

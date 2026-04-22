@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from supercc.feishu.media import guess_file_type
+from supercc.adapter.feishu.media import guess_file_type
 
 
 class TestGuessFileType:

@@ -10,6 +10,42 @@ import yaml
 # sessions.db 固定放在家目录下，不同项目通过 session.project_path 区分
 SESSIONS_DB_PATH = str(Path.home() / ".supercc" / "sessions.db")
 
+# ── 全局单例 ──────────────────────────────────────────────────────────────────
+_cfg_instance: Config | None = None
+_cfg_path: str | None = None
+
+
+def init_config(path: str, data_dir: str = "") -> Config:
+    """初始化全局单例 Config 对象。
+
+    应用启动时调用一次，之后所有地方用 get_config() 获取同一对象。
+    所有变更直接修改返回的 cfg 对象，最后 write_config(cfg) 写回磁盘。
+    """
+    global _cfg_instance, _cfg_path
+    _cfg_instance = load_config(path, data_dir)
+    _cfg_path = path
+    return _cfg_instance
+
+
+def get_config() -> Config:
+    """获取全局单例 Config 对象。
+
+    必须在 init_config() 之后调用。
+    """
+    if _cfg_instance is None:
+        raise RuntimeError("Config not initialized. Call init_config(path) first.")
+    return _cfg_instance
+
+
+def write_config(cfg: Config) -> None:
+    """将 cfg 对象写回磁盘（使用 init_config 时保存的路径）。
+
+    所有对 config 的变更完成后调用此方法持久化。
+    """
+    if _cfg_path is None:
+        raise RuntimeError("Config path not set. Call init_config(path) first.")
+    _write_config_to_path(_cfg_path, cfg)
+
 
 @dataclass
 class GroupConfigEntry:
@@ -24,13 +60,27 @@ GroupConfig = Dict[str, GroupConfigEntry]
 
 
 @dataclass
-class FeishuConfig:
-    app_id: str
-    app_secret: str
+class FeishuChannelConfig:
+    enabled: bool = True
+    app_id: str = ""
+    app_secret: str = ""
     bot_name: str = "Claude"
     bot_open_id: str = ""        # 机器人的 open_id，用于检测群聊 @CC
     domain: str = "feishu"
     groups: dict = field(default_factory=dict)  # group_id -> GroupConfigEntry dict
+
+
+@dataclass
+class DingTalkChannelConfig:
+    enabled: bool = False
+    app_key: str = ""
+    app_secret: str = ""
+
+
+@dataclass
+class ChannelsConfig:
+    feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
+    dingtalk: DingTalkChannelConfig = field(default_factory=DingTalkChannelConfig)
 
 
 @dataclass
@@ -54,7 +104,7 @@ class SkillNudgeConfig:
 
 @dataclass
 class Config:
-    feishu: FeishuConfig
+    channels: ChannelsConfig
     auth: AuthConfig
     claude: ClaudeConfig
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
@@ -85,21 +135,35 @@ def load_config(path: str, data_dir: str = "") -> Config:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
+    # Migrate old-format config (feishu at top level) to new channels: format
+    if "channels" not in raw and "feishu" in raw:
+        raw["channels"] = {
+            "feishu": raw.pop("feishu"),
+            "dingtalk": {"enabled": False},
+        }
+        with open(path, "w") as f:
+            yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
     # Deserialize groups: convert raw dicts to GroupConfigEntry objects
     # Filter out unknown fields to tolerate future config additions gracefully.
     _known_group_keys = {"enabled", "require_mention", "allow_from"}
-    raw_groups = raw.get("feishu", {}).get("groups", {})
+    raw_groups = raw.get("channels", {}).get("feishu", {}).get("groups", {})
     groups = {
         gid: GroupConfigEntry(**{k: v for k, v in gentry.items() if k in _known_group_keys})
         for gid, gentry in raw_groups.items()
     }
 
-    feishu_raw = raw.get("feishu", {}).copy()
+    feishu_raw = raw.get("channels", {}).get("feishu", {}).copy()
     feishu_raw["groups"] = groups
-    feishu_cfg = FeishuConfig(**feishu_raw)
+    feishu_cfg = FeishuChannelConfig(**feishu_raw)
+
+    dingtalk_raw = raw.get("channels", {}).get("dingtalk", {})
+    dingtalk_cfg = DingTalkChannelConfig(**dingtalk_raw)
+
+    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
 
     return Config(
-        feishu=feishu_cfg,
+        channels=channels_cfg,
         auth=AuthConfig(**raw.get("auth", {})),
         claude=ClaudeConfig(**raw.get("claude", {})),
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
@@ -117,38 +181,77 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 storage_db_path: str = "",
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
-    """Save a complete config to a YAML file."""
-    feishu_cfg = {
-        "app_id": feishu_app_id,
-        "app_secret": feishu_app_secret,
-        "bot_name": bot_name,
-        "bot_open_id": bot_open_id,
-        "domain": domain,
-    }
-    if groups:
-        feishu_cfg["groups"] = {
-            gid: {
-                "enabled": entry.enabled,
-                "require_mention": entry.require_mention,
-                "allow_from": entry.allow_from,
-            }
-            for gid, entry in groups.items()
+    """Save a complete config to a YAML file (legacy param-based signature)."""
+    cfg = Config(
+        channels=ChannelsConfig(
+            feishu=FeishuChannelConfig(
+                enabled=True,
+                app_id=feishu_app_id,
+                app_secret=feishu_app_secret,
+                bot_name=bot_name,
+                bot_open_id=bot_open_id,
+                domain=domain,
+                groups=groups or {},
+            ),
+            dingtalk=DingTalkChannelConfig(enabled=False),
+        ),
+        auth=AuthConfig(allowed_users=allowed_users),
+        claude=ClaudeConfig(
+            cli_path=claude_cli_path,
+            max_turns=claude_max_turns,
+            approved_directory=claude_approved_directory,
+        ),
+        bypass_accepted=bypass_accepted,
+    )
+    _write_config_to_path(path, cfg)
+
+
+def _write_config_to_path(path: str, cfg: Config) -> None:
+    """内部函数：将 cfg 写入指定路径。保留 path 参数给跨场景使用。"""
+    _known_group_keys = {"enabled", "require_mention", "allow_from"}
+    feishu_groups_raw = {}
+    for gid, entry in cfg.channels.feishu.groups.items():
+        feishu_groups_raw[gid] = {
+            "enabled": entry.enabled,
+            "require_mention": entry.require_mention,
+            "allow_from": entry.allow_from,
         }
-    config = {
-        "feishu": feishu_cfg,
+
+    raw = {
+        "channels": {
+            "feishu": {
+                "enabled": cfg.channels.feishu.enabled,
+                "app_id": cfg.channels.feishu.app_id,
+                "app_secret": cfg.channels.feishu.app_secret,
+                "bot_name": cfg.channels.feishu.bot_name,
+                "bot_open_id": cfg.channels.feishu.bot_open_id,
+                "domain": cfg.channels.feishu.domain,
+                "groups": feishu_groups_raw,
+            },
+            "dingtalk": {
+                "enabled": cfg.channels.dingtalk.enabled,
+                "app_key": cfg.channels.dingtalk.app_key,
+                "app_secret": cfg.channels.dingtalk.app_secret,
+            },
+        },
         "auth": {
-            "allowed_users": allowed_users,
+            "allowed_users": cfg.auth.allowed_users,
         },
         "claude": {
-            "cli_path": claude_cli_path,
-            "max_turns": claude_max_turns,
-            "approved_directory": claude_approved_directory,
+            "cli_path": cfg.claude.cli_path,
+            "max_turns": cfg.claude.max_turns,
+            "approved_directory": cfg.claude.approved_directory,
         },
-        "bypass_accepted": bypass_accepted,
+        "skill_nudge": {
+            "enabled": cfg.skill_nudge.enabled,
+            "interval": cfg.skill_nudge.interval,
+            "current_user": cfg.skill_nudge.current_user,
+        },
+        "bypass_accepted": cfg.bypass_accepted,
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
 
 
 def register_group_config(config_path: str, group_id: str, entry: GroupConfigEntry | None = None) -> bool:
@@ -159,39 +262,21 @@ def register_group_config(config_path: str, group_id: str, entry: GroupConfigEnt
     if entry is None:
         entry = GroupConfigEntry()
 
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
+    cfg = load_config(config_path)
 
-    feishu_section = raw.get("feishu")
-    if feishu_section is None:
-        # Config file has no feishu section — create it with a groups subkey
-        raw["feishu"] = {"groups": {}}
-        feishu_section = raw["feishu"]
-
-    groups = feishu_section.get("groups", {})
-    if group_id in groups:
+    if group_id in cfg.channels.feishu.groups:
         return False  # already registered
 
-    groups[group_id] = {
-        "enabled": entry.enabled,
-        "require_mention": entry.require_mention,
-        "allow_from": entry.allow_from,
-    }
-    feishu_section["groups"] = groups
-
-    with open(config_path, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
-
+    cfg.channels.feishu.groups[group_id] = entry
+    _write_config_to_path(config_path, cfg)
     return True  # newly registered
 
 
 def accept_bypass_warning(config_path: str) -> None:
     """Record that the bypass permissions risk warning has been accepted."""
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-    raw["bypass_accepted"] = True
-    with open(config_path, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+    cfg = load_config(config_path)
+    cfg.bypass_accepted = True
+    _write_config_to_path(config_path, cfg)
 
 
 README_CONTENT = """# .supercc

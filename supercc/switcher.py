@@ -9,10 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-import yaml
 
 if TYPE_CHECKING:
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
 
 
 class SwitchError(Exception): pass
@@ -137,6 +136,8 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
 
     Returns True if config was copied, False if current project has no config (skip copy).
     """
+    from supercc.config import load_config, _write_config_to_path
+
     current_config_path = _config_file_path(current_path)
     target_config_path = _target_config_file_path(target_path)
 
@@ -144,22 +145,9 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
     if not os.path.exists(current_config_path):
         return False
 
-    with open(current_config_path) as f:
-        raw = yaml.safe_load(f)
-
-    # Rewrite claude.approved_directory to target path
-    if "claude" not in raw:
-        raw["claude"] = {}
-    raw["claude"]["approved_directory"] = target_path
-
-    # Remove storage section (sessions now live in per-project .supercc/)
-    raw.pop("storage", None)
-
-    # Ensure .supercc dir exists in target
-    Path(target_config_path).parent.mkdir(parents=True, exist_ok=True)
-
-    with open(target_config_path, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+    cfg = load_config(current_config_path)
+    cfg.claude.approved_directory = target_path
+    _write_config_to_path(target_config_path, cfg)
     return True
 
 
@@ -176,8 +164,8 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
 
     # Start SuperCC via the installed binary
     data_dir = os.path.join(target_path, ".supercc")
-    stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
-    stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
+    stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
+    stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
     proc = subprocess.Popen(
         ["supercc", "start"],
         cwd=target_path,

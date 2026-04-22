@@ -225,7 +225,7 @@ class _MemoryCardMarker:
     __slots__ = ("tool_name", "card_type", "entries", "tool_input")
 
     def __init__(self, tool_name: str, card_type: str, entries: list, tool_input: str):
-        self.tool_name = tool_name      # 原始工具名，如 "mcp__memory__MemoryAddProj"
+        self.tool_name = tool_name      # 原始工具名，如 "mcp__SuperCC__MemoryAddProj"
         self.card_type = card_type      # add | update | delete | list | search
         self.entries = entries          # list[dict] — 查库后的实际条目
         self.tool_input = tool_input    # 原始 JSON 入参
@@ -238,7 +238,7 @@ class _MemoryCardMarker:
         except _json.JSONDecodeError:
             args = {}
 
-        short = self.tool_name.replace("mcp__memory__", "")
+        short = self.tool_name.replace("mcp__SuperCC__", "")
         scope = "proj" if "Proj" in short else "user"
         card_type = self.card_type or ""
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from supercc.feishu.client import FeishuClient
+    from supercc.adapter.feishu.client import FeishuClient
 
 
 class RestartError(Exception): pass
@@ -269,8 +269,8 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
     data_dir = os.path.join(project_path, ".supercc")
     pid_file = os.path.join(data_dir, "supercc.pid")
 
-    stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
-    stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
+    stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
+    stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
     try:
         proc = subprocess.Popen(
             [package, "start"],
