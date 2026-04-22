@@ -138,8 +138,16 @@ def _ensure_symlinks(skills_dir: Path, symlink_dir: Path | None = None) -> None:
         symlink_path = symlink_dir / skill_path.name
         if symlink_path.exists() or symlink_path.is_symlink():
             if symlink_path.resolve() == skill_path.resolve():
+                logger.debug(f"[skill_nudge] symlink {symlink_path.name} already points to {skill_path}, skipping")
                 continue
-            symlink_path.unlink()
+            try:
+                symlink_path.unlink()
+            except PermissionError:
+                # Directory symlink on macOS - unlink fails, use rmdir
+                if symlink_path.is_dir():
+                    symlink_path.rmdir()
+                else:
+                    raise
         symlink_path.symlink_to(skill_path)
         logger.info(f"[skill_nudge] symlinked {skill_path.name}")
 

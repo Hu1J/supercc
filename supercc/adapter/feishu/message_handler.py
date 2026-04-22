@@ -482,16 +482,31 @@ class MessageHandler:
                 return HandlerResult(success=True)
 
             # 检查是否有新版本
-            title = f"🐲 **SuperCC v{__version__}**"
+            title = f"🐲龙王 **SuperCC v{__version__}**"
             try:
                 from supercc.restarter import check_version
                 current_ver, latest_ver = await asyncio.to_thread(check_version)
                 if _ver_gt(current_ver, latest_ver):
-                    title = f"🐲 **SuperCC v{__version__} — 🌟可更新 v{latest_ver}🌟**"
+                    title = f"🐲龙王 **SuperCC v{__version__} — 🌟可更新 v{latest_ver}🌟**"
             except Exception:
                 pass  # 版本检查失败不影响主流程
 
             sdk_sid = session.sdk_session_id or "(未建立)"
+
+            # 统计技能数量（每个技能是一个含 SKILL.md 的目录）
+            def _count_skills(skills_dir: str) -> int:
+                try:
+                    from pathlib import Path
+                    p = Path(skills_dir)
+                    if not p.exists():
+                        return 0
+                    return sum(1 for item in p.iterdir() if item.is_dir() and (item / "SKILL.md").exists())
+                except Exception:
+                    return 0
+
+            project_skills = _count_skills(os.path.join(session.project_path, ".supercc", "skills"))
+            global_skills = _count_skills(os.path.expanduser("~/.claude/skills"))
+
             card = {
                 "schema": "2.0",
                 "config": {"wide_screen_mode": True},
@@ -507,7 +522,9 @@ class MessageHandler:
                                 f"| 会话ID | `{sdk_sid}` |\n"
                                 f"| 消息数 | {session.message_count} |\n"
                                 f"| 累计费用 | `${session.total_cost:.4f}` |\n"
-                                f"| 工作目录 | `{session.project_path}` |"
+                                f"| 工作目录 | `{session.project_path}` |\n"
+                                f"| 项目技能数 | {project_skills} |\n"
+                                f"| 全局技能数 | {global_skills} |"
                             ),
                         },
                     ]
@@ -1291,7 +1308,7 @@ class MessageHandler:
 
         # 构建单条 markdown 内容
         card_lines = [
-            f"📊 **Git Status - {branch}**",
+            f"🌟 **Git Status - {branch}**",
             "",
             "📝 **变更文件**",
         ]
