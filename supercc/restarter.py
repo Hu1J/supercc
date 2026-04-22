@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -272,8 +273,10 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
     stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
     try:
+        # Use sys.executable to find the Python that has supercc installed,
+        # then run "supercc start" (the console script entry point, NOT the pip package name)
         proc = subprocess.Popen(
-            [package, "start"],
+            [sys.executable, "-m", "supercc", "start"],
             cwd=project_path,
             stdin=subprocess.DEVNULL,
             stdout=stdout_log,
