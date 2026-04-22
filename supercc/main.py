@@ -90,7 +90,7 @@ import filelock
 
 _active_lock: "filelock.FileLock | None" = None
 
-from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
+from supercc.config import init_config, get_config, resolve_config_path, SESSIONS_DB_PATH
 from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.adapter.feishu.ws_client import FeishuWSClient
 from supercc.adapter.feishu.message_handler import MessageHandler
@@ -377,7 +377,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         print("如果确认没有实例在运行，请删除 .instance.lock 文件后重试。")
         sys.exit(1)
 
-    config = load_config(config_path)
+    config = init_config(config_path)
     handler = create_handler(config, data_dir, config_path=config_path)
     _ensure_claude_md(config.claude.approved_directory)
 
@@ -499,8 +499,8 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     if not os.path.exists(config_path):
         print(f"Error: config file not found: {config_path}")
         return
-    from supercc.config import load_config
-    config = load_config(config_path)
+    from supercc.config import init_config
+    config = init_config(config_path)
 
     # 2. Locate sessions.db (in ~/.supercc/)
     data_dir = str(Path(config_path).parent.resolve())
@@ -604,8 +604,8 @@ def _run_memory_command(args) -> None:
     feishu_client = None
     feishu_chat_id = None
     try:
-        cfg_path, data_dir = resolve_config_path()
-        config = load_config(cfg_path)
+        _, data_dir = resolve_config_path()
+        config = get_config()
         from supercc.adapter.feishu.client import FeishuClient
         from supercc.claude.session_manager import SessionManager
         feishu_client = FeishuClient(
@@ -946,8 +946,9 @@ def main(args=None):
         feishu = None
         chat_id = None
         try:
-            cfg_path, data_dir = resolve_config_path()
-            config = load_config(cfg_path)
+            cfg_path, _ = resolve_config_path()
+            init_config(cfg_path)
+            config = get_config()
             db_path = SESSIONS_DB_PATH
 
             from supercc.adapter.feishu.client import FeishuClient
@@ -987,10 +988,12 @@ def main(args=None):
     else:
         cfg_path, data_dir = resolve_config_path()
 
+    # Initialize singleton before any get_config() calls
+    init_config(cfg_path)
+
     # Risk warning must be acknowledged before starting (skip if already accepted)
     if is_installed:
-        from supercc.config import load_config
-        config = load_config(cfg_path)
+        config = get_config()
         if config.bypass_accepted:
             logger.info("Bypass warning already accepted, skipping.")
         else:

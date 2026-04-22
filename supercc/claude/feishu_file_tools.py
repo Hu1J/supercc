@@ -24,10 +24,9 @@ def _resolve_path(file_path: str) -> str:
     # 相对路径：尝试从 config 里的 approved_directory 解析
     candidates = []
     try:
-        from supercc.config import load_config, resolve_config_path, SESSIONS_DB_PATH
-        cfg_path, _ = resolve_config_path()
-        config = load_config(cfg_path)
-        approved = config.claude.approved_directory
+        from supercc.config import get_config
+        cfg = get_config()
+        approved = cfg.claude.approved_directory
         if approved:
             candidates.append(os.path.join(approved, file_path))
     except Exception:
@@ -49,13 +48,12 @@ FEISHU_FILE_GUIDE = """
 
 def _get_feishu_client() -> "FeishuClient":
     """延迟初始化 FeishuClient（读取 config.yaml）。"""
-    from supercc.config import load_config, resolve_config_path
+    from supercc.config import get_config
     from supercc.adapter.feishu.client import FeishuClient
-    cfg_path, _ = resolve_config_path()
-    config = load_config(cfg_path)
+    cfg = get_config()
     return FeishuClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
+        app_id=cfg.channels.feishu.app_id,
+        app_secret=cfg.channels.feishu.app_secret,
     )
 
 

@@ -14,33 +14,18 @@ logger = logging.getLogger(__name__)
 def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted: bool = False) -> None:
     """Write the app credentials and defaults to config.yaml.
 
-    Uses load_config + write_config to preserve existing settings
+    Uses init_config + get_config + write_config to preserve existing settings
     (e.g. groups) when re-running the install flow.
     """
     from supercc.config import (
-        load_config, write_config, Config, ChannelsConfig,
-        FeishuChannelConfig, AuthConfig, ClaudeConfig,
+        init_config, get_config, write_config, _write_config_to_path,
+        Config, ChannelsConfig, FeishuChannelConfig, AuthConfig, ClaudeConfig,
     )
 
     Path(config_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Load existing config to preserve groups, etc. (load_config handles migration)
-    try:
-        cfg = load_config(config_path)
-        # Update with new credentials
-        cfg.channels.feishu.enabled = True
-        cfg.channels.feishu.app_id = result.app_id
-        cfg.channels.feishu.app_secret = result.app_secret
-        cfg.channels.feishu.bot_name = "Claude"
-        cfg.channels.feishu.bot_open_id = ""  # auto-probed at startup
-        cfg.channels.feishu.domain = result.domain
-        cfg.auth.allowed_users = [result.user_open_id]
-        cfg.claude.cli_path = "claude"
-        cfg.claude.max_turns = 50
-        cfg.claude.approved_directory = str(Path(config_path).resolve().parent.parent)
-        cfg.bypass_accepted = bypass_accepted
-    except Exception:
-        # Fresh install — create new config
+    # Fresh install (file doesn't exist or is empty): create new config directly
+    if not Path(config_path).exists() or Path(config_path).stat().st_size == 0:
         cfg = Config(
             channels=ChannelsConfig(
                 feishu=FeishuChannelConfig(
@@ -61,8 +46,25 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
             ),
             bypass_accepted=bypass_accepted,
         )
+        _write_config_to_path(config_path, cfg)
+        print(f"\n✅ 配置已保存到 {config_path}")
+        return
 
-    write_config(config_path, cfg)
+    # Re-install or update: use singleton pattern to preserve existing groups
+    init_config(config_path)
+    cfg = get_config()
+    cfg.channels.feishu.enabled = True
+    cfg.channels.feishu.app_id = result.app_id
+    cfg.channels.feishu.app_secret = result.app_secret
+    cfg.channels.feishu.bot_name = "Claude"
+    cfg.channels.feishu.bot_open_id = ""  # auto-probed at startup
+    cfg.channels.feishu.domain = result.domain
+    cfg.auth.allowed_users = [result.user_open_id]
+    cfg.claude.cli_path = "claude"
+    cfg.claude.max_turns = 50
+    cfg.claude.approved_directory = str(Path(config_path).resolve().parent.parent)
+    cfg.bypass_accepted = bypass_accepted
+    write_config(cfg)
     print(f"\n✅ 配置已保存到 {config_path}")
 
 

@@ -136,7 +136,7 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
 
     Returns True if config was copied, False if current project has no config (skip copy).
     """
-    from supercc.config import load_config, write_config
+    from supercc.config import load_config, _write_config_to_path
 
     current_config_path = _config_file_path(current_path)
     target_config_path = _target_config_file_path(target_path)
@@ -147,7 +147,7 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
 
     cfg = load_config(current_config_path)
     cfg.claude.approved_directory = target_path
-    write_config(target_config_path, cfg)
+    _write_config_to_path(target_config_path, cfg)
     return True
 
 

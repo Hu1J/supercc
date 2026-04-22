@@ -161,13 +161,13 @@ class FeishuWSClient:
         if not self._config_path:
             return
         try:
-            from supercc.config import load_config, write_config
-            cfg = load_config(self._config_path)
+            from supercc.config import get_config, write_config
+            cfg = get_config()
             if cfg.channels.feishu.bot_open_id == bot_id:
                 return  # already set to same value
             cfg.channels.feishu.bot_open_id = bot_id
-            write_config(self._config_path, cfg)
-            logger.info(f"Wrote bot_open_id={bot_id} back to {self._config_path}")
+            write_config(cfg)
+            logger.info(f"Wrote bot_open_id={bot_id} back to config")
         except Exception as e:
             logger.warning(f"Failed to write bot_open_id back to config: {e}")
 
