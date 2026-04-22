@@ -46,11 +46,6 @@ class ClaudeConfig:
 
 
 @dataclass
-class StorageConfig:
-    db_path: str = SESSIONS_DB_PATH
-
-
-@dataclass
 class SkillNudgeConfig:
     enabled: bool = True
     interval: int = 10
@@ -62,7 +57,6 @@ class Config:
     feishu: FeishuConfig
     auth: AuthConfig
     claude: ClaudeConfig
-    storage: StorageConfig
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
     data_dir: str = ""
     bypass_accepted: bool = False
@@ -108,7 +102,6 @@ def load_config(path: str, data_dir: str = "") -> Config:
         feishu=feishu_cfg,
         auth=AuthConfig(**raw.get("auth", {})),
         claude=ClaudeConfig(**raw.get("claude", {})),
-        storage=StorageConfig(**raw.get("storage", {})),
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
@@ -121,7 +114,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 allowed_users: list[str],
                 claude_cli_path: str, claude_max_turns: int,
                 claude_approved_directory: str,
-                storage_db_path: str,
+                storage_db_path: str = "",
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
     """Save a complete config to a YAML file."""
@@ -150,9 +143,6 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
             "cli_path": claude_cli_path,
             "max_turns": claude_max_turns,
             "approved_directory": claude_approved_directory,
-        },
-        "storage": {
-            "db_path": storage_db_path,
         },
         "bypass_accepted": bypass_accepted,
     }
@@ -216,6 +206,8 @@ This directory is created automatically by `supercc` and contains the config for
 
 Note: sessions.db and memories.db live in ~/.supercc/ (home dir, shared across projects).
 Other data (cron, logs, skills, media, pid) lives in {project}/.supercc/.
+
+The `storage` section is no longer needed — sessions.db path is fixed to ~/.supercc/sessions.db.
 
 ## Git Ignore
 
