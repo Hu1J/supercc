@@ -380,9 +380,9 @@ class SessionManager:
 
     def _init_memories_db(self):
         """Initialize memories DB (separate file from sessions)."""
-        from cc_feishu_bridge.claude.memory_manager import get_memory_manager
+        from supercc.claude.memory_manager import get_memory_manager
         # Initialise the memories DB lazily — get_memory_manager creates the file
-        # in ~/.cc-feishu-bridge/ on first access.
+        # in ~/.supercc/ on first access.
         try:
             get_memory_manager()
         except Exception:

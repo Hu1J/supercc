@@ -1,5 +1,5 @@
 import tempfile, os
-from cc_feishu_bridge.feishu.token_store import UserTokenStore
+from supercc.feishu.token_store import UserTokenStore
 
 def test_store_and_retrieve():
     with tempfile.TemporaryDirectory() as tmpdir:

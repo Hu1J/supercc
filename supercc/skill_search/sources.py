@@ -8,7 +8,7 @@ from typing import Optional
 
 import httpx
 
-from cc_feishu_bridge.skill_search.models import SkillMeta
+from supercc.skill_search.models import SkillMeta
 
 logger = logging.getLogger(__name__)
 

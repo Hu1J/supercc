@@ -9,8 +9,8 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from cc_feishu_bridge.skill_search.registry import SkillSearchRegistry
-from cc_feishu_bridge.skill_search.sources import (
+from supercc.skill_search.registry import SkillSearchRegistry
+from supercc.skill_search.sources import (
     SkillsShSource,
     GitHubSource,
     HermesIndexSource,

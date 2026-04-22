@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from cc_feishu_bridge.security.validator import SecurityValidator
+from supercc.security.validator import SecurityValidator
 
 
 @pytest.fixture

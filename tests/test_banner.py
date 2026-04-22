@@ -1,7 +1,7 @@
 """Tests for banner module."""
 import os
 import tempfile
-from cc_feishu_bridge.banner import print_banner, write_log_banner
+from supercc.banner import print_banner, write_log_banner
 
 
 class TestPrintBanner:
@@ -24,7 +24,7 @@ class TestWriteLogBanner:
             open(log_path, "w").close()
             write_log_banner(log_path, "0.1.4")
             content = open(log_path).read()
-            assert "cc-feishu-bridge" in content
+            assert "SuperCC" in content
             assert "0.1.4" in content
             assert "started at" in content
 
@@ -45,4 +45,4 @@ class TestWriteLogBanner:
             assert not os.path.exists(os.path.dirname(log_path))
             write_log_banner(log_path, "0.1.4")
             assert os.path.exists(log_path)
-            assert "cc-feishu-bridge" in open(log_path).read()
+            assert "SuperCC" in open(log_path).read()

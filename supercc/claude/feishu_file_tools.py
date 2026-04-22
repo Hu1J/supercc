@@ -24,7 +24,7 @@ def _resolve_path(file_path: str) -> str:
     # 相对路径：尝试从 config 里的 approved_directory 解析
     candidates = []
     try:
-        from cc_feishu_bridge.config import load_config, resolve_config_path
+        from supercc.config import load_config, resolve_config_path
         cfg_path, data_dir = resolve_config_path()
         config = load_config(cfg_path)
         approved = config.claude.approved_directory
@@ -49,8 +49,8 @@ FEISHU_FILE_GUIDE = """
 
 def _get_feishu_client() -> "FeishuClient":
     """延迟初始化 FeishuClient（读取 config.yaml）。"""
-    from cc_feishu_bridge.config import load_config, resolve_config_path
-    from cc_feishu_bridge.feishu.client import FeishuClient
+    from supercc.config import load_config, resolve_config_path
+    from supercc.feishu.client import FeishuClient
     cfg_path, _ = resolve_config_path()
     config = load_config(cfg_path)
     return FeishuClient(
@@ -61,8 +61,8 @@ def _get_feishu_client() -> "FeishuClient":
 
 def _get_session_manager() -> "SessionManager":
     """延迟初始化 SessionManager。"""
-    from cc_feishu_bridge.config import resolve_config_path
-    from cc_feishu_bridge.claude.session_manager import SessionManager
+    from supercc.config import resolve_config_path
+    from supercc.claude.session_manager import SessionManager
     _, data_dir = resolve_config_path()
     db_path = os.path.join(data_dir, "sessions.db")
     return SessionManager(db_path=db_path)
@@ -77,8 +77,8 @@ def _get_chat_id() -> Optional[str]:
 
 async def _send_single_file(file_path: str, chat_id: str) -> str:
     """发送单个文件，返回 msg_id 或抛出异常。"""
-    from cc_feishu_bridge.feishu.media import guess_file_type
-    from cc_feishu_bridge.feishu.client import FeishuClient
+    from supercc.feishu.media import guess_file_type
+    from supercc.feishu.client import FeishuClient
 
     feishu = _get_feishu_client()
     resolved_path = _resolve_path(file_path)

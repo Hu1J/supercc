@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 def test_guess_file_type_image():
     """图片文件被正确识别为图片类型"""
-    from cc_feishu_bridge.feishu.media import guess_file_type
+    from supercc.feishu.media import guess_file_type
     assert guess_file_type(".png") == "png"
     assert guess_file_type(".jpg") == "png"
     assert guess_file_type(".gif") == "gif"
@@ -20,7 +20,7 @@ def test_guess_file_type_image():
 
 def test_guess_file_type_doc():
     """文档文件被识别为对应类型"""
-    from cc_feishu_bridge.feishu.media import guess_file_type
+    from supercc.feishu.media import guess_file_type
     assert guess_file_type(".pdf") == "pdf"
     assert guess_file_type(".docx") == "doc"
     assert guess_file_type(".xlsx") == "xls"
@@ -28,7 +28,7 @@ def test_guess_file_type_doc():
 
 def test_guess_file_type_stream():
     """未知类型默认 stream"""
-    from cc_feishu_bridge.feishu.media import guess_file_type
+    from supercc.feishu.media import guess_file_type
     assert guess_file_type(".xyz") == "stream"
 
 
@@ -46,12 +46,12 @@ def test_feishu_send_file_no_files():
     """未提供文件时返回错误"""
     # Clear cached modules so re-import picks up patches
     for key in list(sys.modules.keys()):
-        if "cc_feishu_bridge" in key or "claude_agent_sdk" in key:
+        if "supercc" in key or "claude_agent_sdk" in key:
             del sys.modules[key]
 
     with patch("claude_agent_sdk.create_sdk_mcp_server") as mock_create, \
-         patch("cc_feishu_bridge.claude.feishu_file_tools._get_chat_id", return_value=None):
-        from cc_feishu_bridge.claude import feishu_file_tools
+         patch("supercc.claude.feishu_file_tools._get_chat_id", return_value=None):
+        from supercc.claude import feishu_file_tools
         feishu_file_tools._mcp_server = None
         mock_create.side_effect = _make_capture_server_side_effect()
 
@@ -68,12 +68,12 @@ def test_feishu_send_file_no_files():
 def test_feishu_send_file_no_chat_id():
     """无活跃会话时返回错误"""
     for key in list(sys.modules.keys()):
-        if "cc_feishu_bridge" in key or "claude_agent_sdk" in key:
+        if "supercc" in key or "claude_agent_sdk" in key:
             del sys.modules[key]
 
     with patch("claude_agent_sdk.create_sdk_mcp_server") as mock_create, \
-         patch("cc_feishu_bridge.claude.feishu_file_tools._get_chat_id", return_value=None):
-        from cc_feishu_bridge.claude import feishu_file_tools
+         patch("supercc.claude.feishu_file_tools._get_chat_id", return_value=None):
+        from supercc.claude import feishu_file_tools
         feishu_file_tools._mcp_server = None
         mock_create.side_effect = _make_capture_server_side_effect()
 

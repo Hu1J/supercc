@@ -357,14 +357,14 @@ async def trigger_skill_review(
         nudge: the SkillNudge instance to manage counter and pending state
         chat_id: Feishu chat_id to deliver results to (optional)
         send_to_feishu: async callable(chat_id, text) to send a Feishu message (optional)
-        skills_dir: path to skills directory (defaults to ~/.cc-feishu-bridge/skills/)
+        skills_dir: path to skills directory (defaults to ~/.supercc/skills/)
     """
     if not nudge or not nudge.config.enabled:
         return
 
     logger.info("[skill_nudge] triggering skill review")
 
-    skills_dir = skills_dir or (Path.home() / ".cc-feishu-bridge" / "skills")
+    skills_dir = skills_dir or (Path.home() / ".supercc" / "skills")
 
     # Snapshot before state
     before_state = _get_skill_git_state(skills_dir)

@@ -29,9 +29,9 @@ _CST = ZoneInfo("Asia/Shanghai")
 from pathlib import Path
 from typing import Optional
 
-from cc_feishu_bridge.config import Config
-from cc_feishu_bridge.claude.integration import ClaudeIntegration
-from cc_feishu_bridge.feishu.client import FeishuClient
+from supercc.config import Config
+from supercc.claude.integration import ClaudeIntegration
+from supercc.feishu.client import FeishuClient
 
 
 def _get_active_chat_id(data_dir: str) -> str | None:
@@ -623,7 +623,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     # Snapshot before state for skill scan jobs
     before_state = None
     if is_skill_scan:
-        from cc_feishu_bridge.skill_nudge import _get_skill_git_state
+        from supercc.skill_nudge import _get_skill_git_state
         before_state = _get_skill_git_state(skills_dir)
         prompt = prompt.replace("{SKILLS_DIR}", str(skills_dir))
 
@@ -647,9 +647,9 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     async def _on_stream(claude_msg):
         try:
             if claude_msg.tool_name:
-                from cc_feishu_bridge.format.reply_formatter import ReplyFormatter
-                from cc_feishu_bridge.format.edit_diff import _DiffMarker, _MemoryCardMarker
-                from cc_feishu_bridge.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
+                from supercc.format.reply_formatter import ReplyFormatter
+                from supercc.format.edit_diff import _DiffMarker, _MemoryCardMarker
+                from supercc.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
                 formatter = ReplyFormatter()
                 result = formatter.format_tool_call(claude_msg.tool_name, claude_msg.tool_input)
 
@@ -709,8 +709,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
         # For skill scan jobs, detect changes via git state comparison
         if is_skill_scan and before_state is not None:
-            from cc_feishu_bridge.skill_nudge import _detect_skill_changes
-            from cc_feishu_bridge.format.reply_formatter import should_use_card
+            from supercc.skill_nudge import _detect_skill_changes
+            from supercc.format.reply_formatter import should_use_card
 
             async def _skill_send(cid, text):
                 if should_use_card(text):
@@ -762,7 +762,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         running_jobs.discard(job_id)
         return
 
-    from cc_feishu_bridge.format.reply_formatter import should_use_card, optimize_markdown_style
+    from supercc.format.reply_formatter import should_use_card, optimize_markdown_style
     header = f"⏰ **{job_name}**"
     body = optimize_markdown_style(response.strip(), card_version=2)
     text = f"{header}\n\n{body}"
@@ -885,8 +885,8 @@ class CronScheduler:
         # Poll skill changes on every tick (independent of job scheduling)
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
-            from cc_feishu_bridge.skill_nudge import poll_skill_changes_and_notify
-            from cc_feishu_bridge.feishu.client import FeishuClient
+            from supercc.skill_nudge import poll_skill_changes_and_notify
+            from supercc.feishu.client import FeishuClient
             feishu = FeishuClient(
                 app_id=self.config.feishu.app_id,
                 app_secret=self.config.feishu.app_secret,
@@ -912,8 +912,8 @@ class CronScheduler:
         due_pending = pending_store.get_due()
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
-            from cc_feishu_bridge.feishu.client import FeishuClient
-            from cc_feishu_bridge.format.reply_formatter import should_use_card, optimize_markdown_style
+            from supercc.feishu.client import FeishuClient
+            from supercc.format.reply_formatter import should_use_card, optimize_markdown_style
             feishu = FeishuClient(
                 app_id=self.config.feishu.app_id,
                 app_secret=self.config.feishu.app_secret,

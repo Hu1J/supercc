@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import re
 
-from cc_feishu_bridge.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
-from cc_feishu_bridge.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
+from supercc.format.questionnaire_card import _AskUserQuestionMarker
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card

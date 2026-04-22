@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from cc_feishu_bridge.feishu.media import guess_file_type
+from supercc.feishu.media import guess_file_type
 
 
 class TestGuessFileType:
@@ -67,7 +67,7 @@ class TestGuessFileType:
 class TestSupportedImageExts:
     def test_supported_image_exts_in_main(self):
         """Verify SUPPORTED_IMAGE_EXTS constant matches media.py coverage."""
-        from cc_feishu_bridge.main import SUPPORTED_IMAGE_EXTS
+        from supercc.main import SUPPORTED_IMAGE_EXTS
         assert ".png" in SUPPORTED_IMAGE_EXTS
         assert ".jpg" in SUPPORTED_IMAGE_EXTS
         assert ".jpeg" in SUPPORTED_IMAGE_EXTS

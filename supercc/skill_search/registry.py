@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from cc_feishu_bridge.skill_search.models import SkillMeta
-from cc_feishu_bridge.skill_search.sources import (
+from supercc.skill_search.models import SkillMeta
+from supercc.skill_search.sources import (
     SkillSource,
     SkillsShSource,
     GitHubSource,
@@ -43,7 +43,7 @@ class SkillSearchRegistry:
 
     def _trust_priority(self, level: str) -> int:
         """Get priority value for trust level (lower = higher priority)."""
-        from cc_feishu_bridge.skill_search.sources import TRUST_PRIORITY
+        from supercc.skill_search.sources import TRUST_PRIORITY
 
         return TRUST_PRIORITY.get(level, 1)
 

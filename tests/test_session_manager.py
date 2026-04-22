@@ -4,7 +4,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 import tempfile
-from cc_feishu_bridge.claude.session_manager import SessionManager
+from supercc.claude.session_manager import SessionManager
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def test_delete_session(manager):
 
 def test_update_chat_id(tmp_path):
     """update_chat_id updates the most recent session's chat_id."""
-    from cc_feishu_bridge.claude.session_manager import SessionManager
+    from supercc.claude.session_manager import SessionManager
     import os
     db = os.path.join(tmp_path, "test.db")
     sm = SessionManager(db_path=db)
@@ -59,7 +59,7 @@ def test_update_chat_id(tmp_path):
 
 def test_get_active_session_by_chat_id(tmp_path):
     """get_active_session_by_chat_id returns session with chat_id set."""
-    from cc_feishu_bridge.claude.session_manager import SessionManager
+    from supercc.claude.session_manager import SessionManager
     import os
     db = os.path.join(tmp_path, "test.db")
     sm = SessionManager(db_path=db)
@@ -72,7 +72,7 @@ def test_get_active_session_by_chat_id(tmp_path):
 
 def test_get_active_session_by_chat_id_none_set(tmp_path):
     """Returns None if no session has a chat_id."""
-    from cc_feishu_bridge.claude.session_manager import SessionManager
+    from supercc.claude.session_manager import SessionManager
     import os
     db = os.path.join(tmp_path, "test.db")
     sm = SessionManager(db_path=db)

@@ -55,10 +55,10 @@ class ClaudeIntegration:
         system prompt 更新只需重新调用此方法。
         """
         from claude_agent_sdk import ClaudeAgentOptions
-        from cc_feishu_bridge.claude.memory_tools import get_memory_mcp_server
-        from cc_feishu_bridge.claude.feishu_file_tools import get_feishu_file_mcp_server
-        from cc_feishu_bridge.claude.cron_tools import get_cron_mcp_server
-        from cc_feishu_bridge.claude.skill_search_tools import get_skill_search_mcp_server
+        from supercc.claude.memory_tools import get_memory_mcp_server
+        from supercc.claude.feishu_file_tools import get_feishu_file_mcp_server
+        from supercc.claude.cron_tools import get_cron_mcp_server
+        from supercc.claude.skill_search_tools import get_skill_search_mcp_server
 
         memory_server = get_memory_mcp_server()
         feishu_server = get_feishu_file_mcp_server()

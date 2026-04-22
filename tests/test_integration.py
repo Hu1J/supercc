@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 @pytest.fixture
 def integration():
-    from cc_feishu_bridge.claude.integration import ClaudeIntegration
+    from supercc.claude.integration import ClaudeIntegration
     return ClaudeIntegration(cli_path="/bin/false", max_turns=10)
 
 

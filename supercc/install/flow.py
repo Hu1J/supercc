@@ -7,15 +7,15 @@ from pathlib import Path
 
 import yaml
 
-from cc_feishu_bridge.install.api import FeishuInstallAPI, AppRegistrationResult
-from cc_feishu_bridge.install.qr import print_qr
+from supercc.install.api import FeishuInstallAPI, AppRegistrationResult
+from supercc.install.qr import print_qr
 
 logger = logging.getLogger(__name__)
 
 
 async def run_install_flow(config_path: str = "config.yaml") -> AppRegistrationResult:
     """Run the full install flow: init → begin → QR → poll → save config."""
-    print("\n🚀 开始安装 cc-feishu-bridge...\n")
+    print("\n🚀 开始安装 SuperCC...\n")
 
     api = FeishuInstallAPI()
     try:
@@ -86,9 +86,6 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
             "cli_path": "claude",
             "max_turns": 50,
             "approved_directory": str(Path(config_path).resolve().parent.parent),
-        },
-        "storage": {
-            "db_path": str(Path(config_path).resolve().parent / "sessions.db"),
         },
         "bypass_accepted": bypass_accepted,
     }

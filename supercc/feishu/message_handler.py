@@ -9,18 +9,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from cc_feishu_bridge.feishu.client import FeishuClient, IncomingMessage
-from cc_feishu_bridge.security.auth import Authenticator
-from cc_feishu_bridge.security.validator import SecurityValidator
-from cc_feishu_bridge.claude.integration import ClaudeIntegration
-from cc_feishu_bridge.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
-from cc_feishu_bridge.claude.feishu_file_tools import FEISHU_FILE_GUIDE
-from cc_feishu_bridge.claude.cron_tools import CRON_SYSTEM_GUIDE
-from cc_feishu_bridge.claude.session_manager import SessionManager
-from cc_feishu_bridge.skill_nudge import SkillNudge, trigger_skill_review
-from cc_feishu_bridge.format.reply_formatter import ReplyFormatter
-from cc_feishu_bridge.format.edit_diff import _DiffMarker, _MemoryCardMarker
-from cc_feishu_bridge.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
+from supercc.feishu.client import FeishuClient, IncomingMessage
+from supercc.security.auth import Authenticator
+from supercc.security.validator import SecurityValidator
+from supercc.claude.integration import ClaudeIntegration
+from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
+from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
+from supercc.claude.cron_tools import CRON_SYSTEM_GUIDE
+from supercc.claude.session_manager import SessionManager
+from supercc.skill_nudge import SkillNudge, trigger_skill_review
+from supercc.format.reply_formatter import ReplyFormatter
+from supercc.format.edit_diff import _DiffMarker, _MemoryCardMarker
+from supercc.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class MessageHandler:
             return self._feishu_groups[chat_id]
 
         # First time seeing this group — auto-register with defaults
-        from cc_feishu_bridge.config import GroupConfigEntry, register_group_config
+        from supercc.config import GroupConfigEntry, register_group_config
         entry = GroupConfigEntry()
         self._feishu_groups[chat_id] = entry
         if self._config_path:
@@ -463,7 +463,7 @@ class MessageHandler:
 
         elif cmd == "/status":
             import os
-            from cc_feishu_bridge import __version__
+            from supercc import __version__
             session = self.sessions.get_active_session(message.user_open_id)
             if not session:
                 return HandlerResult(
@@ -491,7 +491,7 @@ class MessageHandler:
             return HandlerResult(
                 success=True,
                 response_text=(
-                    "cc-feishu-bridge 命令：\n"
+                    "supercc 命令：\n"
                     "• /new — 新建会话\n"
                     "• /status — 会话状态\n"
                     "• /stop — 打断当前查询\n"
@@ -526,8 +526,8 @@ class MessageHandler:
 
 
     async def _handle_restart(self, message: IncomingMessage) -> HandlerResult:
-        from cc_feishu_bridge.restarter import run_restart
-        from cc_feishu_bridge.main import _active_lock
+        from supercc.restarter import run_restart
+        from supercc.main import _active_lock
 
         await self.feishu.add_typing_reaction(message.message_id)
         try:
@@ -540,8 +540,8 @@ class MessageHandler:
         os._exit(0)
 
     async def _handle_update(self, message: IncomingMessage) -> HandlerResult:
-        from cc_feishu_bridge.restarter import run_update
-        from cc_feishu_bridge.main import _active_lock
+        from supercc.restarter import run_update
+        from supercc.main import _active_lock
 
         await self.feishu.add_typing_reaction(message.message_id)
         did_update = False
@@ -862,7 +862,7 @@ class MessageHandler:
 
     async def _handle_switch(self, message: IncomingMessage) -> HandlerResult:
         """Handle /switch <target-path> command."""
-        from cc_feishu_bridge.switcher import run_switch, switch_to, SwitchError as SwitchErr
+        from supercc.switcher import run_switch, switch_to, SwitchError as SwitchErr
 
         parts = message.content.split(maxsplit=1)
         if len(parts) < 2:
@@ -1359,7 +1359,7 @@ class MessageHandler:
             文件/音频用 [File: /path] / [Audio: /path] 格式告知 AI 附件内容，
             AI 会通过 Read 工具读取本地文件。
         """
-        from cc_feishu_bridge.feishu.media import (
+        from supercc.feishu.media import (
             make_image_path,
             make_file_path,
             save_bytes,

@@ -44,8 +44,8 @@ def register_dream_job(data_dir: str) -> bool:
 
     Returns True if registered, False if skipped (already exists or no chat_id).
     """
-    from cc_feishu_bridge.cron_scheduler import list_jobs, create_job
-    from cc_feishu_bridge.main import _get_active_chat_id
+    from supercc.cron_scheduler import list_jobs, create_job
+    from supercc.main import _get_active_chat_id
 
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:

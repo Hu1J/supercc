@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import threading
 
-from cc_feishu_bridge.claude.memory_manager import get_memory_manager
+from supercc.claude.memory_manager import get_memory_manager
 
 
 def _fmt_pref(p) -> str:
@@ -240,8 +240,8 @@ _mcp_server_lock = threading.Lock()
 
 def _get_user_open_id() -> str | None:
     """从当前活跃会话获取 user_open_id。"""
-    from cc_feishu_bridge.claude.session_manager import SessionManager
-    from cc_feishu_bridge.config import resolve_config_path
+    from supercc.claude.session_manager import SessionManager
+    from supercc.config import resolve_config_path
     _, data_dir = resolve_config_path()
     db_path = os.path.join(data_dir, "sessions.db")
     sm = SessionManager(db_path=db_path)

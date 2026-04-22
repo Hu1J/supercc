@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import threading
 
-from cc_feishu_bridge.skill_search import get_skill_search_registry
-from cc_feishu_bridge.skill_search.models import SkillMeta
+from supercc.skill_search import get_skill_search_registry
+from supercc.skill_search.models import SkillMeta
 
 SKILL_SEARCH_GUIDE = """
 【Skill 搜索】工具前缀: mcp__skill_search__

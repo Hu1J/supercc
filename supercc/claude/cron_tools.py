@@ -21,7 +21,7 @@ mcp__cron__BridgeCronTrigger — 立即触发一次定时任务
 mcp__cron__BridgeCronLogs — 查看定时任务的执行日志（返回文件路径，需 CC 自行读取文件生成摘要）
 """
 
-from cc_feishu_bridge.cron_scheduler import (
+from supercc.cron_scheduler import (
     create_job,
     list_jobs,
     delete_job,
@@ -29,7 +29,7 @@ from cc_feishu_bridge.cron_scheduler import (
     get_job,
     get_job_logs,
 )
-from cc_feishu_bridge.config import Config
+from supercc.config import Config
 
 
 _cron_scheduler: Optional["CronScheduler"] = None
@@ -44,14 +44,14 @@ def set_cron_scheduler(scheduler: "CronScheduler", config: Config):
 
 
 def _get_data_dir() -> str:
-    from cc_feishu_bridge.config import resolve_config_path
+    from supercc.config import resolve_config_path
     _, data_dir = resolve_config_path()
     return data_dir
 
 
 def _get_chat_id() -> Optional[str]:
-    from cc_feishu_bridge.claude.session_manager import SessionManager
-    from cc_feishu_bridge.config import resolve_config_path
+    from supercc.claude.session_manager import SessionManager
+    from supercc.config import resolve_config_path
     _, data_dir = resolve_config_path()
     db_path = f"{data_dir}/sessions.db"
     sm = SessionManager(db_path=db_path)

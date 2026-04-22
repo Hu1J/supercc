@@ -4,7 +4,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 import tempfile
-from cc_feishu_bridge.claude.memory_manager import MemoryManager
+from supercc.claude.memory_manager import MemoryManager
 
 
 @pytest.fixture

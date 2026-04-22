@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cc_feishu_bridge.cron_scheduler import (
+from supercc.cron_scheduler import (
     parse_schedule,
     create_job,
     get_job,

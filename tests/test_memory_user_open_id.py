@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cc_feishu_bridge.claude.memory_manager import MemoryManager
+from supercc.claude.memory_manager import MemoryManager
 
 
 @pytest.fixture

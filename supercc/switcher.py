@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Optional
 import yaml
 
 if TYPE_CHECKING:
-    from cc_feishu_bridge.feishu.client import FeishuClient
+    from supercc.feishu.client import FeishuClient
 
 
 class SwitchError(Exception): pass
@@ -61,12 +61,12 @@ class SwitchResult:
 
 def _pid_file_path(project_path: str) -> str:
     """Return the PID file path for a project."""
-    return os.path.join(project_path, ".cc-feishu-bridge", "cc-feishu-bridge.pid")
+    return os.path.join(Path.home(), ".supercc", "supercc.pid")
 
 
 def _config_file_path(project_path: str) -> str:
     """Return the config file path for a project."""
-    return os.path.join(project_path, ".cc-feishu-bridge", "config.yaml")
+    return os.path.join(project_path, ".supercc", "config.yaml")
 
 
 def _target_config_file_path(project_path: str) -> str:
@@ -133,7 +133,7 @@ def _stop_bridge(project_path: str) -> bool:
 
 
 def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
-    """Read current config.yaml, rewrite storage.db_path and claude.approved_directory to target, write to target.
+    """Read current config.yaml, rewrite claude.approved_directory to target, write to target.
 
     Returns True if config was copied, False if current project has no config (skip copy).
     """
@@ -147,20 +147,15 @@ def _copy_and_fix_config(current_path: str, target_path: str) -> bool:
     with open(current_config_path) as f:
         raw = yaml.safe_load(f)
 
-    # Rewrite storage.db_path to target's sessions.db
-    target_sessions_db = os.path.join(
-        target_path, ".cc-feishu-bridge", "sessions.db"
-    )
-    if "storage" not in raw:
-        raw["storage"] = {}
-    raw["storage"]["db_path"] = target_sessions_db
-
     # Rewrite claude.approved_directory to target path
     if "claude" not in raw:
         raw["claude"] = {}
     raw["claude"]["approved_directory"] = target_path
 
-    # Ensure .cc-feishu-bridge dir exists in target
+    # Remove storage section (sessions now live in ~/.supercc/)
+    raw.pop("storage", None)
+
+    # Ensure .supercc dir exists in target
     Path(target_config_path).parent.mkdir(parents=True, exist_ok=True)
 
     with open(target_config_path, "w") as f:
@@ -179,13 +174,12 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
     # Remove stale pid file if exists
     Path(pid_file).unlink(missing_ok=True)
 
-    # Start bridge via the installed binary (works for both pip installs and
-    # PyInstaller binaries — cc-feishu-bridge is in PATH in both cases)
-    target_cc = os.path.join(target_path, ".cc-feishu-bridge")
-    stdout_log = open(os.path.join(target_cc, "bridge-stdout.log"), "w")
-    stderr_log = open(os.path.join(target_cc, "bridge-stderr.log"), "w")
+    # Start bridge via the installed binary
+    data_dir = os.path.join(Path.home(), ".supercc")
+    stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
+    stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
     proc = subprocess.Popen(
-        ["cc-feishu-bridge", "start"],
+        ["supercc", "start"],
         cwd=target_path,
         stdout=stdout_log,
         stderr=stderr_log,

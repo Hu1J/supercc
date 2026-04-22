@@ -17,7 +17,7 @@ GREEN = "\033[32m"
 RESET = "\033[0m"
 
 TERMINAL_ART = """{RED}========================================{RESET}
-  {RED}cc-feishu-bridge  v{version} 🚀{RESET}
+  {RED}SuperCC  v{version} 🚀{RESET}
   {GREEN}started at {timestamp}{RESET}
 {RED}========================================{RESET}
 
@@ -49,7 +49,7 @@ def write_log_banner(log_file: str, version: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     banner = (
         f"{RED}========================================{RESET}\n"
-        f"  {RED}cc-feishu-bridge  v{version}{RESET}\n"
+        f"  {RED}SuperCC  v{version}{RESET}\n"
         f"  {GREEN}started at {timestamp}{RESET}\n"
         f"{RED}========================================{RESET}\n\n"
     )

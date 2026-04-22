@@ -44,7 +44,7 @@ class ClaudeConfig:
 
 @dataclass
 class StorageConfig:
-    db_path: str = "./data/sessions.db"
+    db_path: str = "~/.supercc/sessions.db"
 
 
 @dataclass
@@ -201,21 +201,17 @@ def accept_bypass_warning(config_path: str) -> None:
         yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
 
 
-README_CONTENT = """# .cc-feishu-bridge
+README_CONTENT = """# .supercc
 
-This directory is created automatically by `cc-feishu-bridge` and contains all runtime data for this instance.
+This directory is created automatically by `supercc` and contains the config for this project instance.
 
 ## Contents
 
 - `config.yaml` — Bot credentials and configuration
-- `sessions.db` — SQLite database of user sessions and conversation history
-- `cc-feishu-bridge.log` — Runtime log file
-- `cc-feishu-bridge.pid` — PID file (process management)
+- `skills/` — Private skills for this project
+- `cron_jobs.json` — Cron job definitions
 
-## Multi-instance Isolation
-
-Running `cc-feishu-bridge` in different working directories creates independent bot instances,
-each with its own config, sessions, and logs. This is the intended design.
+Note: sessions.db, memories.db, and logs live in ~/.supercc/ (shared across all instances).
 
 ## Git Ignore
 
@@ -225,21 +221,22 @@ This directory is gitignored. It should never be committed.
 
 
 def resolve_config_path() -> tuple[str, str]:
-    """Resolve config and data directories relative to cwd.
+    """Resolve config and data directories.
 
-    Uses .cc-feishu-bridge/ subdirectory in the current working directory
-    for natural multi-instance isolation:
-      - Config: {cwd}/.cc-feishu-bridge/config.yaml
-      - Data:  {cwd}/.cc-feishu-bridge/ (sessions.db, logs, cc-feishu-bridge.pid)
+    Config lives in project dir: {cwd}/.supercc/config.yaml
+    Data (sessions, logs, PID) lives in home dir: ~/.supercc/
 
-    Auto-creates .cc-feishu-bridge/ if not found (runs install flow on first start).
+    Auto-creates both directories if not found.
     """
     import os
     cwd = os.getcwd()
-    cc_dir = Path(cwd).resolve() / ".cc-feishu-bridge"
-    cc_dir.mkdir(exist_ok=True)
-    cfg_path = cc_dir / "config.yaml"
+    cfg_dir = Path(cwd).resolve() / ".supercc"
+    cfg_dir.mkdir(exist_ok=True)
+    cfg_path = cfg_dir / "config.yaml"
     cfg_path.touch(exist_ok=True)
-    readme_path = cc_dir / "README.md"
+    readme_path = cfg_dir / "README.md"
     readme_path.write_text(README_CONTENT, errors="replace")
-    return (str(cfg_path), str(cc_dir))
+
+    data_dir = str(Path.home() / ".supercc")
+    Path(data_dir).mkdir(exist_ok=True)
+    return (str(cfg_path), data_dir)

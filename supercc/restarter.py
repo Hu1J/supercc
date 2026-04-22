@@ -1,4 +1,4 @@
-"""Restart and update — hot restart / hot upgrade for cc-feishu-bridge."""
+"""Restart and update — hot restart / hot upgrade for supercc."""
 from __future__ import annotations
 
 import os
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from cc_feishu_bridge.feishu.client import FeishuClient
+    from supercc.feishu.client import FeishuClient
 
 
 class RestartError(Exception): pass
@@ -56,7 +56,7 @@ class RestartResult:
 
 def _pid_file_path(project_path: str) -> str:
     """Return the PID file path for a project."""
-    return os.path.join(project_path, ".cc-feishu-bridge", "cc-feishu-bridge.pid")
+    return os.path.join(Path.home(), ".supercc", "supercc.pid")
 
 
 def _read_pid(pid_file: str) -> Optional[int]:
@@ -116,18 +116,18 @@ def _stop_bridge(project_path: str) -> bool:
     return True
 
 
-def _restart_to(file_lock=None, package: str = "cc-feishu-bridge"):
+def _restart_to(file_lock=None, package: str = "supercc"):
     """Restart bridge in the current directory.
 
     Args:
         file_lock: FileLock object acquired by main.py; released before
                    starting new process so the new instance can acquire it.
-        package: Package name to restart (determines data directory and binary).
+        package: Package name to restart (determines binary).
     Yields RestartStep objects (5 steps total).
     """
     current_path = os.getcwd()
-    data_dir = os.path.join(current_path, f".{package}")
-    pid_file = os.path.join(data_dir, f"{package}.pid")
+    data_dir = os.path.join(Path.home(), ".supercc")
+    pid_file = os.path.join(data_dir, "supercc.pid")
     instance_lock = os.path.join(data_dir, ".instance.lock")
 
     # Step 1: 准备重启
@@ -253,12 +253,12 @@ def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None):
         loop.close()
 
 
-def _start_bridge(project_path: str, package: str = "cc-feishu-bridge", timeout: float = 60.0) -> int:
+def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 60.0) -> int:
     """Start the bridge for project using subprocess.Popen with start_new_session=True.
 
     Args:
         project_path: Path to the project directory.
-        package: Package name to start (determines data directory and binary).
+        package: Package name to start (determines binary).
         timeout: Timeout in seconds.
 
     Returns the PID of the started process.
@@ -266,8 +266,8 @@ def _start_bridge(project_path: str, package: str = "cc-feishu-bridge", timeout:
 
     Note: caller is responsible for cleaning up stale pid/lock files before calling.
     """
-    data_dir = os.path.join(project_path, f".{package}")
-    pid_file = os.path.join(data_dir, f"{package}.pid")
+    data_dir = os.path.join(Path.home(), ".supercc")
+    pid_file = os.path.join(data_dir, "supercc.pid")
 
     stdout_log = open(os.path.join(data_dir, "bridge-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "bridge-stderr.log"), "w")
@@ -311,17 +311,28 @@ def _start_bridge(project_path: str, package: str = "cc-feishu-bridge", timeout:
 # Update / hot-upgrade support
 # ---------------------------------------------------------------------------
 
+def _get_package_name() -> str:
+    """Get the current package name from pyproject.toml."""
+    import yaml
+    try:
+        with open(Path(__file__).resolve().parent.parent / "pyproject.toml") as f:
+            return yaml.safe_load(f)["project"]["name"]
+    except Exception:
+        return "cc-feishu-bridge"  # fallback
+
+
 def check_version() -> tuple[str, str]:
-    """Check current vs latest version of cc-feishu-bridge via PyPI JSON API.
+    """Check current vs latest version of the running package via PyPI JSON API.
 
     Returns (current_version, latest_version).
     Raises RestartError on any failure.
     """
     import httpx
-    from cc_feishu_bridge import __version__ as current_ver
+    from supercc import __version__ as current_ver
+    package = _get_package_name()
     try:
         response = httpx.get(
-            "https://pypi.org/pypi/cc-feishu-bridge/json",
+            f"https://pypi.org/pypi/{package}/json",
             timeout=15,
         )
         response.raise_for_status()
@@ -381,7 +392,7 @@ def _do_update(file_lock=None):
     """Check version, install update if needed, restart.
 
     Yields UpdateStep. When supercc exists on PyPI, installs supercc instead of
-    cc-feishu-bridge (migration has already been run by the caller beforehand).
+    supercc (migration has already been run by the caller beforehand).
     """
     import packaging.version
 
@@ -404,15 +415,15 @@ def _do_update(file_lock=None):
             step=2, total=8,
             label=_UPDATE_CLI_STEP_LABELS[1],
             status="done",
-            detail=f"cc-feishu-bridge {current_ver} → supercc {supercc_ver}",
+            detail=f"supercc {current_ver} → supercc {supercc_ver}",
         )
         _pip_install("supercc")
     elif has_update:
-        # 正常更新 cc-feishu-bridge
-        package = "cc-feishu-bridge"
+        # 正常更新 supercc
+        package = "supercc"
         yield UpdateStep(step=2, total=8, label=_UPDATE_CLI_STEP_LABELS[1], status="done",
                         detail=f"{current_ver} → {latest_ver}")
-        _pip_install("cc-feishu-bridge")
+        _pip_install("supercc")
     else:
         # 已是最新，无需更新
         yield UpdateStep(
@@ -481,7 +492,7 @@ async def run_update(file_lock, feishu: "FeishuClient",
 
     # 如果 supercc 存在，先运行迁移（必须在 pip install 之前）
     if migrating_to_supercc:
-        from cc_feishu_bridge.migration import run_migration, MigrationError
+        from supercc.migration import run_migration, MigrationError
         try:
             run_migration(current_path)
         except MigrationError as e:
@@ -571,7 +582,7 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
 
         # 如果 supercc 存在，先运行迁移（必须在 pip install 之前）
         if migrating_to_supercc:
-            from cc_feishu_bridge.migration import run_migration, MigrationError
+            from supercc.migration import run_migration, MigrationError
             try:
                 run_migration(os.getcwd())
             except MigrationError as e:

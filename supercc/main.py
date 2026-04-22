@@ -1,7 +1,7 @@
 """CLI entry point — starts WebSocket long connection to Feishu.
 
-Data is stored in .cc-feishu-bridge/ subdirectory of the current working directory,
-enabling natural multi-instance isolation.
+Config is stored in .supercc/ subdirectory of the current working directory.
+Sessions and data live in ~/.supercc/.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 
-from cc_feishu_bridge.banner import print_banner, write_log_banner
+from supercc.banner import print_banner, write_log_banner
 import shutil
 import signal
 import sys
@@ -91,18 +91,18 @@ import filelock
 
 _active_lock: "filelock.FileLock | None" = None
 
-from cc_feishu_bridge.config import load_config, resolve_config_path
-from cc_feishu_bridge.feishu.client import FeishuClient, IncomingMessage
-from cc_feishu_bridge.feishu.ws_client import FeishuWSClient
-from cc_feishu_bridge.feishu.message_handler import MessageHandler
-from cc_feishu_bridge.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
-from cc_feishu_bridge.security.auth import Authenticator
-from cc_feishu_bridge.security.validator import SecurityValidator
-from cc_feishu_bridge.claude.integration import ClaudeIntegration
-from cc_feishu_bridge.claude.session_manager import SessionManager
-from cc_feishu_bridge.format.reply_formatter import ReplyFormatter
-from cc_feishu_bridge.cron_scheduler import CronScheduler
-from cc_feishu_bridge.claude.cron_tools import set_cron_scheduler
+from supercc.config import load_config, resolve_config_path
+from supercc.feishu.client import FeishuClient, IncomingMessage
+from supercc.feishu.ws_client import FeishuWSClient
+from supercc.feishu.message_handler import MessageHandler
+from supercc.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
+from supercc.security.auth import Authenticator
+from supercc.security.validator import SecurityValidator
+from supercc.claude.integration import ClaudeIntegration
+from supercc.claude.session_manager import SessionManager
+from supercc.format.reply_formatter import ReplyFormatter
+from supercc.cron_scheduler import CronScheduler
+from supercc.claude.cron_tools import set_cron_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     Creates a cron job that delivers results to the active user's chat.
     """
     # Get chat_id from active session
-    from cc_feishu_bridge.cron_scheduler import list_jobs, create_job
+    from supercc.cron_scheduler import list_jobs, create_job
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
         logger.info("[skill_optimize] no active chat_id, skipping")
@@ -227,7 +227,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
     formatter = ReplyFormatter()
 
     # Initialize Hermes-style skill nudge
-    from cc_feishu_bridge.skill_nudge import make_nudge
+    from supercc.skill_nudge import make_nudge
     skill_nudge = make_nudge(config.skill_nudge)
 
     handler = MessageHandler(
@@ -282,7 +282,7 @@ def ensure_skill_installed() -> None:
     import os
 
     skills = [
-        ("cc_feishu_bridge.skill_md", "SKILL_MD", "SKILL_NAME", "SKILL_VERSION"),
+        ("supercc.skill_md", "SKILL_MD", "SKILL_NAME", "SKILL_VERSION"),
     ]
 
     for module_path, md_attr, name_attr, ver_attr in skills:
@@ -326,7 +326,7 @@ RISK_WARNING = """
 ⚠️  安全风险警告 / Security Risk Warning
 ==============================================================
 
-cc-feishu-bridge 以 bypassPermissions 模式运行。
+supercc 以 bypassPermissions 模式运行。
 Claude Code 可以执行任意终端命令、读写本地文件，无需每次授权确认。
 
 这意味着如果有人通过飞书向机器人发送恶意指令，攻击者可以：
@@ -336,7 +336,7 @@ Claude Code 可以执行任意终端命令、读写本地文件，无需每次�
 
 请仅在可信任的网络环境下使用本工具。
 
-cc-feishu-bridge runs in bypassPermissions mode.
+supercc runs in bypassPermissions mode.
 Claude Code can execute arbitrary terminal commands and read/write local files
 without asking for permission each time.
 
@@ -345,7 +345,7 @@ Do you understand and accept these risks? (yes/no): """
 
 def confirm_risk_warning(config_path: str) -> bool:
     """Show risk warning and get user confirmation. Saves acceptance to config on 'yes'."""
-    from cc_feishu_bridge.config import accept_bypass_warning
+    from supercc.config import accept_bypass_warning
     print(RISK_WARNING)
     while True:
         try:
@@ -374,7 +374,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     try:
         lock.acquire()
     except filelock.Timeout:
-        print(f"错误：当前目录下已有一个 cc-feishu-bridge 实例正在运行 ({data_dir})")
+        print(f"错误：当前已有一个 SuperCC 实例正在运行 ({data_dir})")
         print("如果确认没有实例在运行，请删除 .instance.lock 文件后重试。")
         sys.exit(1)
 
@@ -392,7 +392,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     )
 
     # Write PID file for process management
-    pid_file = os.path.join(data_dir, "cc-feishu-bridge.pid")
+    pid_file = os.path.join(data_dir, "supercc.pid")
     write_pid(pid_file)
 
     # Clean up PID file and lock on exit
@@ -421,14 +421,14 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     cron_scheduler.start()
 
     # Ensure skills directory is a git repo (init if needed)
-    from cc_feishu_bridge.skill_nudge import _ensure_skills_git_repo
+    from supercc.skill_nudge import _ensure_skills_git_repo
     _ensure_skills_git_repo(Path(data_dir) / "skills")
 
     # Register daily skill optimization scan
     _register_skill_optimization_job(data_dir, cron_scheduler)
 
     # Register nightly dream job (memory refinement at 3am)
-    from cc_feishu_bridge.dream import register_dream_job
+    from supercc.dream import register_dream_job
     register_dream_job(data_dir)
 
     # CLI 进程在第一条消息到达时才会建立连接（_ensure_connected 懒加载）。
@@ -437,40 +437,33 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
 
 def list_bridges() -> None:
-    """List all cc-feishu-bridge instances by scanning .cc-feishu-bridge/*.pid files."""
-    print("\nRunning cc-feishu-bridge instances:")
-    print(f"{'PID':<8} {'Directory':<40} {'PID File':<50}")
-    print("-" * 100)
+    """List SuperCC instances by checking the global ~/.supercc/ directory."""
+    home_data_dir = os.path.join(Path.home(), ".supercc")
+    pid_file = os.path.join(home_data_dir, "supercc.pid")
+    print(f"\nSuperCC data directory: {home_data_dir}")
+    print(f"{'PID':<8} {'Status':<20}")
+    print("-" * 40)
 
-    found = False
-    for root, dirs, files in os.walk("."):
-        # Only look in .cc-feishu-bridge directories
-        if ".cc-feishu-bridge" not in dirs:
-            continue
-        cc_dir = os.path.join(root, ".cc-feishu-bridge")
-        pid_file = os.path.join(cc_dir, "cc-feishu-bridge.pid")
-        if not os.path.exists(pid_file):
-            continue
-        try:
-            pid = int(Path(pid_file).read_text().strip())
-            # Check if process is alive
-            try:
-                os.kill(pid, 0)
-                status = "running"
-            except OSError:
-                status = "dead (clean up pid file)"
-            print(f"{pid:<8} {os.path.abspath(root):<40} {pid_file:<50} {status}")
-            found = True
-        except (ValueError, OSError):
-            pass
-
-    if not found:
+    if not os.path.exists(pid_file):
         print("No running instances found.")
+        print()
+        return
+
+    try:
+        pid = int(Path(pid_file).read_text().strip())
+        try:
+            os.kill(pid, 0)
+            status = "running"
+        except OSError:
+            status = "dead (clean up pid file)"
+        print(f"{pid:<8} {status}")
+    except (ValueError, OSError):
+        print("Invalid PID file.")
     print()
 
 
 def stop_bridge(pid: int) -> None:
-    """Stop a cc-feishu-bridge instance by PID."""
+    """Stop a SuperCC instance by PID."""
     try:
         os.kill(pid, signal.SIGTERM)
         print(f"Stopped PID {pid}")
@@ -479,7 +472,7 @@ def stop_bridge(pid: int) -> None:
 
 
 def detect_config() -> bool:
-    """Check if .cc-feishu-bridge/config.yaml exists and is non-empty."""
+    """Check if .supercc/config.yaml exists and is non-empty."""
     cfg, _ = resolve_config_path()
     p = Path(cfg)
     return p.exists() and p.stat().st_size > 0
@@ -487,7 +480,7 @@ def detect_config() -> bool:
 
 async def interactive_install() -> tuple[str, str]:
     """Run the QR-code install flow. Returns (cfg_path, data_dir) on success."""
-    from cc_feishu_bridge.install.flow import run_install_flow
+    from supercc.install.flow import run_install_flow
     cfg_path, data_dir = resolve_config_path()
     await run_install_flow(cfg_path)
     return cfg_path, data_dir
@@ -506,10 +499,10 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     if not os.path.exists(config_path):
         print(f"Error: config file not found: {config_path}")
         return
-    from cc_feishu_bridge.config import load_config
+    from supercc.config import load_config
     config = load_config(config_path)
 
-    # 2. Locate sessions.db (same directory as config)
+    # 2. Locate sessions.db (in ~/.supercc/)
     data_dir = str(Path(config_path).parent.resolve())
     db_path = os.path.join(data_dir, "sessions.db")
     if not os.path.exists(db_path):
@@ -517,7 +510,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
         return
 
     # 3. Find the most recently active session's chat_id
-    from cc_feishu_bridge.claude.session_manager import SessionManager
+    from supercc.claude.session_manager import SessionManager
     sm = SessionManager(db_path=db_path)
     session = sm.get_active_session_by_chat_id()
     if not session or not session.chat_id:
@@ -527,7 +520,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     print(f"Sending to chat: {chat_id}")
 
     # 4. Create FeishuClient
-    from cc_feishu_bridge.feishu.client import FeishuClient
+    from supercc.feishu.client import FeishuClient
     feishu = FeishuClient(
         app_id=config.feishu.app_id,
         app_secret=config.feishu.app_secret,
@@ -536,7 +529,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     # 5. Process each file
     import asyncio
     try:
-        from cc_feishu_bridge.feishu.media import guess_file_type
+        from supercc.feishu.media import guess_file_type
     except ImportError:
         guess_file_type = None
 
@@ -581,8 +574,8 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
 
 
 def _run_memory_command(args) -> None:
-    """Handle cc-feishu-bridge memory <scope> <action> [args]."""
-    from cc_feishu_bridge.claude.memory_manager import get_memory_manager
+    """Handle supercc memory <scope> <action> [args]."""
+    from supercc.claude.memory_manager import get_memory_manager
 
     mm = get_memory_manager()
     scope = args.memory_scope  # "user" or "proj"
@@ -613,8 +606,8 @@ def _run_memory_command(args) -> None:
     try:
         cfg_path, data_dir = resolve_config_path()
         config = load_config(cfg_path)
-        from cc_feishu_bridge.feishu.client import FeishuClient
-        from cc_feishu_bridge.claude.session_manager import SessionManager
+        from supercc.feishu.client import FeishuClient
+        from supercc.claude.session_manager import SessionManager
         feishu_client = FeishuClient(
             app_id=config.feishu.app_id,
             app_secret=config.feishu.app_secret,
@@ -642,7 +635,7 @@ def _run_memory_command(args) -> None:
         if action == "add":
             parts = _parse_args(raw_args)
             if len(parts) < 3:
-                _print("用法: cc-feishu-bridge memory user add <title>|<content>|<keywords>")
+                _print("用法: supercc memory user add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
             p = mm.add_preference(title, content, keywords)
@@ -650,7 +643,7 @@ def _run_memory_command(args) -> None:
 
         elif action == "del":
             if not raw_args.strip():
-                _print("用法: cc-feishu-bridge memory user del <id>")
+                _print("用法: supercc memory user del <id>")
                 return
             ok = mm.delete_preference(raw_args)
             if ok:
@@ -661,7 +654,7 @@ def _run_memory_command(args) -> None:
         elif action == "update":
             parts = _parse_args(raw_args)
             if len(parts) < 4:
-                _print("用法: cc-feishu-bridge memory user update <id>|<title>|<content>|<keywords>")
+                _print("用法: supercc memory user update <id>|<title>|<content>|<keywords>")
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
             ok = mm.update_preference(pref_id, title, content, keywords)
@@ -684,7 +677,7 @@ def _run_memory_command(args) -> None:
 
         elif action == "search":
             if not raw_args.strip():
-                _print("用法: cc-feishu-bridge memory user search <关键词>")
+                _print("用法: supercc memory user search <关键词>")
                 return
             results = mm.search_preferences(raw_args)
             if not results:
@@ -704,7 +697,7 @@ def _run_memory_command(args) -> None:
         if action == "add":
             parts = _parse_args(raw_args)
             if len(parts) < 3:
-                _print("用法: cc-feishu-bridge memory proj add <title>|<content>|<keywords>")
+                _print("用法: supercc memory proj add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
             m = mm.add_project_memory(project_path, title, content, keywords)
@@ -712,7 +705,7 @@ def _run_memory_command(args) -> None:
 
         elif action == "del":
             if not raw_args.strip():
-                _print("用法: cc-feishu-bridge memory proj del <id>")
+                _print("用法: supercc memory proj del <id>")
                 return
             ok = mm.delete_project_memory(raw_args)
             if ok:
@@ -723,7 +716,7 @@ def _run_memory_command(args) -> None:
         elif action == "update":
             parts = _parse_args(raw_args)
             if len(parts) < 4:
-                _print("用法: cc-feishu-bridge memory proj update <id>|<title>|<content>|<keywords>")
+                _print("用法: supercc memory proj update <id>|<title>|<content>|<keywords>")
                 return
             mem_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
             ok = mm.update_project_memory(mem_id, title, content, keywords)
@@ -746,7 +739,7 @@ def _run_memory_command(args) -> None:
 
         elif action == "search":
             if not raw_args.strip():
-                _print("用法: cc-feishu-bridge memory proj search <关键词>")
+                _print("用法: supercc memory proj search <关键词>")
                 return
             results = mm.search_project_memories(raw_args, project_path)
             if not results:
@@ -766,17 +759,17 @@ def main(args=None):
     try:
         from importlib.metadata import version as _get_version
 
-        _version = _get_version("cc-feishu-bridge")
+        _version = _get_version("supercc")
     except Exception:
         _version = "dev"
 
     parser = argparse.ArgumentParser(
-        description="Claude Code Feishu Bridge — data stored in .cc-feishu-bridge/"
+        description="Claude Code Feishu Bridge — data stored in .supercc/"
     )
     parser.add_argument(
         "-v", "--version",
         action="version",
-        version=f"cc-feishu-bridge {_version}",
+        version=f"supercc {_version}",
     )
     parser.add_argument(
         "--log-level",
@@ -884,7 +877,7 @@ def main(args=None):
         return
 
     if command == "restart":
-        from cc_feishu_bridge.restarter import run_restart_cli, RestartError as RestartErr
+        from supercc.restarter import run_restart_cli, RestartError as RestartErr
         try:
             for step in run_restart_cli(_active_lock):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
@@ -901,7 +894,7 @@ def main(args=None):
         return
 
     if command == "update":
-        from cc_feishu_bridge.restarter import run_update_cli, RestartError as UpdateErr
+        from supercc.restarter import run_update_cli, RestartError as UpdateErr
         try:
             for step in run_update_cli(_active_lock):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
@@ -922,13 +915,13 @@ def main(args=None):
         return
 
     if command == "stop":
-        # Read PID from current directory's .cc-feishu-bridge/ directory
+        # Read PID from current directory's .supercc/ directory
         try:
             _, data_dir = resolve_config_path()
         except Exception:
             print("当前目录未初始化，无法停止。")
             return
-        pid_file = os.path.join(data_dir, "cc-feishu-bridge.pid")
+        pid_file = os.path.join(data_dir, "supercc.pid")
         if not os.path.exists(pid_file):
             print("当前目录无运行中的 bridge 实例。")
             return
@@ -941,12 +934,12 @@ def main(args=None):
         return
 
     if command == "send":
-        from cc_feishu_bridge.main import run_send_command
+        from supercc.main import run_send_command
         run_send_command(args.files, args.config)
         return
 
     if command == "switch":
-        from cc_feishu_bridge.switcher import SwitchError, run_switch_cli
+        from supercc.switcher import SwitchError, run_switch_cli
         target = os.path.abspath(args.target)
 
         # Try to load current project's config + Feishu client for notifications
@@ -957,8 +950,8 @@ def main(args=None):
             config = load_config(cfg_path)
             db_path = os.path.join(data_dir, "sessions.db")
 
-            from cc_feishu_bridge.feishu.client import FeishuClient
-            from cc_feishu_bridge.claude.session_manager import SessionManager
+            from supercc.feishu.client import FeishuClient
+            from supercc.claude.session_manager import SessionManager
             feishu = FeishuClient(
                 app_id=config.feishu.app_id,
                 app_secret=config.feishu.app_secret,
@@ -996,7 +989,7 @@ def main(args=None):
 
     # Risk warning must be acknowledged before starting (skip if already accepted)
     if is_installed:
-        from cc_feishu_bridge.config import load_config
+        from supercc.config import load_config
         config = load_config(cfg_path)
         if config.bypass_accepted:
             logger.info("Bypass warning already accepted, skipping.")
@@ -1008,7 +1001,7 @@ def main(args=None):
             return
 
     # Set up logging to file
-    log_file = os.path.join(data_dir, "cc-feishu-bridge.log")
+    log_file = os.path.join(data_dir, "supercc.log")
     Path(data_dir).mkdir(exist_ok=True)
     fh = logging.FileHandler(log_file)
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
