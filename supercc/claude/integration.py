@@ -55,15 +55,9 @@ class ClaudeIntegration:
         system prompt 更新只需重新调用此方法。
         """
         from claude_agent_sdk import ClaudeAgentOptions
-        from supercc.claude.memory_tools import get_memory_mcp_server
-        from supercc.claude.feishu_file_tools import get_feishu_file_mcp_server
-        from supercc.claude.cron_tools import get_cron_mcp_server
-        from supercc.claude.skill_search_tools import get_skill_search_mcp_server
+        from supercc.claude.supercc_tools import get_supercc_mcp_server
 
-        memory_server = get_memory_mcp_server()
-        feishu_server = get_feishu_file_mcp_server()
-        cron_server = get_cron_mcp_server()
-        skill_search_server = get_skill_search_mcp_server()
+        supercc_server = get_supercc_mcp_server()
 
         options = ClaudeAgentOptions(
             cwd=self.approved_directory or ".",
@@ -73,10 +67,7 @@ class ClaudeIntegration:
             permission_mode="bypassPermissions",
             continue_conversation=continue_conversation,
             mcp_servers={
-                "memory": memory_server,
-                "feishu_file": feishu_server,
-                "cron": cron_server,
-                "skill_search": skill_search_server,
+                "SuperCC": supercc_server,
             },
         )
 
