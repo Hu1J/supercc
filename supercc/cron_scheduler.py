@@ -607,6 +607,11 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     )
     _log("FEISHU_CLIENT_CREATED")
 
+    # Memory manager for formatting memory tool calls
+    from supercc.claude.memory_manager import MemoryManager
+    memory_manager = MemoryManager()
+    _log("MEMORY_MANAGER_CREATED")
+
     # Create independent Claude instance (avoids concurrent conflicts)
     claude = ClaudeIntegration(
         cli_path=config.claude.cli_path,
@@ -651,7 +656,10 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
                 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
                 formatter = ReplyFormatter()
-                result = formatter.format_tool_call(claude_msg.tool_name, claude_msg.tool_input)
+                result = formatter.format_tool_call(
+                    claude_msg.tool_name, claude_msg.tool_input,
+                    memory_manager=memory_manager,
+                )
 
                 if stream_to_feishu:
                     # Send immediately

@@ -18,16 +18,16 @@ DREAM_PROMPT = """【做梦 — 每日凌晨精炼】
 
 ## 操作步骤
 
-1. **获取所有用户偏好**：调用 `mcp__memory__MemoryListUser`（不需要参数），获取当前用户的所有偏好
+1. **获取所有用户偏好**：调用 `mcp__SuperCC__MemoryListUser`（不需要参数），获取当前用户的所有偏好
 
-2. **获取所有项目记忆**：调用 `mcp__memory__MemoryListProj`，project_path 不需要传，获取当前项目的所有记忆
+2. **获取所有项目记忆**：调用 `mcp__SuperCC__MemoryListProj`，project_path 不需要传，获取当前项目的所有记忆
 
 3. **精炼记忆**：
    - 合并内容高度相似的记忆（保留最完整的一条，更新其他为合并后的内容）
    - 精简冗长啰嗦的记忆内容（保留关键信息，去除重复表述）
    - 删除已过时或无价值的记忆
-   - 用 `mcp__memory__MemoryUpdateProj`、`mcp__memory__MemoryUpdateUser` 更新内容有变化的记忆
-   - 用 `mcp__memory__MemoryDeleteProj`、`mcp__memory__MemoryDeleteUser` 删除需要清理的记忆
+   - 用 `mcp__SuperCC__MemoryUpdateProj`、`mcp__SuperCC__MemoryUpdateUser` 更新内容有变化的记忆
+   - 用 `mcp__SuperCC__MemoryDeleteProj`、`mcp__SuperCC__MemoryDeleteUser` 删除需要清理的记忆
 
 4. **输出总结**：完成后，输出一段简短的精炼报告，说明你做了哪些合并/精简/删除操作
 """
