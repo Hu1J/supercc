@@ -69,7 +69,7 @@ def run_onboard_flow() -> bool:
                 ANTHROPIC_MODEL=env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5"),
             )
             # Save to models.yaml
-            from supercc.claude.model_config import get_all_models, get_active_model
+            from supercc.claude.model_config import get_all_models
             models = get_all_models()
             models[model_id] = ModelEntry(
                 name=name,

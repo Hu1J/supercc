@@ -174,8 +174,6 @@ async def switch_model_tool(args: dict) -> dict:
 )
 async def add_model_tool(args: dict) -> dict:
     """添加新模型（支持 --provider 快捷方式）"""
-    from supercc.claude.model_providers import get_provider, PROVIDERS
-
     model_id = args.get("model_id", "").strip()
     name = args.get("name", "").strip()
     description = args.get("description", "").strip()

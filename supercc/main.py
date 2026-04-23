@@ -1030,8 +1030,10 @@ def _run_config_command(args) -> None:
                     print(f"  `{m}`")
                 return
 
+            import hashlib
             token, model = pos_args[0], pos_args[1]
-            model_id = pos_args[2] if len(pos_args) > 2 else provider_id
+            # 默认用 md5(provider_id + model) 生成唯一 ID，可指定第3参数覆盖
+            model_id = pos_args[2] if len(pos_args) > 2 else hashlib.md5(f"{provider_id}{model}".encode()).hexdigest()[:8]
             name = pos_args[3] if len(pos_args) > 3 else provider.name
 
             env = ModelEnv(

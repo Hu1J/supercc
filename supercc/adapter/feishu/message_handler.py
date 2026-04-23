@@ -1343,11 +1343,12 @@ class MessageHandler:
                 if not model_name:
                     from supercc.claude.model_providers import get_provider
                     p = get_provider(provider_id)
-                    if p:
+                    if p and p.models:
                         models_list = "\n".join(f"`{m}`" for m in p.models[:10])
+                        default_model = p.models[0]
                         await self._safe_send(
                             message.chat_id, message.message_id,
-                            f"请指定模型，例如：`/model add --provider {provider_id} {token} {p.models[0]}`\n\n"
+                            f"请指定模型，例如：`/model add --provider {provider_id} {token} {default_model}`\n\n"
                             f"{p.name} 可用模型：\n{models_list}"
                         )
                     else:
@@ -1356,12 +1357,15 @@ class MessageHandler:
 
                 import hashlib
                 model_id = hashlib.md5(f"{provider_id}{model_name}".encode()).hexdigest()[:8]
+                from supercc.claude.model_providers import get_provider
+                p = get_provider(provider_id)
+                display_name = p.name if p else provider_id
                 result = await add_model_tool({
                     "model_id": model_id,
-                    "name": provider_id,
-                    "description": f"via {provider_id}",
+                    "name": display_name,
+                    "description": f"供应商: {display_name}",
                     "auth_token": token,
-                    "base_url": "",  # auto-filled by add_model_tool
+                    "base_url": "",
                     "model": model_name,
                     "provider": provider_id,
                 })
