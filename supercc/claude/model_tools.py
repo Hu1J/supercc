@@ -192,6 +192,7 @@ async def set_model_tool(args: dict) -> dict:
             matched_entry.env.ANTHROPIC_MODEL = model
             changed.append(f"模型 → `{model}`")
         final_env = matched_entry.env
+        mc._active_model_id = matched_mid
     else:
         # 新增配置
         new_entry = ModelEntry(
