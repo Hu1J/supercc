@@ -1207,6 +1207,22 @@ class MessageHandler:
                             nudge.config.current_user = message.user_open_id
                             nudge.increment()
 
+                        # Agent 工具 → CardKit 卡片（检测 tool_name 包含 "agent" 且 tool_input 有 "prompt"）
+                        if "agent" in claude_msg.tool_name.lower():
+                            import json
+                            try:
+                                data = json.loads(claude_msg.tool_input) if claude_msg.tool_input else {}
+                            except json.JSONDecodeError:
+                                data = {}
+                            if "prompt" in data:
+                                from supercc.adapter.feishu.format.agent_card import format_agent_card
+                                card = format_agent_card(claude_msg.tool_input)
+                                try:
+                                    await self.feishu.send_card(message.chat_id, card)
+                                except Exception:
+                                    logger.warning(f"send_card failed for agent tool, falling back")
+                                return
+
                         # _DiffMarker / list[_DiffMarker] → 彩色卡片；其他 → backtick 格式
                         if isinstance(result, _DiffMarker):
                             for card in result.card if isinstance(result.card, list) else [result.card]:
