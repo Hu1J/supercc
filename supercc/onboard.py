@@ -230,16 +230,39 @@ def _do_model_config_step() -> None:
         print("\n⚠️  未选择模型，跳过\n")
         return
 
-    # 保存配置
-    model_id = provider_id
-    name = f"{provider.name} ({selected_model})"
-    description = f"供应商: {provider.name}"
-
+    # Step 4: 验证 API Key + 模型是否可用
     env = ModelEnv(
         ANTHROPIC_AUTH_TOKEN=token,
         ANTHROPIC_BASE_URL=provider.base_url,
         ANTHROPIC_MODEL=selected_model,
     )
+
+    from supercc.claude.model_config import validate_model_env
+    while True:
+        valid, err_msg = validate_model_env(env)
+        if valid:
+            break
+        print(f"\n❌ API 验证失败: {err_msg}")
+        retry = questionary.confirm(
+            "是否重新输入 API Key？",
+            default=True,
+        ).ask()
+        if not retry:
+            print("\n⚠️  跳过模型配置（后续可使用 `supercc config add` 添加）\n")
+            return
+        token = questionary.password(
+            f"API Key（{auth_display}）",
+            style=questionary.Style([("password", "fg:#CCCCCC")]),
+        ).ask()
+        if not token:
+            print("\n⚠️  未提供 API Key，跳过模型配置\n")
+            return
+        env.ANTHROPIC_AUTH_TOKEN = token
+
+    # 保存配置
+    model_id = provider_id
+    name = f"{provider.name} ({selected_model})"
+    description = f"供应商: {provider.name}"
 
     from supercc.claude.model_config import get_all_models, save_models_config, switch_model, _models_cache
     models = get_all_models()
