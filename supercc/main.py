@@ -203,8 +203,43 @@ class _SafeStreamHandler(logging.StreamHandler):
 
 
 # ANSI color codes for terminal output
-class ColoredFormatter(logging.Formatter):
-    """Add ANSI color codes to log records based on level. Used for terminal only."""
+
+
+class _BaseLogFormatter(logging.Formatter):
+    """Shared helpers for log formatters.
+
+    Format: [MM-DD HH:MM:SS.mmm]  LEVEL  [module]  message
+    """
+
+    def _format_time(self, record: logging.LogRecord) -> str:
+        """Format timestamp as [MM-DD HH:MM:SS.mmm], no year."""
+        ct = record.created
+        ms = int((ct - int(ct)) * 1000)
+        st = self.converter(ct)
+        return f"[{st.tm_mon:02d}-{st.tm_mday:02d} {st.tm_hour:02d}:{st.tm_min:02d}:{st.tm_sec:02d}.{ms:03d}]"
+
+    def _get_module(self, record: logging.LogRecord) -> str:
+        """Derive short module name from logger name.
+
+        'supercc.adapter.feishu.message_handler' -> 'feishu.mh'
+        'supercc.claude.integration' -> 'claude'
+        'supercc' -> 'root'
+        """
+        name = record.name
+        if name == "root" or not name:
+            return "root"
+        parts = name.split(".")
+        if len(parts) >= 2:
+            return f"{parts[-2]}.{parts[-1][0]}"
+        return parts[-1]
+
+
+class ColoredFormatter(_BaseLogFormatter):
+    """Add ANSI color codes to log records based on level. Used for terminal only.
+
+    Format: [MM-DD HH:MM:SS.mmm]  LEVEL  [module]  message
+    Colors are applied only to the LEVEL field.
+    """
 
     COLORS = {
         "DEBUG": "\033[36m",     # cyan
@@ -216,9 +251,24 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     def format(self, record: logging.LogRecord) -> str:
+        ts = self._format_time(record)
         color = self.COLORS.get(record.levelname, self.RESET)
-        record.levelname = f"{color}{record.levelname}{self.RESET}"
-        return super().format(record)
+        level = f"{color}{record.levelname:<8}{self.RESET}"
+        module = self._get_module(record)
+        return f"{ts}  {level}  [{module}]  {record.getMessage()}"
+
+
+class PlainFormatter(_BaseLogFormatter):
+    """Plain log formatter for file output (no colors).
+
+    Format: [MM-DD HH:MM:SS.mmm]  LEVEL  [module]  message
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        ts = self._format_time(record)
+        level = record.levelname
+        module = self._get_module(record)
+        return f"{ts}  {level:<8}  [{module}]  {record.getMessage()}"
 
 
 def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
@@ -1287,7 +1337,7 @@ def main(args=None):
         pass  # Python < 3.7
     _stdout_handler = _SafeStreamHandler(sys.stdout)
     _stdout_handler.setLevel(args.log_level)
-    _stdout_handler.setFormatter(ColoredFormatter("%(asctime)s %(levelname)s %(message)s"))
+    _stdout_handler.setFormatter(ColoredFormatter())
     logging.root.addHandler(_stdout_handler)
     logging.root.setLevel(args.log_level)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -1470,7 +1520,7 @@ def main(args=None):
     log_file = os.path.join(data_dir, "supercc.log")
     Path(data_dir).mkdir(exist_ok=True)
     fh = logging.FileHandler(log_file)
-    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    fh.setFormatter(PlainFormatter())
     logging.getLogger().addHandler(fh)
     write_log_banner(log_file, _version)
     logger.info("Starting SuperCC...")
