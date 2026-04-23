@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import signal
 import sys
+import time
 import subprocess
 import shutil
 from pathlib import Path
@@ -114,12 +116,41 @@ def stop_mac(data_dir: str, project_slug: str) -> None:
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_path = plist_dir / f"com.supercc.gateway.{slug}.plist"
 
+    # 读取 PID（用于等待进程退出）
+    pid_file = Path(data_dir) / "supercc.pid"
+    pid = None
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+        except (ValueError, OSError):
+            pass
+
     result = subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         if "Not loaded" not in stderr and "No such file" not in stderr:
             print(f"⚠️  launchctl unload 失败: {stderr}")
             return
+
+    # 等待进程真正退出（最多 5 秒）
+    if pid:
+        for _ in range(50):  # 50 * 0.1s = 5s
+            try:
+                os.kill(pid, 0)  # 检测进程是否还在
+            except OSError:
+                break  # 进程已退出
+            time.sleep(0.1)
+        else:
+            # 超时仍未退出，强制 SIGKILL
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    # 删除 .instance.lock（如果还在的话）
+    lock_file = Path(data_dir) / ".instance.lock"
+    lock_file.unlink(missing_ok=True)
+
     print("✅ Gateway 已停止")
 
 
@@ -188,12 +219,41 @@ def stop_linux(data_dir: str, project_slug: str) -> None:
     """停止 systemd user service（仅 stop，不 disable）。"""
     slug = _slug_to_dns_safe(project_slug)
     service_name = f"supercc-gateway-{slug}"
+
+    # 读取 PID（用于等待进程退出）
+    pid_file = Path(data_dir) / "supercc.pid"
+    pid = None
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+        except (ValueError, OSError):
+            pass
+
     result = subprocess.run(["systemctl", "--user", "stop", service_name], capture_output=True, text=True)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         if "Could not find" not in stderr:
             print(f"⚠️  systemctl --user stop 失败: {stderr}")
             return
+
+    # 等待进程真正退出（最多 5 秒）
+    if pid:
+        for _ in range(50):  # 50 * 0.1s = 5s
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    # 删除 .instance.lock
+    lock_file = Path(data_dir) / ".instance.lock"
+    lock_file.unlink(missing_ok=True)
+
     print("✅ Gateway 已停止")
 
 
