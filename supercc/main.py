@@ -237,7 +237,7 @@ class _BaseLogFormatter(logging.Formatter):
 class ColoredFormatter(_BaseLogFormatter):
     """Add ANSI color codes to log records based on level. Used for terminal only.
 
-    Format: [MM-DD HH:MM:SS.mmm]  LEVEL  [module]  message
+    Format: [MM-DD HH:MM:SS.mmm] LEVEL [module]  message
     Colors are applied only to the LEVEL field.
     """
 
@@ -253,7 +253,7 @@ class ColoredFormatter(_BaseLogFormatter):
     def format(self, record: logging.LogRecord) -> str:
         ts = self._format_time(record)
         color = self.COLORS.get(record.levelname, self.RESET)
-        level = f"{color}{record.levelname:<8}{self.RESET}"
+        level = f"{color}{record.levelname:>5}{self.RESET}"
         module = self._get_module(record)
         return f"{ts}  {level}  [{module}]  {record.getMessage()}"
 
@@ -261,14 +261,14 @@ class ColoredFormatter(_BaseLogFormatter):
 class PlainFormatter(_BaseLogFormatter):
     """Plain log formatter for file output (no colors).
 
-    Format: [MM-DD HH:MM:SS.mmm]  LEVEL  [module]  message
+    Format: [MM-DD HH:MM:SS.mmm] LEVEL [module]  message
     """
 
     def format(self, record: logging.LogRecord) -> str:
         ts = self._format_time(record)
         level = record.levelname
         module = self._get_module(record)
-        return f"{ts}  {level:<8}  [{module}]  {record.getMessage()}"
+        return f"{ts}  {level:>5}  [{module}]  {record.getMessage()}"
 
 
 def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
