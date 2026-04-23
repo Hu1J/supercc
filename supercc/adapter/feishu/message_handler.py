@@ -1301,25 +1301,10 @@ class MessageHandler:
             # If text was streamed in real-time, it is already visible and not sent again.
             if not accumulator.sent_something:
                 if response:
-                    from supercc.adapter.feishu.format.agent_card import (
-                        format_agent_card,
-                        should_use_agent_card,
-                    )
-                    if should_use_agent_card(response):
-                        card = format_agent_card(response)
-                        try:
-                            await self.feishu.send_card(message.chat_id, card)
-                        except Exception:
-                            # 卡片失败，降级为普通文本
-                            formatted = self.formatter.format_text(response)
-                            chunks = self.formatter.split_messages(formatted)
-                            for chunk in chunks:
-                                await self._safe_send(message.chat_id, message.message_id, chunk)
-                    else:
-                        formatted = self.formatter.format_text(response)
-                        chunks = self.formatter.split_messages(formatted)
-                        for chunk in chunks:
-                            await self._safe_send(message.chat_id, message.message_id, chunk)
+                    formatted = self.formatter.format_text(response)
+                    chunks = self.formatter.split_messages(formatted)
+                    for chunk in chunks:
+                        await self._safe_send(message.chat_id, message.message_id, chunk)
 
         except asyncio.CancelledError:
             await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
