@@ -1458,14 +1458,10 @@ def main(args=None):
     # Initialize singleton before any get_config() calls
     init_config(cfg_path)
 
-    # Risk warning must be acknowledged before starting (skip if already accepted)
-    if is_installed:
-        config = get_config()
-        if config.bypass_accepted:
-            logger.info("Bypass warning already accepted, skipping.")
-        else:
-            if not confirm_risk_warning(cfg_path):
-                return
+    # Risk warning must be acknowledged before starting (skip if already accepted in config)
+    config = get_config()
+    if config.bypass_accepted:
+        logger.info("Bypass warning already accepted, skipping.")
     else:
         if not confirm_risk_warning(cfg_path):
             return
@@ -1477,10 +1473,7 @@ def main(args=None):
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.getLogger().addHandler(fh)
     write_log_banner(log_file, _version)
-    if is_installed:
-        logger.info(f"Config found, starting SuperCC...")
-    else:
-        logger.info("Install complete, starting SuperCC...")
+    logger.info("Starting SuperCC...")
     from supercc.gateway.cli import run_gateway_start
     run_gateway_start()
 
