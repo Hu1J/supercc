@@ -545,6 +545,7 @@ class MessageHandler:
                     "• /status — 会话状态\n"
                     "• /stop — 打断当前查询\n"
                     "• /git — 显示 Git 状态\n"
+                    "• /model — 查看/管理模型配置（支持 --provider 快捷添加）\n"
                     "• /switch <路径> — 切换到另一个项目的 SuperCC 实例\n"
                     "• /restart — 重启当前 SuperCC\n"
                     "• /update — 检查并更新到最新版本\n"
@@ -555,6 +556,9 @@ class MessageHandler:
 
         elif cmd == "/git":
             return await self._handle_git(message)
+
+        elif cmd == "/model":
+            return await self._handle_model(message)
 
         elif cmd == "/switch":
             return await self._handle_switch(message)
@@ -1278,6 +1282,141 @@ class MessageHandler:
         self.claude.stop_event.set()
         await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude，当前任务已停止。")
         return HandlerResult(success=True)
+
+    async def _handle_model(self, message: IncomingMessage) -> HandlerResult:
+        """处理 /model 命令：列出/添加/切换模型配置"""
+        from supercc.claude.model_tools import list_models, switch_model_tool, add_model_tool
+
+        parts = message.content.split(maxsplit=1)
+        action = parts[1].lower() if len(parts) > 1 else ""
+        raw_args = parts[1] if len(parts) > 1 else ""
+
+        if not action:
+            result = await list_models({})
+            text = result["content"][0]["text"]
+            await self._safe_send(message.chat_id, message.message_id, text)
+            return HandlerResult(success=True)
+
+        if action == "list":
+            result = await list_models({})
+            text = result["content"][0]["text"]
+            await self._safe_send(message.chat_id, message.message_id, text)
+            return HandlerResult(success=True)
+
+        elif action == "providers":
+            from supercc.claude.model_providers import format_provider_help
+            await self._safe_send(message.chat_id, message.message_id, format_provider_help())
+            return HandlerResult(success=True)
+
+        elif action.startswith("switch"):
+            args_part = raw_args.split(maxsplit=1)
+            model_id = args_part[1].strip() if len(args_part) > 1 else ""
+            if not model_id:
+                await self._safe_send(message.chat_id, message.message_id, "用法: /model switch <model_id>")
+                return HandlerResult(success=True)
+            result = await switch_model_tool({"model_id": model_id})
+            text = result["content"][0]["text"]
+            await self._safe_send(message.chat_id, message.message_id, text)
+            return HandlerResult(success=True)
+
+        elif action.startswith("add"):
+            # 支持两种格式：
+            # 1. /model add --provider <provider_id> <token> <model> — 预设供应商
+            # 2. /model add <name>|<desc>|<token>|<base_url>|<model> — 完全自定义
+            args_part = raw_args.split(maxsplit=1)
+            rest = args_part[1].strip() if len(args_part) > 1 else ""
+
+            if rest.startswith("--provider"):
+                # 预设供应商模式
+                # /model add --provider <provider_id> <token> <model>
+                rest2 = rest[len("--provider"):].strip()
+                parts = rest2.split(maxsplit=2)
+                if len(parts) < 2:
+                    from supercc.claude.model_providers import format_provider_help
+                    help_text = format_provider_help()
+                    await self._safe_send(message.chat_id, message.message_id, (
+                        "用法: /model add --provider <provider_id> <token> <model>\n\n"
+                        + help_text
+                    ))
+                    return HandlerResult(success=True)
+                provider_id, token, model_name = parts[0], parts[1], (parts[2] if len(parts) > 2 else "")
+                if not model_name:
+                    from supercc.claude.model_providers import get_provider
+                    p = get_provider(provider_id)
+                    if p:
+                        models_list = "\n".join(f"`{m}`" for m in p.models[:10])
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            f"请指定模型，例如：`/model add --provider {provider_id} {token} {p.models[0]}`\n\n"
+                            f"{p.name} 可用模型：\n{models_list}"
+                        )
+                    else:
+                        await self._safe_send(message.chat_id, message.message_id, f"未知供应商: `{provider_id}`")
+                    return HandlerResult(success=True)
+
+                import hashlib
+                model_id = hashlib.md5(f"{provider_id}{model_name}".encode()).hexdigest()[:8]
+                result = await add_model_tool({
+                    "model_id": model_id,
+                    "name": provider_id,
+                    "description": f"via {provider_id}",
+                    "auth_token": token,
+                    "base_url": "",  # auto-filled by add_model_tool
+                    "model": model_name,
+                    "provider": provider_id,
+                })
+                text = result["content"][0]["text"]
+                await self._safe_send(message.chat_id, message.message_id, text)
+                return HandlerResult(success=True)
+
+            elif "|" in rest:
+                # 完全自定义模式（原有格式）
+                fields = rest.split("|")
+                if len(fields) < 5:
+                    await self._safe_send(message.chat_id, message.message_id, "格式错误，需要 5 个字段（用 | 分隔）")
+                    return HandlerResult(success=True)
+                name, description, token, base_url, model_name = [f.strip() for f in fields[:5]]
+                import hashlib
+                model_id = hashlib.md5(f"{name}{model_name}".encode()).hexdigest()[:8]
+                result = await add_model_tool({
+                    "model_id": model_id,
+                    "name": name,
+                    "description": description,
+                    "auth_token": token,
+                    "base_url": base_url,
+                    "model": model_name,
+                    "provider": "",
+                })
+                text = result["content"][0]["text"]
+                await self._safe_send(message.chat_id, message.message_id, text)
+                return HandlerResult(success=True)
+
+            else:
+                from supercc.claude.model_providers import format_provider_help
+                help_text = format_provider_help()
+                await self._safe_send(message.chat_id, message.message_id, (
+                    "**/model add 用法：**\n\n"
+                    "**方式一（推荐）：** 预设供应商\n"
+                    "`/model add --provider <provider_id> <token> <model>`\n\n"
+                    "**方式二：** 完全自定义\n"
+                    "`/model add <name>|<desc>|<token>|<base_url>|<model>`\n\n"
+                    + help_text
+                ))
+                return HandlerResult(success=True)
+
+        else:
+            from supercc.claude.model_providers import format_provider_help
+            await self._safe_send(message.chat_id, message.message_id, (
+                "**/model 命令用法：**\n\n"
+                "/model — 列出所有模型\n"
+                "/model list — 列出所有模型\n"
+                "/model switch <model_id> — 切换模型\n"
+                "/model add --provider <provider_id> <token> <model> — 添加模型（推荐）\n"
+                "/model add <...> — 添加模型（完全自定义）\n"
+                "\n"
+                + format_provider_help()
+            ))
+            return HandlerResult(success=True)
 
     async def _handle_git(self, message: IncomingMessage) -> HandlerResult:
         """执行 git status 和 log，返回精美卡片。"""

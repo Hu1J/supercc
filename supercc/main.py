@@ -728,6 +728,194 @@ def _run_memory_command(args) -> None:
             asyncio.run(_send_feishu(f"🔍 找到 {len(results)} 条项目记忆"))
 
 
+def _run_config_command(args) -> None:
+    """Handle supercc config <action> [args]."""
+    from supercc.claude.model_config import (
+        get_all_models,
+        get_active_model,
+        switch_model,
+        add_model,
+        delete_model,
+        ModelEnv,
+        is_configured,
+    )
+
+    action = getattr(args, "config_action", None)
+    raw_args = getattr(args, "config_args", "") or ""
+    if isinstance(raw_args, list):
+        raw_args = " ".join(raw_args)
+
+    def _parse_args(args_str: str) -> list[str]:
+        return [p.strip() for p in args_str.split("|")]
+
+    def _fmt_model(model_id: str, entry, is_active: bool) -> str:
+        active_mark = "✅ " if is_active else "   "
+        env = entry.env
+        token_display = f"***{env.ANTHROPIC_AUTH_TOKEN[-4:]:>4}" if env.ANTHROPIC_AUTH_TOKEN else "(未设置)"
+        return (
+            f"{active_mark}**{entry.name}** (`{model_id}`)\n"
+            f"    描述: {entry.description or '(无)'}\n"
+            f"    模型: `{env.ANTHROPIC_MODEL}`\n"
+            f"    端点: `{env.ANTHROPIC_BASE_URL}`\n"
+            f"    Token: ...{token_display}"
+        )
+
+    # 无 action 或 list
+    if action is None or action == "list":
+        if not is_configured():
+            current_settings = {}
+            try:
+                from supercc.claude.model_config import get_current_claude_settings
+                current_settings = get_current_claude_settings()
+            except Exception:
+                pass
+            env_cfg = current_settings.get("env", {})
+            if env_cfg.get("ANTHROPIC_AUTH_TOKEN"):
+                print("📋 **检测到您已配置过 Claude Code**\n")
+                print("您的现有配置：")
+                print(f"- 模型: `{env_cfg.get('ANTHROPIC_MODEL', '未设置')}`")
+                print(f"- 端点: `{env_cfg.get('ANTHROPIC_BASE_URL', '未设置')}`")
+                print("\n💡 **建议**: 使用 `supercc config add ...` 将现有配置导入为第一个模型。")
+                print("\n用法: supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
+            else:
+                print("📋 **尚未配置任何模型**")
+                print("\n用法: supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
+                print("\n示例:")
+                print("- Anthropic: supercc config add anthropic|Anthropic API|sk-ant-xxx|https://api.anthropic.com|claude-opus-4-5")
+                print("- OpenRouter: supercc config add openrouter|OpenRouter|sk-or-xxx|https://openrouter.ai/api/v1|anthropic/claude-3.5-sonnet")
+            return
+
+        models = get_all_models()
+        active_id = None
+        for mid, mentry in models.items():
+            if mentry is get_active_model():
+                active_id = mid
+                break
+
+        print("🤖 **已配置的模型**\n")
+        for model_id, entry in models.items():
+            print(_fmt_model(model_id, entry, is_active=(model_id == active_id)))
+            print()
+        print(f"\n当前激活: `{(active_id or '未知')}`")
+        return
+
+    if action == "add":
+        provider_id = getattr(args, "provider", "") or ""
+
+        if provider_id:
+            # --provider 快捷模式
+            from supercc.claude.model_providers import get_provider, PROVIDERS
+            provider = get_provider(provider_id)
+            if not provider:
+                available = ", ".join(f"`{p}`" for p in PROVIDERS.keys())
+                print(f"未知供应商 `{provider_id}`\n可用供应商: {available}")
+                return
+
+            pos_args = raw_args.split() if raw_args else []
+            if len(pos_args) < 2:
+                print(f"用法: supercc config add --provider {provider_id} <token> <model> [model_id] [name]")
+                print(f"\n{provider.name} 可用模型:")
+                for m in provider.models:
+                    print(f"  `{m}`")
+                return
+
+            token, model = pos_args[0], pos_args[1]
+            model_id = pos_args[2] if len(pos_args) > 2 else provider_id
+            name = pos_args[3] if len(pos_args) > 3 else provider.name
+
+            env = ModelEnv(
+                ANTHROPIC_AUTH_TOKEN=token,
+                ANTHROPIC_BASE_URL=provider.base_url,
+                ANTHROPIC_MODEL=model,
+            )
+            ok = add_model(model_id, name, f"供应商: {provider.name}", env)
+            if not ok:
+                print(f"❌ 模型 ID `{model_id}` 已存在，请使用其他 ID")
+                return
+            print(f"✅ 模型 **{name}** (`{model_id}`) 已添加")
+            print(f"   供应商: {provider.name}")
+            print(f"   模型: `{model}`")
+            print(f"   端点: `{provider.base_url}`")
+            print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
+            return
+
+        if not raw_args.strip():
+            print("用法: supercc config add --provider <provider_id> <token> <model> [model_id] [name]")
+            print("       supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
+            print("\n可用供应商:")
+            from supercc.claude.model_providers import PROVIDERS
+            for pid, p in PROVIDERS.items():
+                print(f"  `{pid}` — {p.name}")
+            return
+
+        parts = _parse_args(raw_args)
+        if len(parts) < 6:
+            print("错误: 需要 6 个参数，以 | 分隔")
+            print("用法: supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
+            return
+        model_id, name, description, token, base_url, model = parts
+        env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=token,
+            ANTHROPIC_BASE_URL=base_url,
+            ANTHROPIC_MODEL=model,
+        )
+        ok = add_model(model_id, name, description, env)
+        if not ok:
+            print(f"❌ 模型 ID `{model_id}` 已存在，请使用其他 ID")
+            return
+        print(f"✅ 模型 **{name}** (`{model_id}`) 已添加")
+        print(f"   模型: `{model}`")
+        print(f"   端点: `{base_url}`")
+        print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
+        return
+
+    if action == "switch":
+        if not raw_args.strip():
+            print("用法: supercc config switch <model_id>")
+            return
+        model_id = raw_args.strip()
+        ok = switch_model(model_id)
+        if not ok:
+            print(f"❌ 未找到模型 ID: `{model_id}`")
+            return
+        models = get_all_models()
+        entry = models[model_id]
+        print(f"✅ 已切换到 **{entry.name}**\n")
+        print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
+        print(f"   端点: `{entry.env.ANTHROPIC_BASE_URL}`")
+        print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc restart` 命令重启。")
+        return
+
+    if action == "delete":
+        if not raw_args.strip():
+            print("用法: supercc config delete <model_id>")
+            return
+        model_id = raw_args.strip()
+        ok = delete_model(model_id)
+        if not ok:
+            print(f"❌ 删除模型 `{model_id}` 失败。可能原因：模型不存在或为当前激活模型。")
+            return
+        print(f"✅ 模型 `{model_id}` 已删除。")
+        return
+
+    if action == "providers":
+        from supercc.claude.model_providers import PROVIDERS
+        auth_display = {"bearer": "Bearer Token", "api_key": "API Key", "azure": "Azure AD Token"}
+        print("支持的模型供应商：\n")
+        for pid, p in PROVIDERS.items():
+            auth = auth_display.get(p.auth_type, p.auth_type)
+            models_preview = ", ".join(p.models[:4])
+            if len(p.models) > 4:
+                models_preview += f" ... (+{len(p.models) - 4})"
+            print(f"  `{pid}` — {p.name}")
+            print(f"    端点: {p.base_url or '(用户填入)'}")
+            print(f"    认证: {auth}")
+            print(f"    模型: {models_preview}")
+            print()
+        print("用法: supercc config add --provider <provider_id> <token> <model>")
+        return
+
+
 def main(args=None):
     # Read version once — shared by --version flag and startup banner
     try:
@@ -826,6 +1014,28 @@ def main(args=None):
     ps = proj_actions.add_parser("search", help="Search project memories")
     ps.add_argument("memory_args", help="<query>")
     ps.add_argument("--project", default=None, help="Project path")
+
+    # config
+    config_parser = subparsers.add_parser("config", help="Manage model configurations")
+    config_subparsers = config_parser.add_subparsers(dest="config_action", help="Action")
+
+    ca_list = config_subparsers.add_parser("list", help="List all models")
+    ca_list.add_argument("config_args", nargs="*", default=[], help="(ignored)")
+
+    ca_add = config_subparsers.add_parser("add", help="Add a new model")
+    ca_add.add_argument("--provider", help="预设供应商 ID（如 openrouter, anthropic）")
+    ca_add.add_argument("config_args", nargs="*", default=[], help="<token> <model> [model_id] [name] [description]")
+
+    ca_switch = config_subparsers.add_parser("switch", help="Switch to another model")
+    ca_switch.add_argument("config_args", help="<model_id>")
+
+    ca_delete = config_subparsers.add_parser("delete", help="Delete a model")
+    ca_delete.add_argument("config_args", help="<model_id>")
+
+    ca_providers = config_subparsers.add_parser("providers", help="List available model providers")
+
+    # onboard
+    onboard_parser = subparsers.add_parser("onboard", help="Interactive first-time setup")
 
     args = parser.parse_args(args)
 
@@ -952,6 +1162,15 @@ def main(args=None):
 
     if command == "memory":
         _run_memory_command(args)
+        return
+
+    if command == "config":
+        _run_config_command(args)
+        return
+
+    if command == "onboard":
+        from supercc.onboard import run_onboard_flow
+        run_onboard_flow()
         return
 
     # Default: start

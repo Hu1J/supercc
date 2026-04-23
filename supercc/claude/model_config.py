@@ -1,0 +1,243 @@
+"""模型配置管理 — 管理 ~/.supercc/models.yaml 和 ~/.claude/settings.json"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+# 路径常量
+MODELS_CONFIG_PATH = str(Path.home() / ".supercc" / "models.yaml")
+CLAUDE_SETTINGS_PATH = str(Path.home() / ".claude" / "settings.json")
+
+
+@dataclass
+class ModelEnv:
+    """单个模型的 API 配置"""
+    ANTHROPIC_AUTH_TOKEN: str = ""
+    ANTHROPIC_BASE_URL: str = "https://api.anthropic.com"
+    ANTHROPIC_MODEL: str = "claude-opus-4-5"
+
+
+@dataclass
+class ModelEntry:
+    """单个模型配置条目"""
+    name: str
+    description: str = ""
+    env: ModelEnv = field(default_factory=ModelEnv)
+    is_default: bool = False
+
+
+# ── 单例状态 ─────────────────────────────────────────────────────────────────
+_models_cache: dict[str, ModelEntry] = {}
+_active_model_id: str = "default"
+
+
+def _ensure_models_dir() -> None:
+    """确保 ~/.supercc 目录存在"""
+    Path(MODELS_CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+
+def load_models_config() -> tuple[str, dict[str, ModelEntry]]:
+    """加载 models.yaml，返回 (active_model_id, models_dict)"""
+    global _models_cache, _active_model_id
+
+    if not os.path.exists(MODELS_CONFIG_PATH):
+        _create_default_config()
+
+    with open(MODELS_CONFIG_PATH) as f:
+        raw = yaml.safe_load(f)
+
+    _active_model_id = raw.get("active_model", "default")
+    _models_cache = {}
+
+    for model_id, model_data in raw.get("models", {}).items():
+        env_data = model_data.get("env", {})
+        env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=env_data.get("ANTHROPIC_AUTH_TOKEN", ""),
+            ANTHROPIC_BASE_URL=env_data.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+            ANTHROPIC_MODEL=env_data.get("ANTHROPIC_MODEL", ""),
+        )
+        _models_cache[model_id] = ModelEntry(
+            name=model_data.get("name", model_id),
+            description=model_data.get("description", ""),
+            env=env,
+            is_default=model_data.get("is_default", False),
+        )
+
+    return _active_model_id, _models_cache
+
+
+def save_models_config(active_model_id: str, models: dict[str, ModelEntry]) -> None:
+    """保存模型配置到 models.yaml"""
+    _ensure_models_dir()
+
+    raw_models = {}
+    for model_id, entry in models.items():
+        raw_models[model_id] = {
+            "name": entry.name,
+            "description": entry.description,
+            "is_default": entry.is_default,
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": entry.env.ANTHROPIC_AUTH_TOKEN,
+                "ANTHROPIC_BASE_URL": entry.env.ANTHROPIC_BASE_URL,
+                "ANTHROPIC_MODEL": entry.env.ANTHROPIC_MODEL,
+            },
+        }
+
+    raw = {
+        "active_model": active_model_id,
+        "models": raw_models,
+    }
+
+    with open(MODELS_CONFIG_PATH, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+
+
+def _create_default_config() -> None:
+    """创建默认模型配置（自动从 ~/.claude/settings.json 导入已有配置）"""
+    _ensure_models_dir()
+
+    default_env = ModelEnv()
+    default_entry = ModelEntry(
+        name="Claude Opus 4",
+        description="默认模型配置",
+        env=default_env,
+        is_default=True,
+    )
+
+    # 尝试从现有的 ~/.claude/settings.json 读取配置作为默认值
+    if os.path.exists(CLAUDE_SETTINGS_PATH):
+        try:
+            with open(CLAUDE_SETTINGS_PATH) as f:
+                settings = json.load(f)
+            env_config = settings.get("env", {})
+            if env_config.get("ANTHROPIC_AUTH_TOKEN"):
+                default_entry.env.ANTHROPIC_AUTH_TOKEN = env_config.get("ANTHROPIC_AUTH_TOKEN", "")
+            if env_config.get("ANTHROPIC_BASE_URL"):
+                default_entry.env.ANTHROPIC_BASE_URL = env_config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+            if env_config.get("ANTHROPIC_MODEL"):
+                default_entry.env.ANTHROPIC_MODEL = env_config.get("ANTHROPIC_MODEL", "claude-opus-4-5")
+            if env_config.get("ANTHROPIC_AUTH_TOKEN"):
+                default_entry.name = f"导入配置 ({default_entry.env.ANTHROPIC_MODEL})"
+        except Exception:
+            pass
+
+    save_models_config("default", {"default": default_entry})
+
+
+def get_active_model() -> Optional[ModelEntry]:
+    """获取当前激活的模型配置"""
+    global _active_model_id, _models_cache
+    if not _models_cache:
+        load_models_config()
+    return _models_cache.get(_active_model_id)
+
+
+def get_all_models() -> dict[str, ModelEntry]:
+    """获取所有模型配置"""
+    global _models_cache
+    if not _models_cache:
+        load_models_config()
+    return _models_cache.copy()
+
+
+def switch_model(model_id: str) -> bool:
+    """切换到指定模型，返回是否成功"""
+    global _active_model_id, _models_cache
+    if not _models_cache:
+        load_models_config()
+
+    if model_id not in _models_cache:
+        return False
+
+    _active_model_id = model_id
+    save_models_config(model_id, _models_cache)
+
+    # 关键：更新 ~/.claude/settings.json
+    _update_claude_settings(_models_cache[model_id].env)
+    return True
+
+
+def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool:
+    """添加新模型，返回是否成功（ID 冲突返回 False）"""
+    global _models_cache
+    if not _models_cache:
+        load_models_config()
+
+    if model_id in _models_cache:
+        return False
+
+    _models_cache[model_id] = ModelEntry(
+        name=name,
+        description=description,
+        env=env,
+        is_default=False,
+    )
+
+    save_models_config(_active_model_id, _models_cache)
+    return True
+
+
+def delete_model(model_id: str) -> bool:
+    """删除模型，返回是否成功（不能删除当前激活的模型）"""
+    global _active_model_id, _models_cache
+    if not _models_cache:
+        load_models_config()
+
+    if model_id not in _models_cache:
+        return False
+
+    if model_id == _active_model_id:
+        return False
+
+    del _models_cache[model_id]
+    save_models_config(_active_model_id, _models_cache)
+    return True
+
+
+def _update_claude_settings(env: ModelEnv) -> None:
+    """更新 ~/.claude/settings.json 的 env 字段（保留其他字段）"""
+    settings = {"env": {}}
+
+    if os.path.exists(CLAUDE_SETTINGS_PATH):
+        try:
+            with open(CLAUDE_SETTINGS_PATH) as f:
+                settings = json.load(f)
+        except Exception:
+            pass
+
+    if "env" not in settings:
+        settings["env"] = {}
+
+    settings["env"]["ANTHROPIC_AUTH_TOKEN"] = env.ANTHROPIC_AUTH_TOKEN
+    settings["env"]["ANTHROPIC_BASE_URL"] = env.ANTHROPIC_BASE_URL
+    settings["env"]["ANTHROPIC_MODEL"] = env.ANTHROPIC_MODEL
+
+    Path(CLAUDE_SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+    with open(CLAUDE_SETTINGS_PATH, "w") as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
+
+
+def get_current_claude_settings() -> dict:
+    """读取当前的 ~/.claude/settings.json"""
+    if not os.path.exists(CLAUDE_SETTINGS_PATH):
+        return {}
+    try:
+        with open(CLAUDE_SETTINGS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def is_configured() -> bool:
+    """检查是否已完成初始模型配置（至少有一个有效 token 的模型）"""
+    models = get_all_models()
+    for entry in models.values():
+        if entry.env.ANTHROPIC_AUTH_TOKEN:
+            return True
+    return False
