@@ -68,7 +68,7 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
     print(f"\n✅ 配置已保存到 {config_path}")
 
 
-async def run_install_flow(config_path: str = "config.yaml") -> AppRegistrationResult:
+async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bool = False) -> AppRegistrationResult:
     """Run the full install flow: init → begin → QR → poll → save config."""
     print("\n🚀 开始安装 SuperCC...\n")
 
@@ -108,5 +108,5 @@ async def run_install_flow(config_path: str = "config.yaml") -> AppRegistrationR
     # Step 5: Save config
     print(f"\n✅ 机器人创建成功！")
 
-    save_config(result, config_path)
+    save_config(result, config_path, bypass_accepted=bypass_accepted)
     return result

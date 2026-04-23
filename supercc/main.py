@@ -1271,6 +1271,7 @@ def main(args=None):
 
     gw_install = gateway_subparsers.add_parser("install", help="Install gateway as a system service (开机自启动)")
     gw_start = gateway_subparsers.add_parser("start", help="Start gateway (auto-install if not installed)")
+    gw_run = gateway_subparsers.add_parser("run", help="Run gateway in foreground (实时打印日志)")
     gw_stop = gateway_subparsers.add_parser("stop", help="Stop gateway")
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
 
@@ -1416,12 +1417,15 @@ def main(args=None):
             run_gateway_start,
             run_gateway_stop,
             run_gateway_status,
+            run_gateway_run,
         )
         action = getattr(args, "gateway_action", None)
         if action == "install":
             run_gateway_install()
         elif action == "start":
             run_gateway_start()
+        elif action == "run":
+            run_gateway_run()
         elif action == "stop":
             run_gateway_stop()
         elif action == "status":
@@ -1433,7 +1437,10 @@ def main(args=None):
 
     if command == "onboard":
         from supercc.onboard import run_onboard_flow
-        run_onboard_flow()
+        ok = run_onboard_flow()
+        if ok:
+            from supercc.gateway.cli import run_gateway_start
+            run_gateway_start()
         return
 
     # Default: start (both `supercc` and `supercc start`)
@@ -1474,7 +1481,8 @@ def main(args=None):
         logger.info(f"Config found, starting SuperCC...")
     else:
         logger.info("Install complete, starting SuperCC...")
-    start_bridge(cfg_path, data_dir)
+    from supercc.gateway.cli import run_gateway_start
+    run_gateway_start()
 
 
 if __name__ == "__main__":

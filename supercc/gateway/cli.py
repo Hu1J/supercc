@@ -32,6 +32,14 @@ def run_gateway_start() -> None:
         gm.start()
 
 
+def run_gateway_run() -> None:
+    """gateway run 子命令：前台运行 gateway，实时打印日志。"""
+    from supercc.config import resolve_config_path
+    cfg_path, data_dir = resolve_config_path()
+    from supercc.main import start_bridge
+    start_bridge(cfg_path, data_dir)
+
+
 def run_gateway_stop() -> None:
     """gateway stop 子命令：停止 gateway。"""
     gm = _gm()

@@ -24,9 +24,9 @@ def _print_step(step: int, total: int, title: str) -> None:
 
 def run_onboard_flow() -> bool:
     """Run the interactive onboard flow. Returns True if setup completed."""
-    TOTAL_STEPS = 3
+    TOTAL_STEPS = 2
 
-    print("\n🚀 SuperCC 首次安装引导\n")
+    print("\n🐲 SuperCC 项目初始化引导\n")
 
     # ── Risk warning ─────────────────────────────────────────────────────────
     print("⚠️  安全风险警告\n")
@@ -110,7 +110,7 @@ def run_onboard_flow() -> bool:
         data_dir = os.path.join(os.getcwd(), ".supercc")
 
     Path(cfg_path).parent.mkdir(parents=True, exist_ok=True)
-    feishu_ok = asyncio.run(run_install_flow(cfg_path))
+    feishu_ok = asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
 
     if feishu_ok:
         print("✅ 飞书配置完成\n")
@@ -118,25 +118,6 @@ def run_onboard_flow() -> bool:
     else:
         print("⚠️  飞书配置未完成（稍后可手动配置）\n")
         feishu_configured = False
-
-    # ── Step 3: Proxy (optional) ─────────────────────────────────────────────
-    _print_step(3, TOTAL_STEPS, "配置代理（可选）")
-    print("如需使用代理，请配置以下信息\n")
-
-    use_proxy = questionary.confirm(
-        "是否使用代理？",
-        default=False,
-        style=questionary.Style([
-            ("selected", "fg:#00AA00 bold"),
-        ]),
-    ).ask()
-
-    proxy_url = ""
-    if use_proxy:
-        proxy_url = questionary.text(
-            "代理 URL",
-            default="",
-        ).ask()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'━' * 60}")
@@ -150,10 +131,6 @@ def run_onboard_flow() -> bool:
         print(f"模型: {active.name} @ {active.env.ANTHROPIC_BASE_URL}")
         print(f"     模型 ID: `{active.env.ANTHROPIC_MODEL}`")
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
-    if use_proxy and proxy_url:
-        print(f"代理: {proxy_url}")
-    else:
-        print("代理: 未使用")
 
     print()
 
@@ -169,18 +146,14 @@ def run_onboard_flow() -> bool:
         print("\n❌ 已取消安装引导")
         return False
 
-    # ── Save proxy config ─────────────────────────────────────────────────────
-    if use_proxy and proxy_url:
-        from supercc.config import init_config, get_config, write_config
-        try:
-            cfg_path, _ = resolve_config_path()
-            init_config(cfg_path)
-            cfg = get_config()
-            cfg.http_proxy = proxy_url
-            write_config(cfg)
-            print("✅ 代理配置已保存")
-        except Exception:
-            print("⚠️  代理配置保存失败（config.yaml 可能尚未初始化）")
+    # ── Save bypass accepted ──────────────────────────────────────────────────
+    from supercc.config import init_config, get_config, write_config, accept_bypass_warning
+    try:
+        cfg_path, _ = resolve_config_path()
+        init_config(cfg_path)
+        accept_bypass_warning(cfg_path)
+    except Exception:
+        pass
 
     print("\n" + "=" * 60)
     print("✅ SuperCC 安装引导完成！")
@@ -265,7 +238,7 @@ def _do_model_config_step() -> None:
         ANTHROPIC_MODEL=selected_model,
     )
 
-    from supercc.claude.model_config import get_all_models, save_models_config
+    from supercc.claude.model_config import get_all_models, save_models_config, switch_model, _models_cache
     models = get_all_models()
     models[model_id] = ModelEntry(
         name=name,
@@ -273,7 +246,9 @@ def _do_model_config_step() -> None:
         env=env,
         is_default=True,
     )
+    _models_cache.update(models)  # 先同步到内存 cache
     save_models_config(model_id, models)
+    switch_model(model_id)  # 设置为激活模型，同步写入 Claude 内部配置
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.name}")
     print(f"   模型: `{selected_model}`")
