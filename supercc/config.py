@@ -308,6 +308,10 @@ def resolve_config_path() -> tuple[str, str]:
     Data (sessions, logs, PID) also lives in {cwd}/.supercc/.
 
     Auto-creates both directories if not found.
+
+    Raises OSError if cwd is at a filesystem root (/) since that indicates
+    the launchd/systemd script did not cd to the project directory, and
+    falling back to ~/.supercc/ would mix data from multiple projects.
     """
     import os
     cwd = os.getcwd()

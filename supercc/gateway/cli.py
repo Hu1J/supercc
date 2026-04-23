@@ -38,6 +38,15 @@ def run_gateway_stop() -> None:
     gm.stop()
 
 
+def run_gateway_uninstall() -> None:
+    """gateway uninstall 子命令：卸载平台服务并停止运行。"""
+    gm = _gm()
+    if not gm.status()["installed"]:
+        print("Gateway 未安装，无需卸载")
+        return
+    gm.uninstall()
+
+
 def run_gateway_status() -> None:
     """gateway status 子命令：查看运行状态。"""
     gm = _gm()

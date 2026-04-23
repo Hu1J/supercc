@@ -1274,6 +1274,7 @@ def main(args=None):
     gw_run = gateway_subparsers.add_parser("run", help="Run gateway in foreground (实时打印日志)")
     gw_stop = gateway_subparsers.add_parser("stop", help="Stop gateway")
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
+    gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
     args = parser.parse_args(args)
 
@@ -1417,6 +1418,7 @@ def main(args=None):
             run_gateway_start,
             run_gateway_stop,
             run_gateway_status,
+            run_gateway_uninstall,
         )
         action = getattr(args, "gateway_action", None)
         if action == "install":
@@ -1427,6 +1429,8 @@ def main(args=None):
             run_gateway_stop()
         elif action == "status":
             run_gateway_status()
+        elif action == "uninstall":
+            run_gateway_uninstall()
         else:
             run_gateway_status()
         return
