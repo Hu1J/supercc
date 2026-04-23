@@ -1431,6 +1431,9 @@ class MessageHandler:
                     parts.append(f"`{m}`")
             return " / ".join(parts)
 
+        # 当前激活的条目放最前面
+        configured.sort(key=lambda x: 0 if x[5] else 1)
+
         # 构建表格头部（第一行）
         table_header = "| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |"
         # 构建表格分隔符（第二行）
