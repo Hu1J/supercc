@@ -28,15 +28,16 @@ def format_agent_card(text: str) -> dict:
     }
 
 
-def should_use_agent_card(text: str) -> bool:
+def should_use_agent_card(
+    tool_name: str = "",
+    data: dict | None = None,
+) -> bool:
     """判断是否使用卡片发送 Agent 响应。
 
-    卡片用于：文本较长（>= _AGENT_CARD_MIN_LENGTH），
-    或包含代码块/表格的内容（更好的渲染效果）。
+    只有当工具名包含 "agent" 且数据有 "prompt" 字段时才使用卡片。
+    其他内容（表格、普通文本）不应走卡片路径。
     """
-    if len(text) >= _AGENT_CARD_MIN_LENGTH:
-        return True
-    # 有代码块或表格也用卡片
-    if "```" in text or ("\n|" in text and text.count("|") >= 4):
-        return True
+    if tool_name and "agent" in tool_name.lower():
+        if data is not None and "prompt" in data:
+            return True
     return False
