@@ -286,6 +286,27 @@ PROVIDERS: dict[str, Provider] = {
         ],
         description="MiniMax 海螺AI（Text-01 / abab 系列，国产高性价比）",
     ),
+
+    "volcano": Provider(
+        id="volcano",
+        name="火山引擎",
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        auth_type="bearer",
+        models=[
+            "doubao-seed-2.0-code",
+            "doubao-seed-2.0-pro",
+            "doubao-seed-2.0-lite",
+            "doubao-seed-code",
+            "minimax-m2.7",
+            "minimax-m2.5",
+            "glm-5.1",
+            "glm-4.7",
+            "deepseek-v3.2",
+            "kimi-k2.6",
+            "kimi-k2.5",
+        ],
+        description="火山引擎 ARK（豆包/DeepSeek/Kimi/GLM 系列）",
+    ),
 }
 
 
