@@ -1417,21 +1417,17 @@ def main(args=None):
             run_gateway_start,
             run_gateway_stop,
             run_gateway_status,
-            run_gateway_run,
         )
         action = getattr(args, "gateway_action", None)
         if action == "install":
             run_gateway_install()
         elif action == "start":
             run_gateway_start()
-        elif action == "run":
-            run_gateway_run()
         elif action == "stop":
             run_gateway_stop()
         elif action == "status":
             run_gateway_status()
         else:
-            # 默认显示状态
             run_gateway_status()
         return
 
@@ -1439,8 +1435,9 @@ def main(args=None):
         from supercc.onboard import run_onboard_flow
         ok = run_onboard_flow()
         if ok:
-            from supercc.gateway.cli import run_gateway_start
-            run_gateway_start()
+            cfg_path, data_dir = resolve_config_path()
+            init_config(cfg_path)
+            start_bridge(cfg_path, data_dir)
         return
 
     # Default: start (both `supercc` and `supercc start`)
@@ -1474,8 +1471,7 @@ def main(args=None):
     logging.getLogger().addHandler(fh)
     write_log_banner(log_file, _version)
     logger.info("Starting SuperCC...")
-    from supercc.gateway.cli import run_gateway_start
-    run_gateway_start()
+    start_bridge(cfg_path, data_dir)
 
 
 if __name__ == "__main__":
