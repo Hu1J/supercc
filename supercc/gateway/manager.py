@@ -30,7 +30,7 @@ class GatewayManager:
 
     @property
     def _pid_file(self) -> str:
-        return os.path.join(self._data_dir, "gateway.pid")
+        return os.path.join(self._data_dir, "supercc.pid")
 
     @property
     def _stdout_log(self) -> str:
@@ -128,41 +128,16 @@ class GatewayManager:
             print(f"✅ Gateway 已启动（PID {proc.pid}，前台模式）")
             return proc.pid
 
+    def _launchd_plist_path(self) -> Path:
+        """返回 launchd plist 文件路径（与 install_mac 保持一致）。"""
+        slug = self._project_slug()
+        plist_dir = Path.home() / "Library" / "LaunchAgents"
+        return plist_dir / f"com.supercc.gateway.{slug}.plist"
+
     def stop(self) -> None:
-        """停止 gateway 进程（SIGTERM → SIGKILL）。"""
-        pid = self._load_pid()
-        if pid is None:
-            print("Gateway 未在运行（无 PID 文件）")
-            return
-
-        if not self._is_running(pid):
-            print("Gateway 未在运行（进程已死）")
-            Path(self._pid_file).unlink(missing_ok=True)
-            return
-
-        def kill_with_timeout(pid: int, sig: int, timeout: float) -> bool:
-            try:
-                os.kill(pid, sig)
-            except OSError:
-                return True  # 已不存在
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                if not self._is_running(pid):
-                    return True
-                time.sleep(0.1)
-            return False
-
-        # SIGTERM，5 秒超时
-        term_ok = kill_with_timeout(pid, signal.SIGTERM, 5.0)
-        if not term_ok:
-            # SIGKILL，2 秒超时
-            sigkill_ok = kill_with_timeout(pid, signal.SIGKILL, 2.0)
-            if not sigkill_ok:
-                print(f"⚠️  无法终止进程（PID {pid}），PID 文件仍保留")
-                return
-
+        """通过平台服务停止 gateway（仅 stop，不卸载 plist）。"""
+        platform.stop_service(self._data_dir, self._project_slug())
         Path(self._pid_file).unlink(missing_ok=True)
-        print(f"✅ Gateway（PID {pid}）已停止")
 
     # ── 服务安装/卸载 ────────────────────────────────────────────────────────
 
