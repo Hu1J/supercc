@@ -167,11 +167,11 @@ class GatewayManager:
     # ── 服务安装/卸载 ────────────────────────────────────────────────────────
 
     def _project_slug(self) -> str:
-        """从数据目录推导项目 slug（取 .supercc 父目录名，转 DNS 安全格式）。"""
-        import re
+        """从数据目录推导项目 slug（纯路径 hash，保证同名项目不冲突）。"""
+        import hashlib
 
-        parent = Path(self._data_dir).resolve().parent.name
-        return re.sub(r"[^a-zA-Z0-9_-]", "_", parent)
+        path = Path(self._data_dir).resolve().parent
+        return hashlib.md5(str(path).encode()).hexdigest()[:8]
 
     def install(self) -> None:
         """安装平台服务（开机自启动）。"""
