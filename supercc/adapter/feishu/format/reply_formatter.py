@@ -54,8 +54,9 @@ def _optimize_markdown_style_impl(text: str, card_version: int = 2) -> str:
         r = re.sub(r"^([^|\n].*)\n(\|.+\|)", r"\1\n\n\2", r, flags=re.MULTILINE)
         # 4b: add <br> before table
         r = re.sub(r"\n\n((?:\|.+\|[^\S\n]*\n?)+)", r"\n\n<br>\n\n\1", r)
-        # 4c: add <br> after table
-        r = re.sub(r"((?:^\|.+\|[^\S\n]*\n?)+)", r"\1\n<br>\n", r, flags=re.MULTILINE)
+        # 4c: REMOVED — <br> after table was causing extra blank rows in Feishu
+        # The \n at end of last table row + trailing \n after <br> created double \n
+        # Feishu markdown renderer handles table-to-text spacing natively
         # 4d: reduce extra blank lines when non-heading/non-bold text precedes table
         r = re.sub(
             r"^((?!#{4,5} )(?!\*\*).+)\n\n(<br>)\n\n(\|)",
