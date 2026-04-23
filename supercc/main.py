@@ -728,6 +728,212 @@ def _run_memory_command(args) -> None:
             asyncio.run(_send_feishu(f"🔍 找到 {len(results)} 条项目记忆"))
 
 
+def _run_config_interactive() -> None:
+    """交互式模型配置菜单。"""
+    import getpass
+
+    def _input(prompt: str, default: str = "", password: bool = False) -> str:
+        if default:
+            prompt = f"{prompt} [{default}]"
+        prompt = f"{prompt}: "
+        if password:
+            return getpass.getpass(prompt) or default
+        return input(prompt) or default
+
+    def _confirm(prompt: str, default: bool = False) -> bool:
+        suffix = " (Y/n)" if default else " (y/N)"
+        answer = input(prompt + suffix + ": ").strip().lower()
+        if not answer:
+            return default
+        return answer in ("y", "yes")
+
+    while True:
+        print("\n" + "━" * 40)
+        print(" 模型配置菜单")
+        print("━" * 40)
+        print("  1. ➕ 添加模型")
+        print("  2. 🔄 切换模型")
+        print("  3. 🗑  删除模型")
+        print("  4. 📋 查看供应商列表")
+        print("  5. ❌ 退出")
+        print()
+
+        choice = _input("请选择", default="5")
+        print()
+
+        if choice == "1":
+            # 添加模型
+            from supercc.claude.model_providers import PROVIDERS
+            auth_display_map = {"bearer": "Bearer Token", "api_key": "API Key", "azure": "Azure AD Token"}
+
+            print("请选择供应商：\n")
+            provider_list = list(PROVIDERS.items())
+            for i, (pid, p) in enumerate(provider_list, 1):
+                auth = auth_display_map.get(p.auth_type, p.auth_type)
+                print(f"  {i:2}. {p.name}")
+                print(f"      端点: {p.base_url or '(用户填入)'}")
+                print()
+
+            print(f"  0. 取消")
+            print()
+            pidx_str = _input("请输入编号")
+            if pidx_str == "0" or not pidx_str:
+                continue
+            try:
+                idx = int(pidx_str) - 1
+                if idx < 0 or idx >= len(provider_list):
+                    raise ValueError()
+                provider_id, provider = provider_list[idx]
+            except ValueError:
+                print("❌ 无效的选择")
+                continue
+
+            auth = auth_display_map.get(provider.auth_type, provider.auth_type)
+            token = _input(f"API Key（{auth}）", password=True)
+            if not token:
+                print("⚠️  未提供 API Key，已取消")
+                continue
+
+            print(f"\n可选模型：\n")
+            for i, m in enumerate(provider.models, 1):
+                print(f"  {i:2}. `{m}`")
+            print(f"\n  0. 取消")
+            midx_str = _input("请输入模型编号（或直接回车选择第1个）", default="1")
+            if midx_str == "0":
+                continue
+            try:
+                midx = int(midx_str) - 1 if midx_str else 0
+                if midx < 0 or midx >= len(provider.models):
+                    midx = 0
+            except ValueError:
+                midx = 0
+            selected_model = provider.models[midx]
+
+            model_id = provider_id
+            name = f"{provider.name} ({selected_model})"
+
+            from supercc.claude.model_config import ModelEnv, add_model, get_all_models, save_models_config
+            env = ModelEnv(
+                ANTHROPIC_AUTH_TOKEN=token,
+                ANTHROPIC_BASE_URL=provider.base_url,
+                ANTHROPIC_MODEL=selected_model,
+            )
+            models = get_all_models()
+            if model_id in models:
+                print(f"⚠️  模型 ID `{model_id}` 已存在，使用 `supercc config switch {model_id}` 切换")
+                continue
+            from supercc.claude.model_config import ModelEntry
+            models[model_id] = ModelEntry(
+                name=name,
+                description=f"供应商: {provider.name}",
+                env=env,
+                is_default=False,
+            )
+            save_models_config(model_id, models)
+            print(f"✅ 模型 **{name}** (`{model_id}`) 已添加")
+            print(f"   端点: `{provider.base_url}`")
+            print(f"   模型: `{selected_model}`")
+            print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
+
+        elif choice == "2":
+            # 切换模型
+            from supercc.claude.model_config import get_all_models, get_active_model, switch_model
+            models = get_all_models()
+            if not models:
+                print("⚠️  没有任何已配置的模型")
+                continue
+            active_id = None
+            for mid, mentry in models.items():
+                if mentry is get_active_model():
+                    active_id = mid
+            print("当前已配置的模型：\n")
+            for i, (mid, mentry) in enumerate(models.items(), 1):
+                active_mark = " ✅" if mid == active_id else ""
+                print(f"  {i:2}. {mentry.name} (`{mid}`){active_mark}")
+            print(f"\n  0. 取消")
+            print()
+            midx_str = _input("请选择要切换的模型编号")
+            if midx_str == "0" or not midx_str:
+                continue
+            try:
+                idx = int(midx_str) - 1
+                if idx < 0 or idx >= len(models):
+                    raise ValueError()
+                target_id = list(models.keys())[idx]
+            except ValueError:
+                print("❌ 无效的选择")
+                continue
+            ok = switch_model(target_id)
+            if not ok:
+                print(f"❌ 切换失败")
+                continue
+            entry = models[target_id]
+            print(f"✅ 已切换到 **{entry.name}**")
+            print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
+            print(f"   端点: `{entry.env.ANTHROPIC_BASE_URL}`")
+            print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc restart` 命令重启。")
+
+        elif choice == "3":
+            # 删除模型
+            from supercc.claude.model_config import get_all_models, get_active_model, delete_model
+            models = get_all_models()
+            if not models:
+                print("⚠️  没有任何已配置的模型")
+                continue
+            active_id = None
+            for mid, mentry in models.items():
+                if mentry is get_active_model():
+                    active_id = mid
+            print("当前已配置的模型：\n")
+            for i, (mid, mentry) in enumerate(models.items(), 1):
+                active_mark = "（当前激活）" if mid == active_id else ""
+                print(f"  {i:2}. {mentry.name} (`{mid}`) {active_mark}")
+            print(f"\n  0. 取消")
+            print()
+            midx_str = _input("请选择要删除的模型编号")
+            if midx_str == "0" or not midx_str:
+                continue
+            try:
+                idx = int(midx_str) - 1
+                if idx < 0 or idx >= len(models):
+                    raise ValueError()
+                target_id = list(models.keys())[idx]
+            except ValueError:
+                print("❌ 无效的选择")
+                continue
+            if target_id == active_id:
+                print("❌ 无法删除当前激活的模型，请先切换到其他模型")
+                continue
+            if not _confirm(f"确认删除模型 `{target_id}`？"):
+                continue
+            ok = delete_model(target_id)
+            if ok:
+                print(f"✅ 模型 `{target_id}` 已删除")
+            else:
+                print(f"❌ 删除失败")
+
+        elif choice == "4":
+            from supercc.claude.model_providers import PROVIDERS
+            auth_display_map = {"bearer": "Bearer Token", "api_key": "API Key", "azure": "Azure AD Token"}
+            print("支持的模型供应商：\n")
+            for pid, p in PROVIDERS.items():
+                auth = auth_display_map.get(p.auth_type, p.auth_type)
+                models_preview = ", ".join(p.models[:3])
+                if len(p.models) > 3:
+                    models_preview += f" ... (+{len(p.models) - 3})"
+                print(f"  `{pid}` — {p.name}")
+                print(f"    端点: {p.base_url or '(用户填入)'}")
+                print(f"    认证: {auth}")
+                print(f"    模型: {models_preview}")
+                print()
+            print("用法: supercc config add --provider <provider_id> <token> <model>")
+
+        elif choice == "5":
+            break
+        else:
+            print("❌ 无效选择，请输入 1-5")
+
+
 def _run_config_command(args) -> None:
     """Handle supercc config <action> [args]."""
     from supercc.claude.model_config import (
@@ -760,7 +966,7 @@ def _run_config_command(args) -> None:
             f"    Token: ...{token_display}"
         )
 
-    # 无 action 或 list
+    # 无 action（交互式菜单）或 list（只显示）
     if action is None or action == "list":
         if not is_configured():
             current_settings = {}
@@ -776,13 +982,14 @@ def _run_config_command(args) -> None:
                 print(f"- 模型: `{env_cfg.get('ANTHROPIC_MODEL', '未设置')}`")
                 print(f"- 端点: `{env_cfg.get('ANTHROPIC_BASE_URL', '未设置')}`")
                 print("\n💡 **建议**: 使用 `supercc config add ...` 将现有配置导入为第一个模型。")
-                print("\n用法: supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
+                print("\n用法: supercc config add --provider <provider_id> <token> <model>")
             else:
                 print("📋 **尚未配置任何模型**")
-                print("\n用法: supercc config add <model_id>|<name>|<description>|<token>|<base_url>|<model>")
-                print("\n示例:")
-                print("- Anthropic: supercc config add anthropic|Anthropic API|sk-ant-xxx|https://api.anthropic.com|claude-opus-4-5")
-                print("- OpenRouter: supercc config add openrouter|OpenRouter|sk-or-xxx|https://openrouter.ai/api/v1|anthropic/claude-3.5-sonnet")
+                print("\n用法: supercc config add --provider <provider_id> <token> <model>")
+                print("\n可用供应商: supercc config providers")
+            # action is None 时进入交互菜单
+            if action is None:
+                _run_config_interactive()
             return
 
         models = get_all_models()
@@ -797,6 +1004,10 @@ def _run_config_command(args) -> None:
             print(_fmt_model(model_id, entry, is_active=(model_id == active_id)))
             print()
         print(f"\n当前激活: `{(active_id or '未知')}`")
+
+        # action is None 时进入交互菜单
+        if action is None:
+            _run_config_interactive()
         return
 
     if action == "add":

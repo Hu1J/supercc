@@ -253,6 +253,39 @@ PROVIDERS: dict[str, Provider] = {
         ],
         description="Novita AI（聚合多模型，性价比高）",
     ),
+
+    "qwen": Provider(
+        id="qwen",
+        name="阿里云通义千问",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        auth_type="bearer",
+        models=[
+            "qwen-plus",
+            "qwen-plus-2025-01-25",
+            "qwen-turbo",
+            "qwen-turbo-2025-01-25",
+            "qwen-max",
+            "qwen-max-2025-01-25",
+            "qwen-coder-plus",
+            "qwen-vl-plus",
+            "qwq-32b",
+        ],
+        description="阿里云通义千问（Qwen2.5/Qwen-Max/Qwen-Coder/视觉版）",
+    ),
+
+    "minimax": Provider(
+        id="minimax",
+        name="MiniMax 海螺AI",
+        base_url="https://api.minimax.chat/v1",
+        auth_type="bearer",
+        models=[
+            "MiniMax-Text-01",
+            "abab6.5s-chat",
+            "abab6.5g-chat",
+            "abab5.5-chat",
+        ],
+        description="MiniMax 海螺AI（Text-01 / abab 系列，国产高性价比）",
+    ),
 }
 
 
