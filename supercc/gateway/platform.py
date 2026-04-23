@@ -19,14 +19,16 @@ def get_platform() -> str:
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
 
-def _resolve_python() -> str:
-    """返回当前 Python 解释器路径（用于启动脚本）。"""
-    return sys.executable
+def _resolve_supercc() -> str:
+    """返回当前环境 supercc console script 绝对路径。"""
+    python_path = Path(sys.executable)
+    return str(python_path.parent / "supercc")
 
 
 def _get_start_script(data_dir: str) -> str:
     """生成启动脚本内容。"""
-    return "#!/bin/bash\nexec supercc\n"
+    project_dir = Path(data_dir).resolve().parent
+    return f"#!/bin/bash\ncd {project_dir}\nexec {_resolve_supercc()} start\n"
 
 
 def _slug_to_dns_safe(slug: str) -> str:
@@ -89,7 +91,7 @@ def install_mac(data_dir: str, project_slug: str) -> None:
 
 
 def uninstall_mac(data_dir: str, project_slug: str) -> None:
-    """卸载 macOS LaunchAgent。"""
+    """卸载 macOS LaunchAgent（unload + 删除 plist + 删除脚本）。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_name = f"com.supercc.gateway.{slug}"
@@ -104,6 +106,21 @@ def uninstall_mac(data_dir: str, project_slug: str) -> None:
     script_path.unlink(missing_ok=True)
     Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
     print("✅ Gateway 已从 macOS LaunchAgent 卸载")
+
+
+def stop_mac(data_dir: str, project_slug: str) -> None:
+    """停止 macOS LaunchAgent 服务（仅 unload，不删除 plist）。"""
+    slug = _slug_to_dns_safe(project_slug)
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / f"com.supercc.gateway.{slug}.plist"
+
+    result = subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "Not loaded" not in stderr and "No such file" not in stderr:
+            print(f"⚠️  launchctl unload 失败: {stderr}")
+            return
+    print("✅ Gateway 已停止")
 
 
 # ── Linux: systemd user service ───────────────────────────────────────────────
@@ -152,7 +169,7 @@ WantedBy=default.target
 
 
 def uninstall_linux(data_dir: str, project_slug: str) -> None:
-    """卸载 systemd user service。"""
+    """卸载 systemd user service（disable + 删除文件）。"""
     slug = _slug_to_dns_safe(project_slug)
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_name = f"supercc-gateway-{slug}"
@@ -167,6 +184,19 @@ def uninstall_linux(data_dir: str, project_slug: str) -> None:
     print("✅ Gateway 已从 systemd user service 卸载")
 
 
+def stop_linux(data_dir: str, project_slug: str) -> None:
+    """停止 systemd user service（仅 stop，不 disable）。"""
+    slug = _slug_to_dns_safe(project_slug)
+    service_name = f"supercc-gateway-{slug}"
+    result = subprocess.run(["systemctl", "--user", "stop", service_name], capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "Could not find" not in stderr:
+            print(f"⚠️  systemctl --user stop 失败: {stderr}")
+            return
+    print("✅ Gateway 已停止")
+
+
 # ── Windows: Task Scheduler ─────────────────────────────────────────────────────
 
 def install_windows(data_dir: str, project_slug: str) -> None:
@@ -174,7 +204,8 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     slug = _slug_to_dns_safe(project_slug)
     task_name = f"SuperCC Gateway ({slug})"
     script_path = Path.home() / ".supercc" / f"supercc-gateway-{slug}.bat"
-    script_content = f'@echo off\n"{_resolve_python()}" supercc\n'
+    project_dir = Path(data_dir).resolve().parent
+    script_content = f'@echo off\ncd /d "{project_dir}"\nsupercc start\n'
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
 
@@ -210,6 +241,11 @@ def install_windows(data_dir: str, project_slug: str) -> None:
         print(f"✅ Gateway 已安装为 Windows Task Scheduler 任务: {task_name}")
 
 
+def stop_windows(data_dir: str, project_slug: str) -> None:
+    """Windows Task Scheduler 任务没有"停止"概念（只在触发时运行）。"""
+    print("⚠️  Windows 不支持 stop（Task Scheduler 任务非持久运行），请使用 uninstall")
+
+
 def uninstall_windows(data_dir: str, project_slug: str) -> None:
     """卸载 Windows Task Scheduler 任务。"""
     slug = _slug_to_dns_safe(project_slug)
@@ -242,6 +278,19 @@ def install_service(data_dir: str, project_slug: str) -> None:
         install_linux(data_dir, project_slug)
     elif p == "windows":
         install_windows(data_dir, project_slug)
+    else:
+        raise RuntimeError(f"Unsupported platform: {p}")
+
+
+def stop_service(data_dir: str, project_slug: str) -> None:
+    """根据当前平台停止 gateway 服务（仅 stop，不删除 plist/脚本）。"""
+    p = get_platform()
+    if p == "macos":
+        stop_mac(data_dir, project_slug)
+    elif p == "linux":
+        stop_linux(data_dir, project_slug)
+    elif p == "windows":
+        stop_windows(data_dir, project_slug)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
 
