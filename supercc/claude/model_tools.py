@@ -1,268 +1,239 @@
-"""模型配置 MCP 工具 — list_models, switch_model, add_model"""
+"""模型配置 MCP 工具 — ListModels, SetModel"""
 from __future__ import annotations
 
 from claude_agent_sdk import tool
 
 from supercc.claude.model_config import (
     get_all_models,
-    get_active_model,
-    switch_model,
-    add_model,
-    delete_model,
+    ModelEntry,
     ModelEnv,
-    get_current_claude_settings,
-    is_configured,
 )
 from supercc.claude.model_providers import PROVIDERS
 
 
-def _fmt_model(model_id: str, entry, is_active: bool) -> str:
-    """格式化单个模型的显示"""
-    active_mark = "✅ " if is_active else "   "
-    env = entry.env
-    token_display = f"***{env.ANTHROPIC_AUTH_TOKEN[-4:]:>4}" if env.ANTHROPIC_AUTH_TOKEN else "(未设置)"
-    return "\n".join([
-        f"{active_mark}**{entry.name}** (`{model_id}`)",
-        f"    描述: {entry.description or '(无)'}",
-        f"    模型: `{env.ANTHROPIC_MODEL}`",
-        f"    端点: `{env.ANTHROPIC_BASE_URL}`",
-        f"    Token: ...{token_display}",
-    ])
+def _get_user_open_id() -> str | None:
+    """从当前活跃会话获取 user_open_id。"""
+    from supercc.claude.session_manager import SessionManager
+    from supercc.config import resolve_config_path, SESSIONS_DB_PATH
+
+    _, _ = resolve_config_path()
+    db_path = SESSIONS_DB_PATH
+    sm = SessionManager(db_path=db_path)
+    session = sm.get_active_session_by_chat_id()
+    return session.user_id if session else None
+
+
+def _is_owner() -> bool:
+    """检查当前用户是否为机器人所有者。"""
+    from supercc.config import get_config
+
+    user_id = _get_user_open_id()
+    if not user_id:
+        return False
+    cfg = get_config()
+    return user_id in cfg.auth.allowed_users
+
+
+def _mask_api_key(key: str) -> str:
+    """掩码展示 API Key，只露头尾。"""
+    if not key:
+        return "—"
+    if len(key) <= 10:
+        return "****"
+    return key[:6] + "***" + key[-4:]
 
 
 # ── tools ──────────────────────────────────────────────────────────────────────
 
 @tool(
     "ListModels",
-    "列出所有已配置的模型，包括名称、描述、当前使用的模型会用 ✅ 标记。",
+    "列出所有预置供应商及其配置状态，包括供应商名称、当前模型、API Key、所有可用模型。",
     {},
 )
 async def list_models(args: dict) -> dict:
-    """列出所有模型"""
-    if not is_configured():
-        current_settings = get_current_claude_settings()
-        env_cfg = current_settings.get("env", {})
-
-        if env_cfg.get("ANTHROPIC_AUTH_TOKEN"):
-            guide = "\n\n".join([
-                "📋 **检测到您已配置过 Claude Code**",
-                "",
-                "您的现有配置：",
-                f"- 模型: `{env_cfg.get('ANTHROPIC_MODEL', '未设置')}`",
-                f"- 端点: `{env_cfg.get('ANTHROPIC_BASE_URL', '未设置')}`",
-                "",
-                "💡 **建议**: 使用 `/model add` 将现有配置导入为第一个模型。",
-                "",
-                "用法: `/model add <name>|<description>|<token>|<base_url>|<model>`",
-                "",
-                "示例: `/model add 导入配置|从Claude Code导入|"
-                + f"{env_cfg.get('ANTHROPIC_AUTH_TOKEN', '')}|"
-                + f"{env_cfg.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')}|"
-                + f"{env_cfg.get('ANTHROPIC_MODEL', 'claude-opus-4-5')}`",
-            ])
-        else:
-            guide = "\n\n".join([
-                "📋 **首次使用模型配置**",
-                "",
-                "您还没有配置任何模型。请使用 `/model add` 添加第一个模型。",
-                "",
-                "用法: `/model add <name>|<description>|<token>|<base_url>|<model>`",
-                "",
-                "示例:",
-                "- Anthropic: `/model add anthropic|Anthropic API|sk-ant-xxx|https://api.anthropic.com|claude-opus-4-5`",
-                "- OpenRouter: `/model add openrouter|OpenRouter|sk-or-xxx|https://openrouter.ai/api/v1|anthropic/claude-3.5-sonnet`",
-            ])
-
-        return {"content": [{"type": "text", "text": guide}]}
-
+    """列出所有供应商的模型配置"""
     models = get_all_models()
+
+    # 建立 base_url -> (model_id, ModelEntry) 反查表
+    url_to_model: dict[str, tuple[str, ModelEntry]] = {}
+    for mid, mentry in models.items():
+        if mentry.env.ANTHROPIC_AUTH_TOKEN and mentry.env.ANTHROPIC_BASE_URL:
+            url_to_model[mentry.env.ANTHROPIC_BASE_URL] = (mid, mentry)
+
+    configured = []  # (provider_id, provider_name, current_model, masked_api_key, all_models, is_active)
+    unconfigured = []  # (provider_id, provider_name, all_models)
+
     active_id = None
     for mid, mentry in models.items():
-        if mentry is get_active_model():
-            active_id = mid
-            break
+        if mentry.env.ANTHROPIC_AUTH_TOKEN:
+            if active_id is None:
+                active_id = mid
 
-    lines = ["🤖 **已配置的模型**\n"]
-    for model_id, entry in models.items():
-        lines.append(_fmt_model(model_id, entry, is_active=(model_id == active_id)))
-        lines.append("")
-
-    lines.append(f"\n当前激活: `{(active_id or '未知')}`")
-
-    return {"content": [{"type": "text", "text": "\n".join(lines)}]}
-
-
-@tool(
-    "ListProviders",
-    "列出所有预置模型供应商（Anthropic、OpenAI、DeepSeek、OpenRouter 等）及其可用模型。用户只需提供 API Key 和选择模型即可快速添加。",
-    {},
-)
-async def list_providers(args: dict) -> dict:
-    """列出所有预置供应商"""
-    lines = ["🌐 **支持的模型供应商**\n"]
     for p in PROVIDERS.values():
-        auth_display = {"bearer": "Bearer Token", "api_key": "API Key", "azure": "Azure AD"}.get(p.auth_type, p.auth_type)
-        lines.append(f"**`{p.id}`** — {p.name}")
-        lines.append(f"  {p.description}")
-        lines.append(f"  端点: `{p.base_url or '(用户填入)'}`")
-        lines.append(f"  认证: {auth_display}")
-        lines.append(f"  模型:")
-        for m in p.models[:8]:  # 最多显示8个
-            lines.append(f"    `/{m}`")
-        if len(p.models) > 8:
-            lines.append(f"    ... 等 {len(p.models)} 个模型")
-        lines.append("")
+        matched = None
+        if p.base_url and p.base_url in url_to_model:
+            matched = url_to_model[p.base_url]
+        if not matched:
+            for url, (mid, mentry) in url_to_model.items():
+                if p.base_url and url.startswith(p.base_url.rstrip("/") + "/"):
+                    matched = (mid, mentry)
+                    break
 
-    lines.append("---")
-    lines.append("**快速添加供应商模型：**")
-    lines.append("`/model add --provider <provider_id>`")
-    lines.append("然后提供 API Key 和选择模型即可。")
+        if matched:
+            mid, mentry = matched
+            configured.append((
+                p.id,
+                p.name,
+                mentry.env.ANTHROPIC_MODEL or "—",
+                _mask_api_key(mentry.env.ANTHROPIC_AUTH_TOKEN),
+                p.models,
+                mid == active_id,
+            ))
+        else:
+            unconfigured.append((p.id, p.name, p.models))
+
+    lines = ["## 🤖 模型配置\n"]
+    lines.append("| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |")
+    lines.append("|------|--------|---------|---------|------------|")
+    for pid, pname, model, masked_key, all_models, is_active in configured:
+        mark = "✅" if is_active else "✴️"
+        avail = " / ".join(f"`{m}`" for m in all_models)
+        lines.append(f"| {mark} | **{pname}** | `{model}` | `{masked_key}` | {avail} |")
+    for pid, pname, all_models in unconfigured:
+        avail = " / ".join(f"`{m}`" for m in all_models)
+        lines.append(f"| 📛 | {pname} | — | — | {avail} |")
 
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
 
 @tool(
-    "SwitchModel",
-    "切换当前使用的模型。切换后 Claude Code 将使用新模型的 API 配置。",
-    {"model_id": str},
+    "SetModel",
+    """设置/切换模型配置（仅限机器人所有者操作）。
+入参为 JSON 格式：
+{
+  "provider": "volcano",      // 必填，供应商 ID
+  "model": "kimi-k2.6",     // 选填，模型 ID（必须在该 provider 的可用模型列表中）
+  "api_key": "sk-xxx"        // 选填，如需更新 API Key 则传入
+}
+说明：provider 必填；model 和 api_key 二选一（至少传一个）。
+支持三种场景：
+1. 切换供应商：provider + model + api_key（完整切换）
+2. 切换模型（同供应商）：provider + model（api_key 不变）
+3. 仅更新 API Key：provider（原 model 不变）+ api_key
+""",
+    {"config": str},
 )
-async def switch_model_tool(args: dict) -> dict:
-    """切换模型"""
-    model_id = args.get("model_id", "").strip()
-    if not model_id:
-        return {"content": [{"type": "text", "text": "model_id 是必填的"}], "is_error": True}
-
-    models = get_all_models()
-    if model_id not in models:
-        available = ", ".join(f"`{mid}`" for mid in models.keys())
+async def set_model_tool(args: dict) -> dict:
+    """设置/切换模型（权限 + 智能路由）"""
+    if not _is_owner():
         return {
             "content": [{
                 "type": "text",
-                "text": f"未找到模型 ID: `{model_id}`\n可用模型: {available}"
+                "text": "⚠️ 无权操作：切换模型仅限机器人所有者。如需变更，请联系管理员。"
             }],
-            "is_error": True
+            "is_error": True,
         }
 
-    ok = switch_model(model_id)
-    if not ok:
-        return {"content": [{"type": "text", "text": f"切换模型 `{model_id}` 失败"}], "is_error": True}
+    import json
+    config_str = args.get("config", "").strip()
+    if not config_str:
+        return {"content": [{"type": "text", "text": "config 是必填的（JSON 格式）"}], "is_error": True}
 
-    entry = models[model_id]
-    return {
-        "content": [{
-            "type": "text",
-            "text": f"✅ 已切换到 **{entry.name}**\n\n"
-                    f"模型: `{entry.env.ANTHROPIC_MODEL}`\n"
-                    f"端点: `{entry.env.ANTHROPIC_BASE_URL}`\n\n"
-                    f"注意: Claude Code 需要重启才能生效，使用 `/restart` 命令重启。"
-        }]
-    }
+    try:
+        cfg = json.loads(config_str)
+    except json.JSONDecodeError:
+        return {"content": [{"type": "text", "text": "config 必须是合法 JSON"}], "is_error": True}
 
+    provider_id = cfg.get("provider", "").strip()
+    model = cfg.get("model", "").strip()
+    api_key = cfg.get("api_key")
+    if api_key is not None:
+        api_key = api_key.strip()
 
-@tool(
-    "AddModel",
-    "添加新的模型配置。添加后需要使用 SwitchModel 切换到新模型。",
-    {
-        "model_id": str,
-        "name": str,
-        "description": str,
-        "auth_token": str,
-        "base_url": str,
-        "model": str,
-        "provider": str,
-    },
-)
-async def add_model_tool(args: dict) -> dict:
-    """添加新模型（支持 --provider 快捷方式）"""
-    model_id = args.get("model_id", "").strip()
-    name = args.get("name", "").strip()
-    description = args.get("description", "").strip()
-    auth_token = args.get("auth_token", "").strip()
-    base_url = args.get("base_url", "").strip()
-    model = args.get("model", "").strip()
-    provider_id = args.get("provider", "").strip()
+    if not provider_id:
+        return {"content": [{"type": "text", "text": "provider 是必填的"}], "is_error": True}
+    if not model and not api_key:
+        return {"content": [{"type": "text", "text": "model 和 api_key 至少要传一个"}], "is_error": True}
 
-    # --provider 快捷方式：自动填充 base_url
-    if provider_id:
-        provider = get_provider(provider_id)
-        if not provider:
-            available = ", ".join(PROVIDERS.keys())
-            return {
-                "content": [{"type": "text", "text": f"未知供应商 `{provider_id}`\n可用供应商: {available}"}],
-                "is_error": True
-            }
-        if not base_url:
-            base_url = provider.base_url
-        if not name:
-            name = provider.name
+    # 查找 provider
+    provider = PROVIDERS.get(provider_id)
+    if not provider:
+        available = ", ".join(f"`{p.id}`" for p in PROVIDERS.values())
+        return {"content": [{"type": "text", "text": f"未知供应商 `{provider_id}`\n可用: {available}"}], "is_error": True}
 
-    # 验证必填字段
-    missing = []
-    if not model_id:
-        missing.append("model_id")
-    if not auth_token:
-        missing.append("auth_token")
-    if not base_url:
-        missing.append("base_url（可通过 --provider 自动填入）")
-    if not model:
-        missing.append("model")
-
-    if missing:
-        # 提供供应商模型列表作为提示
-        hint = ""
-        if provider_id:
-            p = get_provider(provider_id)
-            if p:
-                models_str = "\n".join(f"`{m}`" for m in p.models)
-                hint = f"\n\n{p.name} 可用模型：\n{models_str}"
+    # 验证 model 在 provider.models 中
+    if model and model not in provider.models:
+        models_str = ", ".join(f"`{m}`" for m in provider.models)
         return {
-            "content": [{"type": "text", "text": f"缺少必填字段: {', '.join(missing)}{hint}"}],
-            "is_error": True
+            "content": [{"type": "text", "text": f"模型 `{model}` 不在供应商 `{provider.name}` 的可用模型中。\n可用: {models_str}"}],
+            "is_error": True,
         }
 
-    env = ModelEnv(
-        ANTHROPIC_AUTH_TOKEN=auth_token,
-        ANTHROPIC_BASE_URL=base_url,
-        ANTHROPIC_MODEL=model,
-    )
+    models = get_all_models()
 
-    ok = add_model(model_id, name, description, env)
-    if not ok:
-        return {"content": [{"type": "text", "text": f"模型 ID `{model_id}` 已存在，请使用其他 ID"}], "is_error": True}
+    # 查找该 provider 是否已有配置（通过 base_url 匹配）
+    matched_mid = None
+    matched_entry = None
+    for mid, mentry in models.items():
+        if mentry.env.ANTHROPIC_BASE_URL == provider.base_url:
+            matched_mid = mid
+            matched_entry = mentry
+            break
 
-    return {
-        "content": [{
-            "type": "text",
-            "text": f"✅ 模型 **{name}** (`{model_id}`) 已添加\n\n"
-                    f"供应商: `{provider_id or 'custom'}`\n"
-                    f"模型: `{model}`\n"
-                    f"端点: `{base_url}`\n\n"
-                    f"使用 `/model switch {model_id}` 切换到新模型。"
-        }]
-    }
+    changed = []
+    new_model_id = matched_mid or provider_id
 
+    if matched_entry:
+        # 已有配置，更新
+        if api_key:
+            matched_entry.env.ANTHROPIC_AUTH_TOKEN = api_key
+            changed.append("API Key")
+        if model:
+            matched_entry.env.ANTHROPIC_MODEL = model
+            changed.append(f"模型 → `{model}`")
+        final_env = matched_entry.env
+    else:
+        # 新增配置
+        new_entry = ModelEntry(
+            name=provider.name,
+            description=provider.description,
+            env=ModelEnv(
+                ANTHROPIC_AUTH_TOKEN=api_key or "",
+                ANTHROPIC_BASE_URL=provider.base_url,
+                ANTHROPIC_MODEL=model,
+            ),
+        )
+        models[new_model_id] = new_entry
+        changed.append(f"新增供应商 `{provider.name}`")
+        if model:
+            changed.append(f"模型 → `{model}`")
+        if api_key:
+            changed.append("API Key")
+        final_env = new_entry
 
-@tool(
-    "DeleteModel",
-    "删除一个模型配置。无法删除当前激活的模型。",
-    {"model_id": str},
-)
-async def delete_model_tool(args: dict) -> dict:
-    """删除模型"""
-    model_id = args.get("model_id", "").strip()
-    if not model_id:
-        return {"content": [{"type": "text", "text": "model_id 是必填的"}], "is_error": True}
-
-    ok = delete_model(model_id)
-    if not ok:
+    # 保存前先校验 API credentials 是否有效
+    from supercc.claude.model_config import save_models_config, _active_model_id, validate_model_env
+    valid, err_msg = validate_model_env(final_env)
+    if not valid:
         return {
-            "content": [{"type": "text", "text": f"删除模型 `{model_id}` 失败。可能原因：模型不存在或为当前激活模型。"}],
-            "is_error": True
+            "content": [{
+                "type": "text",
+                "text": f"❌ 配置无效，切换被拒绝。\n\n错误：{err_msg}\n\n请检查 API Key、模型 ID 是否正确，或联系管理员。"
+            }],
+            "is_error": True,
         }
 
+    # 新增供应商时，将其设为激活模型
+    if not matched_entry:
+        import supercc.claude.model_config as mc
+        mc._active_model_id = new_model_id
+
+    save_models_config(mc._active_model_id, models)
+
+    changed_str = "、".join(changed)
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 模型 `{model_id}` 已删除。"
+            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model or matched_entry.env.ANTHROPIC_MODEL if matched_entry else model}`\n下次对话起生效。"
         }]
     }

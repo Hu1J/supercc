@@ -1,7 +1,7 @@
 """预置模型供应商配置 — 主流 API 供应商的 base_url 和可用模型列表。
 
 所有 base_url 均为 Claude Code (Anthropic Messages API) 兼容格式。
-参考来源：cc-switch claudeProviderPresets.ts
+模型 ID 来源：openclaw/openclaw 源码 extensions/ 目录下的 provider-catalog.ts / models.ts
 """
 from __future__ import annotations
 
@@ -21,7 +21,11 @@ class Provider:
 
 
 # ── 预置供应商 ────────────────────────────────────────────────────────────────
-# 排序：国内常用（MiniMax/火山/千问/GLM/DeepSeek/Kimi/Ollama） → 国内可访问 → 海外
+# 只保留支持 Anthropic Messages API 格式（/v1/messages + Bearer）的供应商
+# 剔除：OpenAI（/v1/chat/completions）、Gemini（Google 格式）、Azure（Azure 格式）
+#       Groq/Together/Mistral/Cerebras/SiliconFlow（均为 OpenAI 兼容格式）
+#
+# 排序：国内常用（MiniMax/火山/千问/GLM/DeepSeek/Kimi）→ Anthropic → OpenRouter → Novita/Ollama
 
 PROVIDERS: dict[str, Provider] = {
 
@@ -33,12 +37,10 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.minimaxi.com/anthropic",
         auth_type="bearer",
         models=[
-            "MiniMax-Text-01",
-            "abab6.5s-chat",
-            "abab6.5g-chat",
-            "abab5.5-chat",
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
         ],
-        description="MiniMax 海螺AI（Text-01 / abab 系列，国产高性价比）",
+        description="MiniMax 海螺AI（M2.7 系列，高性价比）",
     ),
 
     "volcano": Provider(
@@ -59,7 +61,7 @@ PROVIDERS: dict[str, Provider] = {
             "kimi-k2.6",
             "kimi-k2.5",
         ],
-        description="火山引擎 ARK（豆包/DeepSeek/Kimi/GLM 系列）",
+        description="火山引擎 ARK（豆包/MiniMax/GLM/DeepSeek/Kimi 系列）",
     ),
 
     "qwen": Provider(
@@ -68,16 +70,17 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://dashscope.aliyuncs.com/apps/anthropic",
         auth_type="bearer",
         models=[
-            "qwen-plus",
-            "qwen-plus-2025-01-25",
-            "qwen-turbo",
-            "qwen-turbo-2025-01-25",
-            "qwen-max",
-            "qwen-max-2025-01-25",
-            "qwen-coder-plus",
-            "qwq-32b",
+            "qwen3.5-plus",
+            "qwen3.6-plus",
+            "qwen3-max-2026-01-23",
+            "qwen3-coder-next",
+            "qwen3-coder-plus",
+            "MiniMax-M2.5",
+            "glm-5",
+            "glm-4.7",
+            "kimi-k2.5",
         ],
-        description="阿里云通义千问（Qwen2.5/Qwen-Max/Qwen-Coder）",
+        description="阿里云通义千问（Qwen3 / GLM-5 / Kimi 系列）",
     ),
 
     "zhipu": Provider(
@@ -86,13 +89,10 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://open.bigmodel.cn/api/anthropic",
         auth_type="bearer",
         models=[
-            "glm-4-plus",
-            "glm-4",
-            "glm-4-flash",
-            "glm-4-long",
-            "glm-3-turbo",
+            "glm-5",
+            "glm-4.7",
         ],
-        description="智谱 AI（GLM-4 / GLM-3 系列，国产大模型）",
+        description="智谱 AI（GLM-5 / GLM-4.7 系列）",
     ),
 
     "deepseek": Provider(
@@ -102,10 +102,9 @@ PROVIDERS: dict[str, Provider] = {
         auth_type="bearer",
         models=[
             "deepseek-chat",
-            "deepseek-coder",
             "deepseek-reasoner",
         ],
-        description="DeepSeek（DeepSeek V3 / R1 / Coder）",
+        description="DeepSeek（DeepSeek V3 / Reasoner）",
     ),
 
     "kimi": Provider(
@@ -114,49 +113,13 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.moonshot.cn/anthropic",
         auth_type="bearer",
         models=[
-            "kimi-k2.6-thinking",
+            "kimi-k2.6",
             "kimi-k2.5",
-            "moonshot-v1-128k",
-            "moonshot-v1-32k",
-            "moonshot-v1-8k",
+            "kimi-k2-thinking",
+            "kimi-k2-thinking-turbo",
+            "kimi-k2-turbo",
         ],
-        description="Kimi 月之暗面（Moonshot AI，K2 / V1 系列）",
-    ),
-
-    "ollama": Provider(
-        id="ollama",
-        name="Ollama（本地）",
-        base_url="http://localhost:11434/v1",
-        auth_type="bearer",
-        models=[
-            "llama3.3",
-            "llama3.2",
-            "llama3.1",
-            "qwen2.5",
-            "mistral",
-            "codellama",
-            "phi3",
-            "mixtral",
-            "deepseek-coder-v2",
-        ],
-        description="Ollama 本地模型（需本地安装并启动 ollama 服务）",
-    ),
-
-    # ── 国内可访问 ────────────────────────────────────────────────────────────
-
-    "siliconflow": Provider(
-        id="siliconflow",
-        name="SiliconFlow",
-        base_url="https://api.siliconflow.cn/v1",
-        auth_type="bearer",
-        models=[
-            "Qwen/Qwen2.5-72B-Instruct",
-            "deepseek-ai/DeepSeek-V2.5",
-            "anthropic/claude-3.5-sonnet",
-            "meta-llama/Meta-Llama-3.1-70B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.2",
-        ],
-        description="SiliconFlow 硅基流动（聚合多个开源模型，国内可访问）",
+        description="Kimi 月之暗面（K2 系列）",
     ),
 
     # ── 海外 ──────────────────────────────────────────────────────────────────
@@ -187,116 +150,10 @@ PROVIDERS: dict[str, Provider] = {
         models=[
             "anthropic/claude-3.5-sonnet",
             "anthropic/claude-3-opus",
-            "openai/gpt-4o",
-            "openai/gpt-4o-mini",
-            "google/gemini-2.0-flash",
-            "meta-llama/llama-3-70b-instruct",
             "deepseek/deepseek-chat",
             "qwen/qwen-2-72b-instruct",
         ],
-        description="OpenRouter（聚合 100+ 模型，支持 Anthropic/OpenAI/Google 等）",
-    ),
-
-    "openai": Provider(
-        id="openai",
-        name="OpenAI",
-        base_url="https://api.openai.com/v1",
-        auth_type="bearer",
-        models=[
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-turbo",
-            "gpt-4",
-            "gpt-3.5-turbo",
-        ],
-        description="OpenAI 官方 API（GPT-4o / GPT-4 / GPT-3.5）",
-    ),
-
-    "azure": Provider(
-        id="azure",
-        name="Azure OpenAI",
-        base_url="",
-        auth_type="azure",
-        models=[
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-turbo",
-            "gpt-4",
-            "gpt-35-turbo",
-        ],
-        description="Azure OpenAI Service（企业版，需提供 Azure endpoint URL）",
-    ),
-
-    "groq": Provider(
-        id="groq",
-        name="Groq",
-        base_url="https://api.groq.com/openai/v1",
-        auth_type="bearer",
-        models=[
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma-7b-it",
-        ],
-        description="Groq（超低延迟推理，LLaMA/Mixtral/Gemma）",
-    ),
-
-    "gemini": Provider(
-        id="gemini",
-        name="Google Gemini",
-        base_url="https://generativelanguage.googleapis.com",
-        auth_type="api_key",
-        models=[
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-exp",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-pro",
-        ],
-        description="Google Gemini（gemini-2.0 / gemini-1.5 系列）",
-    ),
-
-    "together": Provider(
-        id="together",
-        name="Together AI",
-        base_url="https://api.together.xyz/v1",
-        auth_type="bearer",
-        models=[
-            "meta-llama/Llama-3.3-70B-Instruct",
-            "meta-llama/Llama-3.1-405B-Instruct",
-            "mistralai/Mixtral-8x22B-Instruct",
-            "Qwen/Qwen2-72B-Instruct",
-            "deepseek-ai/DeepSeek-V3",
-        ],
-        description="Together AI（低价高质开源模型，LLaMA/Qwen/Mixtral）",
-    ),
-
-    "mistral": Provider(
-        id="mistral",
-        name="Mistral AI",
-        base_url="https://api.mistral.ai/v1",
-        auth_type="bearer",
-        models=[
-            "mistral-large-2411",
-            "mistral-small-2501",
-            "ministral-3b",
-            "ministral-8b",
-        ],
-        description="Mistral AI（Mistral Large / Small）",
-    ),
-
-    "cerebras": Provider(
-        id="cerebras",
-        name="Cerebras",
-        base_url="https://api.cerebras.ai/v1",
-        auth_type="bearer",
-        models=[
-            "llama-3.3-70b",
-            "llama-3.1-405b",
-            "llama-3.1-70b",
-            "llama-3.1-8b",
-        ],
-        description="Cerebras（全球最快推理，Llama 系列）",
+        description="OpenRouter（聚合 100+ 模型，支持 Anthropic 格式）",
     ),
 
     "novita": Provider(
@@ -311,7 +168,25 @@ PROVIDERS: dict[str, Provider] = {
             "Qwen/Qwen2.5-72B-Instruct",
             "mistralai/Mistral-7B-Instruct-v0.3",
         ],
-        description="Novita AI（聚合多模型，性价比高）",
+        description="Novita AI（支持 Anthropic 格式）",
+    ),
+
+    "ollama": Provider(
+        id="ollama",
+        name="Ollama（本地）",
+        base_url="http://localhost:11434/v1",
+        auth_type="bearer",
+        models=[
+            # 静态列表仅供参考，实际模型以 `ollama list` 查询为准
+            "llama3.3",
+            "llama3.2",
+            "qwen2.5",
+            "mistral",
+            "codellama",
+            "mixtral",
+            "deepseek-coder-v2",
+        ],
+        description="Ollama 本地模型（需本地安装并启动 ollama 服务，用 `ollama list` 查看实际模型）",
     ),
 }
 
@@ -326,7 +201,7 @@ def list_providers() -> dict[str, Provider]:
 
 def format_provider_help() -> str:
     """格式化供应商帮助信息（用于飞书消息）"""
-    auth_display = {"bearer": "Bearer Token", "api_key": "API Key", "azure": "Azure AD Token"}
+    auth_display = {"bearer": "Bearer API Key"}
     lines = ["**支持的模型供应商：**\n"]
     for p in PROVIDERS.values():
         auth = auth_display.get(p.auth_type, p.auth_type)
@@ -338,6 +213,6 @@ def format_provider_help() -> str:
         lines.append(f"  模型: {models_str}")
         lines.append("")
     lines.append("**用法：**")
-    lines.append("`/model add --provider <provider_id> <token> <model>`")
-    lines.append("示例: `/model add --provider minimax <token> abab6.5s-chat`")
+    lines.append("`/model add --provider <provider_id> <api_key> <model>`")
+    lines.append("示例: `/model add --provider minimax <api_key> MiniMax-M2.7`")
     return "\n".join(lines)

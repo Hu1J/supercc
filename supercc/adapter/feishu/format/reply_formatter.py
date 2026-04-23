@@ -161,6 +161,9 @@ class ReplyFormatter:
             "MemoryClear": "🧠",
             "FeishuSendFile": "📬",
             "SkillSearch": "🎯",
+            "EnterPlanMode": "🎯",
+            "ExitPlanMode": "🎯",
+            "AskUserQuestion": "🎯",
         }
 
     def format_text(self, text: str) -> str:

@@ -545,12 +545,13 @@ class MessageHandler:
                     "• /status — 会话状态\n"
                     "• /stop — 打断当前查询\n"
                     "• /git — 显示 Git 状态\n"
-                    "• /model — 查看/管理模型配置（支持 --provider 快捷添加）\n"
+                    "• /model — 查看模型配置\n"
                     "• /switch <路径> — 切换到另一个项目的 SuperCC 实例\n"
                     "• /restart — 重启当前 SuperCC\n"
                     "• /update — 检查并更新到最新版本\n"
                     "• /help — 显示本帮助\n"
-                    "• /memory — 查看/管理记忆"
+                    "• /memory — 查看/管理记忆\n"
+                    "• /skill [all] — 查看技能列表（/skill all 查看全局）"
                 ),
             )
 
@@ -570,6 +571,9 @@ class MessageHandler:
 
         elif cmd == "/memory":
             return await self._handle_memory(message)
+
+        elif cmd == "/skill":
+            return await self._handle_skill(message)
 
         else:
             return HandlerResult(
@@ -609,6 +613,77 @@ class MessageHandler:
         if did_update:
             os._exit(0)
         return HandlerResult(success=True)
+
+    async def _handle_skill(self, message: IncomingMessage) -> HandlerResult:
+        """Handle /skill [all] — list project or global skills."""
+        parts = message.content.split(maxsplit=1)
+        scope = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        if scope == "all":
+            skills_dir = os.path.expanduser("~/.claude/skills")
+            label = "全局"
+        else:
+            session = self.sessions.get_active_session(message.user_open_id)
+            project_path = session.project_path if session else self.approved_directory
+            skills_dir = os.path.join(project_path, ".supercc", "skills")
+            label = "项目"
+
+        skills = self._scan_skills_dir(skills_dir)
+
+        if not skills:
+            return HandlerResult(success=True, response_text=f"📭 暂无可用的{label} Skill")
+
+        return HandlerResult(success=True, response_text=self._fmt_skills_table(skills, label))
+
+    def _scan_skills_dir(self, skills_dir: str) -> list[dict]:
+        """扫描 Skill 目录，返回 Skill 列表（含 name/description/author/version）。"""
+        import re
+        skills = []
+        p = Path(skills_dir)
+        if not p.exists():
+            return skills
+
+        for item in p.iterdir():
+            if not item.is_dir():
+                continue
+            skill_md = item / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            try:
+                content = skill_md.read_text(encoding="utf-8")
+                fm = {}
+                if content.startswith("---"):
+                    match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+                    if match:
+                        for line in match.group(1).splitlines():
+                            if ":" in line:
+                                key, val = line.split(":", 1)
+                                fm[key.strip()] = val.strip()
+                skills.append({
+                    "name": fm.get("name", item.name),
+                    "description": fm.get("description", ""),
+                    "author": fm.get("author", ""),
+                    "version": fm.get("version", ""),
+                })
+            except Exception:
+                continue
+        return skills
+
+    def _fmt_skills_table(self, skills: list[dict], label: str) -> str:
+        """将 Skill 列表渲染为 Markdown 表格。"""
+        def _esc_cell(s: str) -> str:
+            return s.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")[:60]
+
+        lines = [f"## 🛠️ {label} Skill（共 {len(skills)} 个）\n"]
+        lines.append("\n| 名称 | 描述 | 作者 | 版本 |")
+        lines.append("|------|------|------|------|")
+        for s in skills:
+            name = _esc_cell(s.get("name", ""))
+            desc = _esc_cell(s.get("description") or "")
+            author = _esc_cell(s.get("author", ""))
+            version = _esc_cell(s.get("version", ""))
+            lines.append(f"| {name} | {desc} | {author} | {version} |")
+        return "\n".join(lines)
 
     async def _handle_memory(self, message: IncomingMessage) -> HandlerResult:
         """
@@ -912,6 +987,68 @@ class MessageHandler:
             return HandlerResult(success=True,
                                  response_text=f"未知 proj action: {action}\n"
                                                "用法: /memory proj [add|del|update|list|search]")
+
+    async def _handle_skill(self, message: IncomingMessage) -> HandlerResult:
+        """Handle /skill [all] command — list skills in project or globally."""
+        parts = message.content.split(maxsplit=1)
+        scope_all = len(parts) > 1 and parts[1].strip().lower() == "all"
+
+        if scope_all:
+            # 全局 skills: ~/.claude/skills/
+            skills_dir = Path.home() / ".claude" / "skills"
+            title = "全局 Skills"
+        else:
+            # 项目 skills: <project_path>/.supercc/skills/
+            project_path = self._current_project_path or self.approved_directory
+            skills_dir = Path(project_path) / ".supercc" / "skills"
+            title = f"项目 Skills（{Path(project_path).name}）"
+
+        if not skills_dir.exists():
+            return HandlerResult(
+                success=True,
+                response_text=f"📭 暂无 {'全局' if scope_all else '项目'} Skills\n"
+                               f"目录不存在：{skills_dir}"
+            )
+
+        skill_entries = []
+        for item in skills_dir.iterdir():
+            if item.is_dir() and (item / "SKILL.md").exists():
+                # 读取 SKILL.md frontmatter 获取 name/description
+                name = item.name
+                description = ""
+                try:
+                    content = (item / "SKILL.md").read_text(encoding="utf-8")
+                    # 解析 YAML frontmatter
+                    import re
+                    m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+                    if m:
+                        for line in m.group(1).splitlines():
+                            if line.startswith("name:"):
+                                name = line.split(":", 1)[1].strip()
+                            elif line.startswith("description:"):
+                                description = line.split(":", 1)[1].strip()
+                                break
+                except Exception:
+                    pass
+                skill_entries.append((item.name, name, description))
+
+        if not skill_entries:
+            return HandlerResult(
+                success=True,
+                response_text=f"📭 暂无 {'全局' if scope_all else '项目'} Skills"
+            )
+
+        # 渲染 Markdown 表格
+        lines = [
+            f"## 🛠 {title}（共 {len(skill_entries)} 个）\n",
+            "| 目录名 | Skill 名称 | 描述 |",
+            "|--------|-----------|------|",
+        ]
+        for dirname, name, description in skill_entries:
+            desc_short = description[:40] + "…" if len(description) > 40 else description
+            lines.append(f"| `{dirname}` | {name} | {desc_short} |")
+
+        return HandlerResult(success=True, response_text="\n".join(lines))
 
     async def _handle_switch(self, message: IncomingMessage) -> HandlerResult:
         """Handle /switch <target-path> command."""
@@ -1222,15 +1359,29 @@ class MessageHandler:
                     log_reply=False,
                 )
 
-            # Send final text response only if no text was streamed.
-            # If text was streamed in real-time, it is already visible in the chat.
+            # Send final text response as a Feishu card if no text was streamed.
+            # If text was streamed in real-time, it is already visible and not sent again.
             if not accumulator.sent_something:
-                formatted = self.formatter.format_text(response)
-                chunks = self.formatter.split_messages(formatted)
-                for chunk in chunks:
-                    await self._safe_send(message.chat_id, message.message_id, chunk)
-                # NOTE: "Replied to" log moved inside _safe_send (only fires for non-stream sends).
-                # Stream tool calls are already logged by their individual _safe_send calls.
+                if response:
+                    from supercc.adapter.feishu.format.agent_card import (
+                        format_agent_card,
+                        should_use_agent_card,
+                    )
+                    if should_use_agent_card(response):
+                        card = format_agent_card(response)
+                        try:
+                            await self.feishu.send_card(message.chat_id, card)
+                        except Exception:
+                            # 卡片失败，降级为普通文本
+                            formatted = self.formatter.format_text(response)
+                            chunks = self.formatter.split_messages(formatted)
+                            for chunk in chunks:
+                                await self._safe_send(message.chat_id, message.message_id, chunk)
+                    else:
+                        formatted = self.formatter.format_text(response)
+                        chunks = self.formatter.split_messages(formatted)
+                        for chunk in chunks:
+                            await self._safe_send(message.chat_id, message.message_id, chunk)
 
         except asyncio.CancelledError:
             await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
@@ -1284,143 +1435,124 @@ class MessageHandler:
         return HandlerResult(success=True)
 
     async def _handle_model(self, message: IncomingMessage) -> HandlerResult:
-        """处理 /model 命令：列出/添加/切换模型配置"""
-        from supercc.claude.model_tools import list_models, switch_model_tool, add_model_tool
+        """处理 /model 命令：显示所有供应商的模型配置（飞书卡片表格）。"""
+        from supercc.claude.model_config import get_all_models, ModelEntry
+        from supercc.claude.model_providers import PROVIDERS
 
-        parts = message.content.split(maxsplit=1)
-        action = parts[1].lower() if len(parts) > 1 else ""
-        raw_args = parts[1] if len(parts) > 1 else ""
+        models = get_all_models()
 
-        if not action:
-            result = await list_models({})
-            text = result["content"][0]["text"]
-            await self._safe_send(message.chat_id, message.message_id, text)
-            return HandlerResult(success=True)
+        # 建立 base_url -> (model_id, ModelEntry) 反查表
+        url_to_model: dict[str, tuple[str, ModelEntry]] = {}
+        for mid, mentry in models.items():
+            if mentry.env.ANTHROPIC_AUTH_TOKEN and mentry.env.ANTHROPIC_BASE_URL:
+                url_to_model[mentry.env.ANTHROPIC_BASE_URL] = (mid, mentry)
 
-        if action == "list":
-            result = await list_models({})
-            text = result["content"][0]["text"]
-            await self._safe_send(message.chat_id, message.message_id, text)
-            return HandlerResult(success=True)
+        configured = []
+        unconfigured = []
 
-        elif action == "providers":
-            from supercc.claude.model_providers import format_provider_help
-            await self._safe_send(message.chat_id, message.message_id, format_provider_help())
-            return HandlerResult(success=True)
+        active_id = None
+        for mid, mentry in models.items():
+            if mentry.env.ANTHROPIC_AUTH_TOKEN:
+                if active_id is None:
+                    active_id = mid
 
-        elif action.startswith("switch"):
-            args_part = raw_args.split(maxsplit=1)
-            model_id = args_part[1].strip() if len(args_part) > 1 else ""
-            if not model_id:
-                await self._safe_send(message.chat_id, message.message_id, "用法: /model switch <model_id>")
-                return HandlerResult(success=True)
-            result = await switch_model_tool({"model_id": model_id})
-            text = result["content"][0]["text"]
-            await self._safe_send(message.chat_id, message.message_id, text)
-            return HandlerResult(success=True)
+        for p in PROVIDERS.values():
+            matched = None
+            if p.base_url and p.base_url in url_to_model:
+                matched = url_to_model[p.base_url]
+            if not matched:
+                for url, (mid, mentry) in url_to_model.items():
+                    if p.base_url and url.startswith(p.base_url.rstrip("/") + "/"):
+                        matched = (mid, mentry)
+                        break
 
-        elif action.startswith("add"):
-            # 支持两种格式：
-            # 1. /model add --provider <provider_id> <token> <model> — 预设供应商
-            # 2. /model add <name>|<desc>|<token>|<base_url>|<model> — 完全自定义
-            args_part = raw_args.split(maxsplit=1)
-            rest = args_part[1].strip() if len(args_part) > 1 else ""
-
-            if rest.startswith("--provider"):
-                # 预设供应商模式
-                # /model add --provider <provider_id> <token> <model>
-                rest2 = rest[len("--provider"):].strip()
-                parts = rest2.split(maxsplit=2)
-                if len(parts) < 2:
-                    from supercc.claude.model_providers import format_provider_help
-                    help_text = format_provider_help()
-                    await self._safe_send(message.chat_id, message.message_id, (
-                        "用法: /model add --provider <provider_id> <token> <model>\n\n"
-                        + help_text
-                    ))
-                    return HandlerResult(success=True)
-                provider_id, token, model_name = parts[0], parts[1], (parts[2] if len(parts) > 2 else "")
-                if not model_name:
-                    from supercc.claude.model_providers import get_provider
-                    p = get_provider(provider_id)
-                    if p and p.models:
-                        models_list = "\n".join(f"`{m}`" for m in p.models[:10])
-                        default_model = p.models[0]
-                        await self._safe_send(
-                            message.chat_id, message.message_id,
-                            f"请指定模型，例如：`/model add --provider {provider_id} {token} {default_model}`\n\n"
-                            f"{p.name} 可用模型：\n{models_list}"
-                        )
-                    else:
-                        await self._safe_send(message.chat_id, message.message_id, f"未知供应商: `{provider_id}`")
-                    return HandlerResult(success=True)
-
-                import hashlib
-                model_id = hashlib.md5(f"{provider_id}{model_name}".encode()).hexdigest()[:8]
-                from supercc.claude.model_providers import get_provider
-                p = get_provider(provider_id)
-                display_name = p.name if p else provider_id
-                result = await add_model_tool({
-                    "model_id": model_id,
-                    "name": display_name,
-                    "description": f"供应商: {display_name}",
-                    "auth_token": token,
-                    "base_url": "",
-                    "model": model_name,
-                    "provider": provider_id,
-                })
-                text = result["content"][0]["text"]
-                await self._safe_send(message.chat_id, message.message_id, text)
-                return HandlerResult(success=True)
-
-            elif "|" in rest:
-                # 完全自定义模式（原有格式）
-                fields = rest.split("|")
-                if len(fields) < 5:
-                    await self._safe_send(message.chat_id, message.message_id, "格式错误，需要 5 个字段（用 | 分隔）")
-                    return HandlerResult(success=True)
-                name, description, token, base_url, model_name = [f.strip() for f in fields[:5]]
-                import hashlib
-                model_id = hashlib.md5(f"{name}{model_name}".encode()).hexdigest()[:8]
-                result = await add_model_tool({
-                    "model_id": model_id,
-                    "name": name,
-                    "description": description,
-                    "auth_token": token,
-                    "base_url": base_url,
-                    "model": model_name,
-                    "provider": "",
-                })
-                text = result["content"][0]["text"]
-                await self._safe_send(message.chat_id, message.message_id, text)
-                return HandlerResult(success=True)
-
-            else:
-                from supercc.claude.model_providers import format_provider_help
-                help_text = format_provider_help()
-                await self._safe_send(message.chat_id, message.message_id, (
-                    "**/model add 用法：**\n\n"
-                    "**方式一（推荐）：** 预设供应商\n"
-                    "`/model add --provider <provider_id> <token> <model>`\n\n"
-                    "**方式二：** 完全自定义\n"
-                    "`/model add <name>|<desc>|<token>|<base_url>|<model>`\n\n"
-                    + help_text
+            if matched:
+                mid, mentry = matched
+                configured.append((
+                    p.id,
+                    p.name,
+                    mentry.env.ANTHROPIC_AUTH_TOKEN or "",
+                    mentry.env.ANTHROPIC_MODEL or "—",
+                    p.models,
+                    mid == active_id,
                 ))
-                return HandlerResult(success=True)
+            else:
+                unconfigured.append((p.id, p.name, p.models))
 
-        else:
-            from supercc.claude.model_providers import format_provider_help
-            await self._safe_send(message.chat_id, message.message_id, (
-                "**/model 命令用法：**\n\n"
-                "/model — 列出所有模型\n"
-                "/model list — 列出所有模型\n"
-                "/model switch <model_id> — 切换模型\n"
-                "/model add --provider <provider_id> <token> <model> — 添加模型（推荐）\n"
-                "/model add <...> — 添加模型（完全自定义）\n"
-                "\n"
-                + format_provider_help()
-            ))
-            return HandlerResult(success=True)
+        def mask_api_key(key: str) -> str:
+            if not key:
+                return "—"
+            if len(key) <= 10:
+                return "****"
+            return key[:6] + "***" + key[-4:]
+
+        def fmt_models(models: list[str], current: str) -> str:
+            """渲染可用模型列表，当前使用的模型加粗。"""
+            parts = []
+            for m in models:
+                if m == current:
+                    parts.append(f"**`{m}`**")
+                else:
+                    parts.append(f"`{m}`")
+            return " / ".join(parts)
+
+        table_rows = [
+            "| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |",
+            "|------|--------|---------|---------|------------|",
+        ]
+        for pid, pname, api_key, model, all_models, is_active in configured:
+            mark = "✅" if is_active else "✴️"
+            avail = fmt_models(all_models, model)
+            table_rows.append(f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
+        for pid, pname, all_models in unconfigured:
+            avail = " / ".join(f"`{m}`" for m in all_models)
+            table_rows.append(f"| 📛 | {pname} | — | — | {avail} |")
+
+        table_md = "\n".join(table_rows)
+
+        active_name = "未设置"
+        active_model = "—"
+        if active_id and active_id in models:
+            e = models[active_id]
+            active_name = e.name
+            active_model = e.env.ANTHROPIC_MODEL or "—"
+
+        card = {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": (
+                            "## 🤖 模型配置\n"
+                            f"当前使用：**{active_name}**（`{active_model}`）\n\n"
+                            f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。"
+                        ),
+                    },
+                    {"tag": "markdown", "content": table_md},
+                    {
+                        "tag": "markdown",
+                        "content": "---\n💡 如需切换模型或更新配置，直接跟我说即可。"
+                    },
+                ]
+            },
+        }
+
+        try:
+            await self.feishu.send_card(message.chat_id, card)
+        except Exception:
+            text = [f"🤖 **模型配置**（当前：{active_name}）\n"]
+            for pid, pname, api_key, model, all_models, is_active in configured:
+                m = "✅" if is_active else "✴️"
+                text.append(f"{m} {pname}: {model} | {mask_api_key(api_key)}")
+            for pid, pname, all_models in unconfigured:
+                avail = ", ".join(all_models[:4])
+                text.append(f"📛 {pname}: {avail}...")
+            text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 如需切换模型或更新配置，直接跟我说即可。")
+            await self._safe_send(message.chat_id, message.message_id, "\n".join(text))
+
+        return HandlerResult(success=True)
 
     async def _handle_git(self, message: IncomingMessage) -> HandlerResult:
         """执行 git status 和 log，返回精美卡片。"""

@@ -29,10 +29,7 @@ from supercc.claude.cron_tools import (
 from supercc.claude.skill_search_tools import skill_search
 from supercc.claude.model_tools import (
     list_models,
-    list_providers,
-    switch_model_tool,
-    add_model_tool,
-    delete_model_tool,
+    set_model_tool,
 )
 
 
@@ -61,9 +58,6 @@ def get_supercc_mcp_server():
             cron_logs,
             skill_search,
             list_models,
-            list_providers,
-            switch_model_tool,
-            add_model_tool,
-            delete_model_tool,
+            set_model_tool,
         ],
     )

@@ -182,6 +182,65 @@ def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool
     return True
 
 
+def update_model_token(model_id: str, new_token: str) -> bool:
+    """更新已有模型的 API Key。"""
+    global _models_cache
+    if not _models_cache:
+        load_models_config()
+
+    if model_id not in _models_cache:
+        return False
+
+    _models_cache[model_id].env.ANTHROPIC_AUTH_TOKEN = new_token
+    save_models_config(_active_model_id, _models_cache)
+    return True
+
+
+def validate_model_env(env: ModelEnv) -> tuple[bool, str]:
+    """验证 API credentials 是否有效（发送一次 test 请求）。
+
+    Returns:
+        (is_valid, error_message)
+    """
+    import urllib.request
+    import json
+
+    if not env.ANTHROPIC_AUTH_TOKEN:
+        return False, "API Key 为空"
+
+    payload = json.dumps({
+        "model": env.ANTHROPIC_MODEL or "claude-sonnet-4-5",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "hi"}],
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{env.ANTHROPIC_BASE_URL.rstrip('/')}/v1/messages",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {env.ANTHROPIC_AUTH_TOKEN}",
+            "Content-Type": "application/json",
+            "x-api-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                return True, ""
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        try:
+            err_json = json.loads(body)
+            msg = err_json.get("error", {}).get("message", body)
+        except Exception:
+            msg = body[:200]
+        return False, f"HTTP {e.code}: {msg}"
+    except Exception as e:
+        return False, str(e)
+    return False, "未知错误"
+
+
 def delete_model(model_id: str) -> bool:
     """删除模型，返回是否成功（不能删除当前激活的模型）"""
     global _active_model_id, _models_cache
@@ -235,7 +294,7 @@ def get_current_claude_settings() -> dict:
 
 
 def is_configured() -> bool:
-    """检查是否已完成初始模型配置（至少有一个有效 token 的模型）"""
+    """检查是否已完成初始模型配置（至少有一个有效 API Key 的模型）"""
     models = get_all_models()
     for entry in models.values():
         if entry.env.ANTHROPIC_AUTH_TOKEN:
