@@ -1493,19 +1493,10 @@ class MessageHandler:
                     parts.append(f"`{m}`")
             return " / ".join(parts)
 
-        table_rows = [
-            "| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |",
-            "|------|--------|---------|---------|------------|",
-        ]
-        for pid, pname, api_key, model, all_models, is_active in configured:
-            mark = "✅" if is_active else "✴️"
-            avail = fmt_models(all_models, model)
-            table_rows.append(f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
-        for pid, pname, all_models in unconfigured:
-            avail = " / ".join(f"`{m}`" for m in all_models)
-            table_rows.append(f"| 📛 | {pname} | — | — | {avail} |")
-
-        table_md = "\n".join(table_rows)
+        # 构建表格头部（第一行）
+        table_header = "| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |"
+        # 构建表格分隔符（第二行）
+        table_sep = "|------|--------|---------|---------|------------|"
 
         active_name = "未设置"
         active_model = "—"
@@ -1514,26 +1505,38 @@ class MessageHandler:
             active_name = e.name
             active_model = e.env.ANTHROPIC_MODEL or "—"
 
+        # 构建卡片 elements
+        elements = [
+            {
+                "tag": "markdown",
+                "content": (
+                    "## 🤖 模型配置\n"
+                    f"当前使用：**{active_name}**（`{active_model}`）\n\n"
+                    f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。"
+                ),
+            },
+            {"tag": "markdown", "content": table_header},
+            {"tag": "markdown", "content": table_sep},
+        ]
+
+        # 添加已配置供应商行
+        for pid, pname, api_key, model, all_models, is_active in configured:
+            mark = "✅" if is_active else "✴️"
+            avail = fmt_models(all_models, model)
+            elements.append({"tag": "markdown", "content": f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |"})
+
+        # 添加未配置供应商行
+        for pid, pname, all_models in unconfigured:
+            avail = " / ".join(f"`{m}`" for m in all_models)
+            elements.append({"tag": "markdown", "content": f"| 📛 | {pname} | — | — | {avail} |"})
+
+        # 底部提示
+        elements.append({"tag": "markdown", "content": "---\n💡 如需切换模型或更新配置，直接跟我说即可。"})
+
         card = {
             "schema": "2.0",
             "config": {"wide_screen_mode": True},
-            "body": {
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": (
-                            "## 🤖 模型配置\n"
-                            f"当前使用：**{active_name}**（`{active_model}`）\n\n"
-                            f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。"
-                        ),
-                    },
-                    {"tag": "markdown", "content": table_md},
-                    {
-                        "tag": "markdown",
-                        "content": "---\n💡 如需切换模型或更新配置，直接跟我说即可。"
-                    },
-                ]
-            },
+            "body": {"elements": elements},
         }
 
         try:
