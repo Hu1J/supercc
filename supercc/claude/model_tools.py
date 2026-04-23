@@ -183,6 +183,9 @@ async def set_model_tool(args: dict) -> dict:
     changed = []
     new_model_id = matched_mid or provider_id
 
+    import supercc.claude.model_config as mc
+    from supercc.claude.model_config import save_models_config, _active_model_id, validate_model_env
+
     if matched_entry:
         # 已有配置，更新
         if api_key:
@@ -213,8 +216,6 @@ async def set_model_tool(args: dict) -> dict:
         final_env = new_entry.env
 
     # 保存前先校验 API credentials 是否有效
-    import supercc.claude.model_config as mc
-    from supercc.claude.model_config import save_models_config, _active_model_id, validate_model_env
     valid, err_msg = validate_model_env(final_env)
     if not valid:
         return {
@@ -227,13 +228,11 @@ async def set_model_tool(args: dict) -> dict:
 
     # 新增供应商时，将其设为激活模型
     if not matched_entry:
-        import supercc.claude.model_config as mc
         mc._active_model_id = new_model_id
 
     save_models_config(mc._active_model_id, models)
 
     # 同步写入 Claude Code 内部配置文件
-    import supercc.claude.model_config as mc
     active_env = models[mc._active_model_id].env
     mc._update_claude_settings(active_env)
     mc._ensure_claude_onboarding()
