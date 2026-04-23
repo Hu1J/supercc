@@ -26,8 +26,7 @@ def _resolve_python() -> str:
 
 def _get_start_script(data_dir: str) -> str:
     """生成启动脚本内容。"""
-    python_path = _resolve_python()
-    return f"#!/bin/bash\nexec {python_path} -m supercc start\n"
+    return "#!/bin/bash\nexec supercc\n"
 
 
 def _slug_to_dns_safe(slug: str) -> str:
@@ -175,7 +174,7 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     slug = _slug_to_dns_safe(project_slug)
     task_name = f"SuperCC Gateway ({slug})"
     script_path = Path.home() / ".supercc" / f"supercc-gateway-{slug}.bat"
-    script_content = f'@echo off\n"{_resolve_python()}" -m supercc start\n'
+    script_content = f'@echo off\n"{_resolve_python()}" supercc\n'
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
 

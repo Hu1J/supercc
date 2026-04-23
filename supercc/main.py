@@ -1452,7 +1452,6 @@ def main(args=None):
     else:
         cfg_path, data_dir = resolve_config_path()
 
-    # Initialize singleton before any get_config() calls
     init_config(cfg_path)
 
     # Risk warning must be acknowledged before starting (skip if already accepted in config)
