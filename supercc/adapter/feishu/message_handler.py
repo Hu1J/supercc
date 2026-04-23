@@ -926,7 +926,7 @@ class MessageHandler:
             title = "全局 Skills"
         else:
             # 项目 skills: <project_path>/.supercc/skills/
-            project_path = self._current_project_path or self.approved_directory
+            project_path = getattr(self, "_current_project_path", "") or self.approved_directory
             skills_dir = Path(project_path) / ".supercc" / "skills"
             title = f"项目 Skills（{Path(project_path).name}）"
 
