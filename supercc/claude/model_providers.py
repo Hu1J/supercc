@@ -156,21 +156,6 @@ PROVIDERS: dict[str, Provider] = {
         description="OpenRouter（聚合 100+ 模型，支持 Anthropic 格式）",
     ),
 
-    "novita": Provider(
-        id="novita",
-        name="Novita AI",
-        base_url="https://api.novita.ai/anthropic",
-        auth_type="bearer",
-        models=[
-            "deepseek-ai/DeepSeek-V3",
-            "deepseek-ai/DeepSeek-R1",
-            "meta-llama/Llama-3.1-70B-Instruct",
-            "Qwen/Qwen2.5-72B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.3",
-        ],
-        description="Novita AI（支持 Anthropic 格式）",
-    ),
-
     "ollama": Provider(
         id="ollama",
         name="Ollama（本地）",
