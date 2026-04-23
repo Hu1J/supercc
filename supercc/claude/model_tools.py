@@ -63,11 +63,8 @@ async def list_models(args: dict) -> dict:
     configured = []  # (provider_id, provider_name, current_model, masked_api_key, all_models, is_active)
     unconfigured = []  # (provider_id, provider_name, all_models)
 
-    active_id = None
-    for mid, mentry in models.items():
-        if mentry.env.ANTHROPIC_AUTH_TOKEN:
-            if active_id is None:
-                active_id = mid
+    import supercc.claude.model_config as mc
+    active_id = mc._active_model_id
 
     for p in PROVIDERS.values():
         matched = None
