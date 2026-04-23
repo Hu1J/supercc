@@ -190,6 +190,7 @@ async def set_model_tool(args: dict) -> dict:
             changed.append("API Key")
         if model:
             matched_entry.env.ANTHROPIC_MODEL = model
+            matched_entry.name = provider.name  # 同步更新 name，避免包含过时模型名
             changed.append(f"模型 → `{model}`")
         final_env = matched_entry.env
         mc._active_model_id = matched_mid

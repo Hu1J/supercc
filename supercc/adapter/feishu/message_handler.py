@@ -1442,9 +1442,10 @@ class MessageHandler:
         active_name = "未设置"
         active_model = "—"
         if active_id and active_id in models:
-            e = models[active_id]
-            active_name = e.name
-            active_model = e.env.ANTHROPIC_MODEL or "—"
+            active_model = models[active_id].env.ANTHROPIC_MODEL or "—"
+            # 用 PROVIDERS 的固定名称，不用 e.name（可能包含过时的模型名）
+            provider_entry = PROVIDERS.get(active_id)
+            active_name = provider_entry.name if provider_entry else active_id
 
         # 构建表格内容（整张表格放一个 markdown element）
         table_lines = [table_header, table_sep]
