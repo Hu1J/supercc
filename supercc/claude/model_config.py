@@ -159,6 +159,10 @@ def switch_model(model_id: str) -> bool:
 
     # 关键：更新 ~/.claude/settings.json
     _update_claude_settings(_models_cache[model_id].env)
+
+    # 强制写入 ~/.claude.json（hasCompletedOnboarding 防止每次启动要求登录）
+    _ensure_claude_onboarding()
+
     return True
 
 
@@ -256,6 +260,22 @@ def delete_model(model_id: str) -> bool:
     del _models_cache[model_id]
     save_models_config(_active_model_id, _models_cache)
     return True
+
+
+def _ensure_claude_onboarding() -> None:
+    """强制写入 ~/.claude.json，确保 hasCompletedOnboarding: true"""
+    data = {}
+    CLAUDE_JSON_PATH = str(Path.home() / ".claude.json")
+    if os.path.exists(CLAUDE_JSON_PATH):
+        try:
+            with open(CLAUDE_JSON_PATH) as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["hasCompletedOnboarding"] = True
+    Path(CLAUDE_JSON_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with open(CLAUDE_JSON_PATH, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _update_claude_settings(env: ModelEnv) -> None:

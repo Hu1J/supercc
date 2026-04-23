@@ -231,6 +231,12 @@ async def set_model_tool(args: dict) -> dict:
 
     save_models_config(mc._active_model_id, models)
 
+    # 同步写入 Claude Code 内部配置文件
+    import supercc.claude.model_config as mc
+    active_env = models[mc._active_model_id].env
+    mc._update_claude_settings(active_env)
+    mc._ensure_claude_onboarding()
+
     changed_str = "、".join(changed)
     return {
         "content": [{
