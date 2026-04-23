@@ -193,6 +193,66 @@ PROVIDERS: dict[str, Provider] = {
         ],
         description="SiliconFlow 硅基流动（聚合多个开源模型，国内可访问）",
     ),
+
+    "together": Provider(
+        id="together",
+        name="Together AI",
+        base_url="https://api.together.xyz/v1",
+        auth_type="bearer",
+        models=[
+            "meta-llama/Llama-3.3-70B-Instruct",
+            "meta-llama/Llama-3.1-405B-Instruct",
+            "meta-llama/Llama-3.1-70B-Instruct",
+            "mistralai/Mixtral-8x22B-Instruct",
+            "Qwen/Qwen2-72B-Instruct",
+            "deepseek-ai/DeepSeek-V3",
+            "google/gemma-2-27b-it",
+        ],
+        description="Together AI（低价高质开源模型，LLaMA/Qwen/Mixtral）",
+    ),
+
+    "mistral": Provider(
+        id="mistral",
+        name="Mistral AI",
+        base_url="https://api.mistral.ai/v1",
+        auth_type="bearer",
+        models=[
+            "mistral-large-2411",
+            "mistral-small-2501",
+            "ministral-3b",
+            "ministral-8b",
+        ],
+        description="Mistral AI 官方 API（Mistral Large / Small）",
+    ),
+
+    "cerebras": Provider(
+        id="cerebras",
+        name="Cerebras",
+        base_url="https://api.cerebras.ai/v1",
+        auth_type="bearer",
+        models=[
+            "llama-3.3-70b",
+            "llama-3.1-405b",
+            "llama-3.1-70b",
+            "llama-3.1-8b",
+        ],
+        description="Cerebras（全球最快推理，Llama 系列）",
+    ),
+
+    "novita": Provider(
+        id="novita",
+        name="Novita AI",
+        base_url="https://api.novita.ai/v3",
+        auth_type="bearer",
+        models=[
+            "deepseek-ai/DeepSeek-V3",
+            "deepseek-ai/DeepSeek-R1",
+            "meta-llama/Llama-3.1-70B-Instruct",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+        ],
+        description="Novita AI（聚合多模型，性价比高）",
+    ),
 }
 
 
