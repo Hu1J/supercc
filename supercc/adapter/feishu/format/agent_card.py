@@ -6,8 +6,8 @@ import json
 from supercc.adapter.feishu.format.reply_formatter import optimize_markdown_style
 
 
-def format_agent_card(text: str) -> dict:
-    """构建 Agent 响应飞书卡片。
+def format_agent_card(text: str, title: str = "## 🤖 Agent") -> dict:
+    """构建 Agent / Plan 响应飞书卡片。
 
     tool_input 为 JSON 字符串时，解析为 key-value 对用 markdown 展示，
     字段间用 `--` 分割。非 JSON 时直接渲染为 markdown。
@@ -21,7 +21,7 @@ def format_agent_card(text: str) -> dict:
             pass
 
     if data and isinstance(data, dict):
-        parts = ["## 🤖 Agent"]
+        parts = [title]
         for key, value in data.items():
             parts.append(f"**{key}**: {value}")
             parts.append("\n---\n")
@@ -29,7 +29,7 @@ def format_agent_card(text: str) -> dict:
     else:
         # 非 JSON：直接走 markdown 优化
         content = optimize_markdown_style(text or "", card_version=2)
-        content = f"## 🤖 Agent\n\n{content}"
+        content = f"{title}\n\n{content}"
 
     return {
         "schema": "2.0",

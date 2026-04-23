@@ -1148,6 +1148,17 @@ class MessageHandler:
                                     logger.warning(f"send_card failed for agent tool, falling back")
                                 return
 
+                        # Plan 工具 → CardKit 卡片（📋 标题）
+                        if claude_msg.tool_name in ("EnterPlanMode", "ExitPlanMode"):
+                            from supercc.adapter.feishu.format.agent_card import format_agent_card
+                            title = "## 📋 Plan" if claude_msg.tool_name == "EnterPlanMode" else "## 📋 Plan End"
+                            card = format_agent_card(claude_msg.tool_input or "", title=title)
+                            try:
+                                await self.feishu.send_card(message.chat_id, card)
+                            except Exception:
+                                logger.warning(f"send_card failed for plan tool, falling back")
+                            return
+
                         # _DiffMarker / list[_DiffMarker] → 彩色卡片；其他 → backtick 格式
                         if isinstance(result, _DiffMarker):
                             for card in result.card if isinstance(result.card, list) else [result.card]:
