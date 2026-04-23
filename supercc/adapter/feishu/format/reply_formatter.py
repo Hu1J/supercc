@@ -35,10 +35,10 @@ def optimize_markdown_style(text: str, card_version: int = 2) -> str:
 def _optimize_markdown_style_impl(text: str, card_version: int = 2) -> str:
     # 1. Protect code blocks with placeholders
     code_blocks: list[str] = []
-    r = re.sub(
-        r"```[\s\S]*?```",
-        lambda m: f"{_CODE_BLOCK_MARK}{len(code_blocks)}{_CODE_BLOCK_MARK_END}",
-    )
+    def _code_block_replacer(m):
+        code_blocks.append(m.group(0))
+        return f"{_CODE_BLOCK_MARK}{len(code_blocks) - 1}{_CODE_BLOCK_MARK_END}"
+    r = re.sub(r"```[\s\S]*?```", _code_block_replacer, text)
 
     # 2. Heading level reduction (only if H1-H3 exist in original)
     if re.search(r"^#{1,3} ", text, re.MULTILINE):
@@ -357,9 +357,11 @@ class ReplyFormatter:
         If description exists, append it to the header line.
         Code block only contains the command.
         """
+        if not tool_input:
+            return ""
         try:
             data = json.loads(tool_input)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             # 不是合法 JSON，降级
             return f"💻 **Bash**\n```bash\n{tool_input}\n```"
 
@@ -376,10 +378,12 @@ class ReplyFormatter:
 
     def _format_read_tool(self, tool_input: str) -> str:
         """Format Read tool call with backtick-wrapped file path and optional offset/limit."""
+        if not tool_input:
+            return ""
         try:
             data = json.loads(tool_input)
             file_path = data.get("file_path", tool_input)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             file_path = tool_input
             data = {}
 

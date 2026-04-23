@@ -133,7 +133,7 @@ def load_config(path: str, data_dir: str = "") -> Config:
     """Load and validate configuration from YAML file."""
     _upgrade_config(path)
     with open(path) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
 
     # Migrate old-format config (feishu at top level) to new channels: format
     if "channels" not in raw and "feishu" in raw:

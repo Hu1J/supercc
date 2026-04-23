@@ -139,9 +139,9 @@ def _restart_to(file_lock=None, package: str = "supercc"):
         file_lock.release()
     Path(pid_file).unlink(missing_ok=True)
 
-    # 检查确认两个文件都没了
-    if os.path.exists(pid_file) or os.path.exists(instance_lock):
-        raise RestartError("文件锁/pid 文件未成功清理，无法重启")
+    # 注意：不做 exists 检查，因为存在 TOCTOU 竞态：
+    # unlink 和 exists 检查之间，另一进程可能创建新文件。
+    # 新实例启动时会自己检查并覆盖，不依赖这里的检查。
 
     yield RestartStep(step=2, total=5, label=_CLI_STEP_LABELS[1], status="done")
 

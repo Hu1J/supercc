@@ -880,16 +880,14 @@ class MessageHandler:
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的用户偏好")
 
         elif action == "update":
-            parts = raw_args.split("|", 2)
+            parts = raw_args.split("|")
             if len(parts) < 3:
                 return HandlerResult(success=True,
                                      response_text="用法: /memory user update <id> <title>|<content>|<keywords>")
             pref_id = parts[0].strip()
             title = parts[1].strip()
             content = parts[2].strip()
-            keywords = ""
-            if len(parts) > 3:
-                keywords = parts[3].strip()
+            keywords = parts[3].strip() if len(parts) > 3 else ""
             if not pref_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
             ok = self.memory_manager.update_preference(pref_id, title, content, keywords)
@@ -946,16 +944,14 @@ class MessageHandler:
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的项目记忆")
 
         elif action == "update":
-            parts = raw_args.split("|", 2)
+            parts = raw_args.split("|")
             if len(parts) < 3:
                 return HandlerResult(success=True,
                                      response_text="用法: /memory proj update <id> <title>|<content>|<keywords>")
             mem_id = parts[0].strip()
             title = parts[1].strip()
             content = parts[2].strip()
-            keywords = ""
-            if len(parts) > 3:
-                keywords = parts[3].strip()
+            keywords = parts[3].strip() if len(parts) > 3 else ""
             if not mem_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
             ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords)
@@ -1417,7 +1413,7 @@ class MessageHandler:
                             skills_dir=Path(self.data_dir) / "skills",
                         )
                     )
-                except Exception:
+                except Exception as e:
                     logger.warning(f"[_trigger_skill_review] failed to start: {e}")
 
     async def _handle_stop(self, message: IncomingMessage) -> HandlerResult:
