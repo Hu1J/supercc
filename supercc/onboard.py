@@ -89,6 +89,9 @@ def run_onboard_flow() -> bool:
                 is_default=True,
             )
             save_models_config(model_id, models)
+            # 同步更新内存中的 active_model_id，避免被 load_models_config 覆盖
+            from supercc.claude import model_config
+            model_config._active_model_id = model_id
             print("✅ 现有配置已导入为默认模型\n")
         else:
             _do_model_config_step()
