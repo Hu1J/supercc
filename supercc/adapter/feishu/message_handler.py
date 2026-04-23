@@ -200,8 +200,11 @@ class MessageHandler:
                         default_project_path=getattr(self, "_current_project_path", ""),
                     )
                     if isinstance(result, _MemoryCardMarker):
-                        card_md = self._render_memory_card(result)
-                        await self._safe_send(message.chat_id, message.message_id, self.formatter.format_text(card_md))
+                        card = self._render_memory_card(result)
+                        try:
+                            await self.feishu.send_card(message.chat_id, card)
+                        except Exception:
+                            await self._safe_send(message.chat_id, message.message_id, str(card))
                     else:
                         await self._safe_send(message.chat_id, message.message_id, result)
                     logger.info(f"[memory_review] tool: {claude_msg.tool_name}")
@@ -743,8 +746,8 @@ class MessageHandler:
     # ── 记忆工具 MD 表格分页常量 ──────────────────────────────────────────────
     _MEM_PAGE_SIZE = 5
 
-    def _render_memory_card(self, marker: _MemoryCardMarker) -> str:
-        """将 _MemoryCardMarker 渲染为 MD 字符串。"""
+    def _render_memory_card(self, marker: _MemoryCardMarker) -> dict:
+        """将 _MemoryCardMarker 渲染为 CardKit 原生格式（绕过 markdown 渲染）。"""
         try:
             args = json.loads(marker.tool_input) if marker.tool_input else {}
         except json.JSONDecodeError:
@@ -757,30 +760,6 @@ class MessageHandler:
         def _esc(s: str) -> str:
             return s.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
-        def _entry_table(entries: list, show_num: bool = False) -> str:
-            if not entries:
-                return "  _无结果_"
-            lines = "|"
-            sep = "|"
-            cols = ["标题", "内容摘要", "关键词", "ID"]
-            if show_num:
-                cols = ["#"] + cols
-            for c in cols:
-                lines += f" {c} |"
-                sep += "------|"
-            lines += "\n" + sep + "\n"
-            for i, e in enumerate(entries):
-                num = str(i + 1) if show_num else ""
-                title = _esc(e.get("title", "")[:40])
-                content = _esc(e.get("content", "")[:50])
-                keywords = _esc(e.get("keywords", ""))
-                mid = f"`{e.get('id', '')}`"
-                if show_num:
-                    lines += f"| {num} | {title} | {content} | {keywords} | {mid} |\n"
-                else:
-                    lines += f"| {title} | {content} | {keywords} | {mid} |\n"
-            return lines
-
         # ── 顶部文案 ─────────────────────────────────────────────────────
         header = f"🧠 **{short}**"
         if card_type == "search":
@@ -792,40 +771,63 @@ class MessageHandler:
                 header += f"  项目: {pp.split('/')[-1] or pp}"
         elif args.get("user_open_id"):
             header += f"  用户: {args['user_open_id']}"
-        # add/update 的 title 已在表格中展示，顶部文案不再重复
+
+        elements = []
 
         # ── 内容体 ───────────────────────────────────────────────────────
         if card_type in ("add", "update"):
-            # add/update → 条目表格，标题列置顶（顶部文案不含 title）
-            lines = f"{header}\n\n| 标题 | 内容摘要 | 关键词 |\n|------|----------|--------|\n"
-            for e in marker.entries:
-                title = _esc(e.get("title", "")[:60])
-                content = _esc(e.get("content", "")[:50])
-                keywords = _esc(e.get("keywords", ""))
-                mid = f"`{e.get('id', '')}`"
-                lines += f"| {title} | {content} | {keywords} |\n"
-            return lines
+            # add/update → 条目表格（3列：标题、内容摘要、关键词）
+            if not marker.entries:
+                elements.append({"tag": "markdown", "content": "_无结果_"})
+            else:
+                # 表格头部
+                elements.append({"tag": "markdown", "content": header})
+                table_lines = "| 标题 | 内容摘要 | 关键词 |\n|------|----------|--------|\n"
+                for e in marker.entries:
+                    title = _esc(e.get("title", "")[:60])
+                    content = _esc(e.get("content", "")[:50])
+                    keywords = _esc(e.get("keywords", ""))
+                    table_lines += f"| {title} | {content} | {keywords} |\n"
+                elements.append({"tag": "markdown", "content": table_lines})
 
         elif card_type in ("list", "search"):
-            label = "项目记忆" if scope == "proj" else "用户偏好"
+            # list/search → 5列表格（#、标题、内容摘要、关键词、ID）
             total = len(marker.entries)
             header += f"（共 {total} 条）"
-            body = _entry_table(marker.entries, show_num=True)
-            return f"{header}\n\n{body}"
+            if not marker.entries:
+                elements.append({"tag": "markdown", "content": f"{header}\n\n_无结果_"})
+            else:
+                elements.append({"tag": "markdown", "content": header})
+                table_lines = "| # | 标题 | 内容摘要 | 关键词 | ID |\n|---|------|----------|--------|---|\n"
+                for i, e in enumerate(marker.entries, 1):
+                    title = _esc(e.get("title", "")[:40])
+                    content = _esc(e.get("content", "")[:50])
+                    keywords = _esc(e.get("keywords", ""))
+                    mid = f"`{e.get('id', '')}`"
+                    table_lines += f"| {i} | {title} | {content} | {keywords} | {mid} |\n"
+                elements.append({"tag": "markdown", "content": table_lines})
 
         elif card_type == "delete":
             # delete — 只展示被删记忆 ID
             deleted_id = marker.entries[0].get("id", "") if marker.entries else ""
-            return f"{header}\n\n| ID |\n|------|\n| `{deleted_id}` |\n"
+            elements.append({"tag": "markdown", "content": f"{header}\n\n| ID |\n|------|\n| `{deleted_id}` |\n"})
 
-        # fallback: 兜底参数表
-        lines = f"{header}\n\n| 参数 | 值 |\n|------|----|\n"
-        for k, v in args.items():
-            v_str = _esc(str(v))
-            if len(v_str) > 80:
-                v_str = v_str[:80] + "…"
-            lines += f"| `{k}` | {v_str} |\n"
-        return lines
+        else:
+            # fallback: 兜底参数表
+            elements.append({"tag": "markdown", "content": header})
+            table_lines = "| 参数 | 值 |\n|------|----|\n"
+            for k, v in args.items():
+                v_str = _esc(str(v))
+                if len(v_str) > 80:
+                    v_str = v_str[:80] + "…"
+                table_lines += f"| `{k}` | {v_str} |\n"
+            elements.append({"tag": "markdown", "content": table_lines})
+
+        return {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {"elements": elements},
+        }
 
     def _fmt_pref_table(self, prefs: list, total: int) -> str:
         """将用户偏好列表渲染为 MD 表格（一次性输出）。"""
@@ -880,14 +882,16 @@ class MessageHandler:
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的用户偏好")
 
         elif action == "update":
-            parts = raw_args.split("|")
+            parts = raw_args.split("|", 2)
             if len(parts) < 3:
                 return HandlerResult(success=True,
                                      response_text="用法: /memory user update <id> <title>|<content>|<keywords>")
             pref_id = parts[0].strip()
             title = parts[1].strip()
             content = parts[2].strip()
-            keywords = parts[3].strip() if len(parts) > 3 else ""
+            keywords = ""
+            if len(parts) > 3:
+                keywords = parts[3].strip()
             if not pref_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
             ok = self.memory_manager.update_preference(pref_id, title, content, keywords)
@@ -944,14 +948,16 @@ class MessageHandler:
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的项目记忆")
 
         elif action == "update":
-            parts = raw_args.split("|")
+            parts = raw_args.split("|", 2)
             if len(parts) < 3:
                 return HandlerResult(success=True,
                                      response_text="用法: /memory proj update <id> <title>|<content>|<keywords>")
             mem_id = parts[0].strip()
             title = parts[1].strip()
             content = parts[2].strip()
-            keywords = parts[3].strip() if len(parts) > 3 else ""
+            keywords = ""
+            if len(parts) > 3:
+                keywords = parts[3].strip()
             if not mem_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
             ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords)
@@ -1263,18 +1269,13 @@ class MessageHandler:
                                             logger.warning(f"send_edit_diff_card failed, falling back to: {fallback}")
                                             await self._safe_send(message.chat_id, message.message_id, fallback, log_reply=False)
                         elif isinstance(result, _MemoryCardMarker):
-                            # 记忆工具 → Feishu Interactive Card（按 card_type 渲染）
-                            card_md = self._render_memory_card(result)
+                            # 记忆工具 → CardKit 原生格式（绕过 markdown 渲染）
+                            card = self._render_memory_card(result)
                             try:
-                                await self.feishu.send_interactive_reply(
-                                    message.chat_id,
-                                    self.formatter.format_text(card_md),
-                                    message.message_id,
-                                    log_reply=False,
-                                )
+                                await self.feishu.send_card(message.chat_id, card)
                             except Exception:
-                                logger.warning(f"send_interactive_reply failed for memory tool, falling back")
-                                await self._safe_send(message.chat_id, message.message_id, card_md, log_reply=False)
+                                logger.warning(f"send_card failed for memory tool, falling back to text")
+                                await self._safe_send(message.chat_id, message.message_id, str(card), log_reply=False)
                         elif isinstance(result, _AskUserQuestionMarker):
                             # AskUserQuestion → 精美飞书问卷卡片
                             if result.data is not None:
