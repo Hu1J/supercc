@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-04-23
+
+### Fixed
+
+- **restart 彻底修复**：restarter.py 中 `_start_bridge()` 改用 `["supercc", "start"]` 启动新实例，彻底解决 `python -m supercc` 报错 `No module named supercc.__main__` 的问题
+- **/status 全局技能数**：修复统计为 0 的问题，实际技能目录是 `~/.claude/skills/` 而非 `~/.supercc/skills/`
+- **skill_nudge symlink skip 日志**：symlink 已存在且指向正确时跳过，加 debug 日志避免正常行为刷屏
+
+### Added
+
+- **Banner slogan**：新增暗金色 slogan `自进化超级 AI · 越用越懂你`，居中展示
+- **Banner git 分支**：新增当前 git 分支显示，无 git 仓库时显示"无 git 仓库"
+- **/status 项目/全局技能数**：新增两个字段展示当前项目技能数和全局技能数
+- **/git 图标**：Git Status 标题图标从 📊 换为 🌟
+
 ## [0.1.4] - 2026-04-23
 
 ### Fixed
