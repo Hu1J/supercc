@@ -617,77 +617,6 @@ class MessageHandler:
             os._exit(0)
         return HandlerResult(success=True)
 
-    async def _handle_skill(self, message: IncomingMessage) -> HandlerResult:
-        """Handle /skill [all] — list project or global skills."""
-        parts = message.content.split(maxsplit=1)
-        scope = parts[1].strip().lower() if len(parts) > 1 else ""
-
-        if scope == "all":
-            skills_dir = os.path.expanduser("~/.claude/skills")
-            label = "全局"
-        else:
-            session = self.sessions.get_active_session(message.user_open_id)
-            project_path = session.project_path if session else self.approved_directory
-            skills_dir = os.path.join(project_path, ".supercc", "skills")
-            label = "项目"
-
-        skills = self._scan_skills_dir(skills_dir)
-
-        if not skills:
-            return HandlerResult(success=True, response_text=f"📭 暂无可用的{label} Skill")
-
-        return HandlerResult(success=True, response_text=self._fmt_skills_table(skills, label))
-
-    def _scan_skills_dir(self, skills_dir: str) -> list[dict]:
-        """扫描 Skill 目录，返回 Skill 列表（含 name/description/author/version）。"""
-        import re
-        skills = []
-        p = Path(skills_dir)
-        if not p.exists():
-            return skills
-
-        for item in p.iterdir():
-            if not item.is_dir():
-                continue
-            skill_md = item / "SKILL.md"
-            if not skill_md.exists():
-                continue
-            try:
-                content = skill_md.read_text(encoding="utf-8")
-                fm = {}
-                if content.startswith("---"):
-                    match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-                    if match:
-                        for line in match.group(1).splitlines():
-                            if ":" in line:
-                                key, val = line.split(":", 1)
-                                fm[key.strip()] = val.strip()
-                skills.append({
-                    "name": fm.get("name", item.name),
-                    "description": fm.get("description", ""),
-                    "author": fm.get("author", ""),
-                    "version": fm.get("version", ""),
-                })
-            except Exception:
-                continue
-        return skills
-
-    def _fmt_skills_table(self, skills: list[dict], label: str) -> str:
-        """将 Skill 列表渲染为 Markdown 表格。"""
-        def _esc_cell(s: str) -> str:
-            return s.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")[:60]
-
-        lines = [f"## 🛠️ {label} Skill（共 {len(skills)} 个）\n"]
-        lines.append("\n| 名称 | 描述 | 作者 | 版本 |")
-        lines.append("|------|------|------|------|")
-        for s in skills:
-            name = _esc_cell(s.get("name", ""))
-            desc = _esc_cell(s.get("description") or "")
-            author = _esc_cell(s.get("author", ""))
-            version = _esc_cell(s.get("version", ""))
-            lines.append(f"| {name} | {desc} | {author} | {version} |")
-        return "\n".join(lines)
-
     async def _handle_memory(self, message: IncomingMessage) -> HandlerResult:
         """
         Handle /memory command.
@@ -778,17 +707,15 @@ class MessageHandler:
         if card_type in ("add", "update"):
             # add/update → 条目表格（3列：标题、内容摘要、关键词）
             if not marker.entries:
-                elements.append({"tag": "markdown", "content": "_无结果_"})
+                elements.append({"tag": "markdown", "content": f"{header}\n\n_无结果_"})
             else:
-                # 表格头部
-                elements.append({"tag": "markdown", "content": header})
                 table_lines = "| 标题 | 内容摘要 | 关键词 |\n|------|----------|--------|\n"
                 for e in marker.entries:
                     title = _esc(e.get("title", "")[:60])
                     content = _esc(e.get("content", "")[:50])
                     keywords = _esc(e.get("keywords", ""))
                     table_lines += f"| {title} | {content} | {keywords} |\n"
-                elements.append({"tag": "markdown", "content": table_lines})
+                elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
 
         elif card_type in ("list", "search"):
             # list/search → 5列表格（#、标题、内容摘要、关键词、ID）
@@ -797,7 +724,6 @@ class MessageHandler:
             if not marker.entries:
                 elements.append({"tag": "markdown", "content": f"{header}\n\n_无结果_"})
             else:
-                elements.append({"tag": "markdown", "content": header})
                 table_lines = "| # | 标题 | 内容摘要 | 关键词 | ID |\n|---|------|----------|--------|---|\n"
                 for i, e in enumerate(marker.entries, 1):
                     title = _esc(e.get("title", "")[:40])
@@ -805,7 +731,7 @@ class MessageHandler:
                     keywords = _esc(e.get("keywords", ""))
                     mid = f"`{e.get('id', '')}`"
                     table_lines += f"| {i} | {title} | {content} | {keywords} | {mid} |\n"
-                elements.append({"tag": "markdown", "content": table_lines})
+                elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
 
         elif card_type == "delete":
             # delete — 只展示被删记忆 ID
@@ -814,14 +740,13 @@ class MessageHandler:
 
         else:
             # fallback: 兜底参数表
-            elements.append({"tag": "markdown", "content": header})
             table_lines = "| 参数 | 值 |\n|------|----|\n"
             for k, v in args.items():
                 v_str = _esc(str(v))
                 if len(v_str) > 80:
                     v_str = v_str[:80] + "…"
                 table_lines += f"| `{k}` | {v_str} |\n"
-            elements.append({"tag": "markdown", "content": table_lines})
+            elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
 
         return {
             "schema": "2.0",
@@ -1521,6 +1446,17 @@ class MessageHandler:
             active_name = e.name
             active_model = e.env.ANTHROPIC_MODEL or "—"
 
+        # 构建表格内容（整张表格放一个 markdown element）
+        table_lines = [table_header, table_sep]
+        for pid, pname, api_key, model, all_models, is_active in configured:
+            mark = "✅" if is_active else "✴️"
+            avail = fmt_models(all_models, model)
+            table_lines.append(f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
+        for pid, pname, all_models in unconfigured:
+            avail = " / ".join(f"`{m}`" for m in all_models)
+            table_lines.append(f"| 📛 | {pname} | — | — | {avail} |")
+        table_content = "\n".join(table_lines)
+
         # 构建卡片 elements
         elements = [
             {
@@ -1528,26 +1464,12 @@ class MessageHandler:
                 "content": (
                     "## 🤖 模型配置\n"
                     f"当前使用：**{active_name}**（`{active_model}`）\n\n"
-                    f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。"
+                    f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。\n\n"
+                    + table_content
+                    + "\n\n---\n💡 如需切换模型或更新配置，直接跟我说即可。"
                 ),
             },
-            {"tag": "markdown", "content": table_header},
-            {"tag": "markdown", "content": table_sep},
         ]
-
-        # 添加已配置供应商行
-        for pid, pname, api_key, model, all_models, is_active in configured:
-            mark = "✅" if is_active else "✴️"
-            avail = fmt_models(all_models, model)
-            elements.append({"tag": "markdown", "content": f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |"})
-
-        # 添加未配置供应商行
-        for pid, pname, all_models in unconfigured:
-            avail = " / ".join(f"`{m}`" for m in all_models)
-            elements.append({"tag": "markdown", "content": f"| 📛 | {pname} | — | — | {avail} |"})
-
-        # 底部提示
-        elements.append({"tag": "markdown", "content": "---\n💡 如需切换模型或更新配置，直接跟我说即可。"})
 
         card = {
             "schema": "2.0",
