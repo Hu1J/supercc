@@ -38,3 +38,6 @@ python_files = ["test_*.py"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["supercc*"]
+
+[tool.setuptools.package-data]
+supercc = ["__main__.py"]
