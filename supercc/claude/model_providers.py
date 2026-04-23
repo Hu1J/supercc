@@ -25,7 +25,7 @@ class Provider:
 # 剔除：OpenAI（/v1/chat/completions）、Gemini（Google 格式）、Azure（Azure 格式）
 #       Groq/Together/Mistral/Cerebras/SiliconFlow（均为 OpenAI 兼容格式）
 #
-# 排序：国内常用（MiniMax/火山/千问/GLM/DeepSeek/Kimi）→ Anthropic → OpenRouter → Novita/Ollama
+# 排序：国内常用（MiniMax/火山/千问/GLM/DeepSeek/Kimi）→ Anthropic → OpenRouter → Ollama
 
 PROVIDERS: dict[str, Provider] = {
 
