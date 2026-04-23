@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import yaml
 
@@ -264,22 +267,32 @@ def delete_model(model_id: str) -> bool:
 
 def _ensure_claude_onboarding() -> None:
     """强制写入 ~/.claude.json，确保 hasCompletedOnboarding: true"""
-    data = {}
     CLAUDE_JSON_PATH = str(Path.home() / ".claude.json")
+    logger.info("Writing hasCompletedOnboarding=true to %s", CLAUDE_JSON_PATH)
+    data = {}
     if os.path.exists(CLAUDE_JSON_PATH):
         try:
             with open(CLAUDE_JSON_PATH) as f:
                 data = json.load(f)
         except Exception:
-            pass
+            logger.warning("Failed to read existing %s, overwriting.", CLAUDE_JSON_PATH)
     data["hasCompletedOnboarding"] = True
-    Path(CLAUDE_JSON_PATH).parent.mkdir(parents=True, exist_ok=True)
-    with open(CLAUDE_JSON_PATH, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        Path(CLAUDE_JSON_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(CLAUDE_JSON_PATH, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info("Successfully wrote %s", CLAUDE_JSON_PATH)
+    except Exception as e:
+        logger.error("Failed to write %s: %s", CLAUDE_JSON_PATH, e)
 
 
 def _update_claude_settings(env: ModelEnv) -> None:
     """更新 ~/.claude/settings.json 的 env 字段（保留其他字段）"""
+    logger.info(
+        "Syncing Claude settings — model=%s base_url=%s",
+        env.ANTHROPIC_MODEL,
+        env.ANTHROPIC_BASE_URL,
+    )
     settings = {"env": {}}
 
     if os.path.exists(CLAUDE_SETTINGS_PATH):
@@ -287,7 +300,7 @@ def _update_claude_settings(env: ModelEnv) -> None:
             with open(CLAUDE_SETTINGS_PATH) as f:
                 settings = json.load(f)
         except Exception:
-            pass
+            logger.warning("Failed to read existing %s, overwriting.", CLAUDE_SETTINGS_PATH)
 
     if "env" not in settings:
         settings["env"] = {}
@@ -296,10 +309,13 @@ def _update_claude_settings(env: ModelEnv) -> None:
     settings["env"]["ANTHROPIC_BASE_URL"] = env.ANTHROPIC_BASE_URL
     settings["env"]["ANTHROPIC_MODEL"] = env.ANTHROPIC_MODEL
 
-    Path(CLAUDE_SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-
-    with open(CLAUDE_SETTINGS_PATH, "w") as f:
-        json.dump(settings, f, indent=2, ensure_ascii=False)
+    try:
+        Path(CLAUDE_SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(CLAUDE_SETTINGS_PATH, "w") as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+        logger.info("Successfully wrote %s", CLAUDE_SETTINGS_PATH)
+    except Exception as e:
+        logger.error("Failed to write %s: %s", CLAUDE_SETTINGS_PATH, e)
 
 
 def get_current_claude_settings() -> dict:
