@@ -209,9 +209,10 @@ async def set_model_tool(args: dict) -> dict:
             changed.append(f"模型 → `{model}`")
         if api_key:
             changed.append("API Key")
-        final_env = new_entry
+        final_env = new_entry.env
 
     # 保存前先校验 API credentials 是否有效
+    import supercc.claude.model_config as mc
     from supercc.claude.model_config import save_models_config, _active_model_id, validate_model_env
     valid, err_msg = validate_model_env(final_env)
     if not valid:

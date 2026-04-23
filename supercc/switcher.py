@@ -166,28 +166,32 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
     data_dir = os.path.join(target_path, ".supercc")
     stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
-    proc = subprocess.Popen(
-        ["supercc", "start"],
-        cwd=target_path,
-        stdout=stdout_log,
-        stderr=stderr_log,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["supercc", "start"],
+            cwd=target_path,
+            stdout=stdout_log,
+            stderr=stderr_log,
+            start_new_session=True,
+        )
 
-    # Wait for pid file to appear
-    start = time.time()
-    while time.time() - start < timeout:
-        pid = _read_pid(pid_file)
-        if pid is not None:
-            return pid
-        # Check if process crashed
-        if proc.poll() is not None:
-            raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
-        time.sleep(0.2)
+        # Wait for pid file to appear
+        start = time.time()
+        while time.time() - start < timeout:
+            pid = _read_pid(pid_file)
+            if pid is not None:
+                return pid
+            # Check if process crashed
+            if proc.poll() is not None:
+                raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
+            time.sleep(0.2)
 
-    raise StartupTimeoutError(
-        f"PID file did not appear within {timeout}s after starting SuperCC"
-    )
+        raise StartupTimeoutError(
+            f"PID file did not appear within {timeout}s after starting SuperCC"
+        )
+    finally:
+        stdout_log.close()
+        stderr_log.close()
 
 
 def switch_to(target_path: str):

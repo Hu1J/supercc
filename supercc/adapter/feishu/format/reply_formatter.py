@@ -42,8 +42,8 @@ def _optimize_markdown_style_impl(text: str, card_version: int = 2) -> str:
 
     # 2. Heading level reduction (only if H1-H3 exist in original)
     if re.search(r"^#{1,3} ", text, re.MULTILINE):
-        r = re.sub(r"^#{2,6} (.+)$", r"##### \1", r, flags=re.MULTILINE)
-        r = re.sub(r"^# (.+)$", r"#### \1", r, flags=re.MULTILINE)
+        r = re.sub(r"^#{2,6} (.+)$", r"##### \1", r, flags=re.MULTILINE)  # H2-H6 → H5
+        r = re.sub(r"^# (.+)$", r"#### \1", r, flags=re.MULTILINE)         # H1 → H4
 
     if card_version >= 2:
         # 3. Spacing between consecutive headings
