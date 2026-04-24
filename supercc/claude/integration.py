@@ -27,6 +27,7 @@ class ClaudeIntegration:
         cli_path: str = "claude",
         max_turns: int = 50,
         approved_directory: str | None = None,
+        memory_only: bool = False,
     ):
         if cli_path == "claude":
             resolved = shutil.which("claude")
@@ -35,6 +36,7 @@ class ClaudeIntegration:
             self.cli_path = cli_path
         self.max_turns = max_turns
         self.approved_directory = approved_directory
+        self.memory_only = memory_only
         self._options: Any = None  # 持久化的 ClaudeAgentOptions
         self._system_prompt_append: str | None = None
         self._query_lock = asyncio.Lock()  # 保证同一时间只有一个 query 在执行
@@ -55,9 +57,19 @@ class ClaudeIntegration:
         system prompt 更新只需重新调用此方法。
         """
         from claude_agent_sdk import ClaudeAgentOptions
-        from supercc.claude.supercc_tools import get_supercc_mcp_server
+        from supercc.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
 
-        supercc_server = get_supercc_mcp_server()
+        if self.memory_only:
+            supercc_server = get_memory_only_mcp_server()
+        else:
+            supercc_server = get_supercc_mcp_server()
+
+        # memory_only 模式：禁用所有内置工具，仅允许 MCP 工具（记忆相关）
+        _DISABLED_BUILTIN_TOOLS = [
+            "Read", "Write", "Edit", "Bash", "Grep",
+            "NotRecommend", "WebSearch", "WebFetch",
+            "NotebookEdit", "TaskStart", "TaskComplete",
+        ]
 
         options = ClaudeAgentOptions(
             cwd=self.approved_directory or ".",
@@ -69,6 +81,7 @@ class ClaudeIntegration:
             mcp_servers={
                 "SuperCC": supercc_server,
             },
+            disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
         )
 
         if system_prompt_append:

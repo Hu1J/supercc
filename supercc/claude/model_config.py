@@ -34,29 +34,30 @@ class ModelEntry:
     is_default: bool = False
 
 
-# ── 单例状态 ─────────────────────────────────────────────────────────────────
-_models_cache: dict[str, ModelEntry] = {}
-_active_model_id: str = "default"
-
-
 def _ensure_models_dir() -> None:
     """确保 ~/.supercc 目录存在"""
     Path(MODELS_CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_models_config() -> tuple[str, dict[str, ModelEntry]]:
-    """加载 models.yaml，返回 (active_model_id, models_dict)"""
-    global _models_cache, _active_model_id
-
+def _load_yaml() -> dict:
+    """直接读取 models.yaml，返回字典。无文件则创建默认配置。"""
     if not os.path.exists(MODELS_CONFIG_PATH):
         _create_default_config()
-
     with open(MODELS_CONFIG_PATH) as f:
-        raw = yaml.safe_load(f) or {}
+        return yaml.safe_load(f) or {}
 
-    _active_model_id = raw.get("active_model", "default")
-    _models_cache = {}
 
+def _save_yaml(raw: dict) -> None:
+    """直接将字典写入 models.yaml。"""
+    _ensure_models_dir()
+    with open(MODELS_CONFIG_PATH, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+
+
+def _parse_models(raw: dict) -> tuple[str, dict[str, ModelEntry]]:
+    """解析 raw dict，返回 (active_model_id, models_dict)。"""
+    active_id = raw.get("active_model", "default")
+    models: dict[str, ModelEntry] = {}
     for model_id, model_data in raw.get("models", {}).items():
         env_data = model_data.get("env", {})
         env = ModelEnv(
@@ -64,20 +65,17 @@ def load_models_config() -> tuple[str, dict[str, ModelEntry]]:
             ANTHROPIC_BASE_URL=env_data.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
             ANTHROPIC_MODEL=env_data.get("ANTHROPIC_MODEL", ""),
         )
-        _models_cache[model_id] = ModelEntry(
+        models[model_id] = ModelEntry(
             name=model_data.get("name", model_id),
             description=model_data.get("description", ""),
             env=env,
             is_default=model_data.get("is_default", False),
         )
+    return active_id, models
 
-    return _active_model_id, _models_cache
 
-
-def save_models_config(active_model_id: str, models: dict[str, ModelEntry]) -> None:
-    """保存模型配置到 models.yaml"""
-    _ensure_models_dir()
-
+def _serialize_models(models: dict[str, ModelEntry]) -> dict:
+    """将 models dict 序列化为 raw dict（不含 active_model）。"""
     raw_models = {}
     for model_id, entry in models.items():
         raw_models[model_id] = {
@@ -90,14 +88,7 @@ def save_models_config(active_model_id: str, models: dict[str, ModelEntry]) -> N
                 "ANTHROPIC_MODEL": entry.env.ANTHROPIC_MODEL,
             },
         }
-
-    raw = {
-        "active_model": active_model_id,
-        "models": raw_models,
-    }
-
-    with open(MODELS_CONFIG_PATH, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+    return raw_models
 
 
 def _create_default_config() -> None:
@@ -112,94 +103,88 @@ def _create_default_config() -> None:
         is_default=True,
     )
 
-    # 尝试从现有的 ~/.claude/settings.json 读取配置作为默认值
     if os.path.exists(CLAUDE_SETTINGS_PATH):
         try:
             with open(CLAUDE_SETTINGS_PATH) as f:
                 settings = json.load(f)
-            env_config = settings.get("env", {})
-            if env_config.get("ANTHROPIC_AUTH_TOKEN"):
-                default_entry.env.ANTHROPIC_AUTH_TOKEN = env_config.get("ANTHROPIC_AUTH_TOKEN", "")
-            if env_config.get("ANTHROPIC_BASE_URL"):
-                default_entry.env.ANTHROPIC_BASE_URL = env_config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-            if env_config.get("ANTHROPIC_MODEL"):
-                default_entry.env.ANTHROPIC_MODEL = env_config.get("ANTHROPIC_MODEL", "claude-opus-4-5")
-            if env_config.get("ANTHROPIC_AUTH_TOKEN"):
+            env_cfg = settings.get("env", {})
+            if env_cfg.get("ANTHROPIC_AUTH_TOKEN"):
+                default_entry.env.ANTHROPIC_AUTH_TOKEN = env_cfg.get("ANTHROPIC_AUTH_TOKEN", "")
+            if env_cfg.get("ANTHROPIC_BASE_URL"):
+                default_entry.env.ANTHROPIC_BASE_URL = env_cfg.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+            if env_cfg.get("ANTHROPIC_MODEL"):
+                default_entry.env.ANTHROPIC_MODEL = env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5")
+            if env_cfg.get("ANTHROPIC_AUTH_TOKEN"):
                 default_entry.name = f"导入配置 ({default_entry.env.ANTHROPIC_MODEL})"
         except Exception:
             pass
 
-    save_models_config("default", {"default": default_entry})
-
-
-def get_active_model() -> Optional[ModelEntry]:
-    """获取当前激活的模型配置"""
-    global _active_model_id, _models_cache
-    if not _models_cache:
-        load_models_config()
-    return _models_cache.get(_active_model_id)
+    raw = {
+        "active_model": "default",
+        "models": _serialize_models({"default": default_entry}),
+    }
+    _save_yaml(raw)
 
 
 def get_all_models() -> dict[str, ModelEntry]:
-    """获取所有模型配置"""
-    global _models_cache
-    if not _models_cache:
-        load_models_config()
-    return _models_cache.copy()
+    """获取所有模型配置（每次直接读文件）"""
+    _, models = _parse_models(_load_yaml())
+    return models
+
+
+def get_active_model() -> Optional[ModelEntry]:
+    """获取当前激活的模型配置（每次直接读文件）"""
+    active_id, models = _parse_models(_load_yaml())
+    return models.get(active_id)
 
 
 def switch_model(model_id: str) -> bool:
     """切换到指定模型，返回是否成功"""
-    global _active_model_id, _models_cache
-    if not _models_cache:
-        load_models_config()
+    raw = _load_yaml()
+    active_id, models = _parse_models(raw)
 
-    if model_id not in _models_cache:
+    if model_id not in models:
         return False
 
-    _active_model_id = model_id
-    save_models_config(model_id, _models_cache)
+    raw["active_model"] = model_id
+    _save_yaml(raw)
 
-    # 关键：更新 ~/.claude/settings.json
-    _update_claude_settings(_models_cache[model_id].env)
-
-    # 强制写入 ~/.claude.json（hasCompletedOnboarding 防止每次启动要求登录）
+    _update_claude_settings(models[model_id].env)
     _ensure_claude_onboarding()
-
     return True
 
 
 def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool:
     """添加新模型，返回是否成功（ID 冲突返回 False）"""
-    global _models_cache
-    if not _models_cache:
-        load_models_config()
+    raw = _load_yaml()
+    _, models = _parse_models(raw)
 
-    if model_id in _models_cache:
+    if model_id in models:
         return False
 
-    _models_cache[model_id] = ModelEntry(
+    models[model_id] = ModelEntry(
         name=name,
         description=description,
         env=env,
         is_default=False,
     )
 
-    save_models_config(_active_model_id, _models_cache)
+    raw["models"] = _serialize_models(models)
+    _save_yaml(raw)
     return True
 
 
 def update_model_token(model_id: str, new_token: str) -> bool:
     """更新已有模型的 API Key。"""
-    global _models_cache
-    if not _models_cache:
-        load_models_config()
+    raw = _load_yaml()
+    _, models = _parse_models(raw)
 
-    if model_id not in _models_cache:
+    if model_id not in models:
         return False
 
-    _models_cache[model_id].env.ANTHROPIC_AUTH_TOKEN = new_token
-    save_models_config(_active_model_id, _models_cache)
+    models[model_id].env.ANTHROPIC_AUTH_TOKEN = new_token
+    raw["models"] = _serialize_models(models)
+    _save_yaml(raw)
     return True
 
 
@@ -210,7 +195,6 @@ def validate_model_env(env: ModelEnv) -> tuple[bool, str]:
         (is_valid, error_message)
     """
     import urllib.request
-    import json
 
     if not env.ANTHROPIC_AUTH_TOKEN:
         return False, "API Key 为空"
@@ -250,18 +234,18 @@ def validate_model_env(env: ModelEnv) -> tuple[bool, str]:
 
 def delete_model(model_id: str) -> bool:
     """删除模型，返回是否成功（不能删除当前激活的模型）"""
-    global _active_model_id, _models_cache
-    if not _models_cache:
-        load_models_config()
+    raw = _load_yaml()
+    active_id, models = _parse_models(raw)
 
-    if model_id not in _models_cache:
+    if model_id not in models:
         return False
 
-    if model_id == _active_model_id:
+    if model_id == active_id:
         return False
 
-    del _models_cache[model_id]
-    save_models_config(_active_model_id, _models_cache)
+    del models[model_id]
+    raw["models"] = _serialize_models(models)
+    _save_yaml(raw)
     return True
 
 
@@ -331,8 +315,7 @@ def get_current_claude_settings() -> dict:
 
 def is_configured() -> bool:
     """检查是否已完成初始模型配置（至少有一个有效 API Key 的模型）"""
-    models = get_all_models()
-    for entry in models.values():
+    for entry in get_all_models().values():
         if entry.env.ANTHROPIC_AUTH_TOKEN:
             return True
     return False

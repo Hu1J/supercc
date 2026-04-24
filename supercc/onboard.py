@@ -10,9 +10,10 @@ import questionary
 from supercc.claude.model_config import (
     ModelEnv,
     ModelEntry,
-    save_models_config,
     get_current_claude_settings,
     get_all_models,
+    add_model,
+    switch_model,
 )
 from supercc.claude.model_providers import PROVIDERS
 
@@ -75,7 +76,6 @@ def run_onboard_flow() -> bool:
 
         if import_to_current:
             base_url = env_cfg.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-            # 用 base_url 匹配 provider，用 provider id 作为 model_id
             matched_id = None
             for pid, p in PROVIDERS.items():
                 if p.base_url == base_url:
@@ -84,26 +84,15 @@ def run_onboard_flow() -> bool:
             if matched_id is None:
                 matched_id = "imported"
             model_id = matched_id
-            name = matched_id  # 用 provider id 作为 name
+            name = matched_id
             description = "从现有 Claude Code 配置导入"
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=detected_token,
                 ANTHROPIC_BASE_URL=base_url,
                 ANTHROPIC_MODEL=env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5"),
             )
-            models = get_all_models()
-            models[model_id] = ModelEntry(
-                name=name,
-                description=description,
-                env=env,
-                is_default=True,
-            )
-            save_models_config(model_id, models)
-            # 同步更新内存中的 active_model_id，避免被 load_models_config 覆盖
-            from supercc.claude import model_config
-            model_config._active_model_id = model_id
-            model_config._update_claude_settings(env)
-            model_config._ensure_claude_onboarding()
+            add_model(model_id, name, description, env)
+            switch_model(model_id)
             print("✅ 现有配置已导入为默认模型\n")
         else:
             _do_model_config_step()

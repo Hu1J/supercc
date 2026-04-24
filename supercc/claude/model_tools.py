@@ -5,8 +5,13 @@ from claude_agent_sdk import tool
 
 from supercc.claude.model_config import (
     get_all_models,
+    get_active_model,
     ModelEntry,
     ModelEnv,
+    switch_model,
+    update_model_token,
+    add_model,
+    validate_model_env,
 )
 from supercc.claude.model_providers import PROVIDERS
 
@@ -63,8 +68,8 @@ async def list_models(args: dict) -> dict:
     configured = []  # (provider_id, provider_name, current_model, masked_api_key, all_models, is_active)
     unconfigured = []  # (provider_id, provider_name, all_models)
 
-    import supercc.claude.model_config as mc
-    active_id = mc._active_model_id
+    active_entry = get_active_model()
+    active_base_url = active_entry.env.ANTHROPIC_BASE_URL if active_entry else ""
 
     for p in PROVIDERS.values():
         matched = None
@@ -84,7 +89,7 @@ async def list_models(args: dict) -> dict:
                 mentry.env.ANTHROPIC_MODEL or "—",
                 _mask_api_key(mentry.env.ANTHROPIC_AUTH_TOKEN),
                 p.models,
-                mid == active_id,
+                mentry.env.ANTHROPIC_BASE_URL == active_base_url,
             ))
         else:
             unconfigured.append((p.id, p.name, p.models))
@@ -152,13 +157,11 @@ async def set_model_tool(args: dict) -> dict:
     if not model and not api_key:
         return {"content": [{"type": "text", "text": "model 和 api_key 至少要传一个"}], "is_error": True}
 
-    # 查找 provider
     provider = PROVIDERS.get(provider_id)
     if not provider:
         available = ", ".join(f"`{p.id}`" for p in PROVIDERS.values())
         return {"content": [{"type": "text", "text": f"未知供应商 `{provider_id}`\n可用: {available}"}], "is_error": True}
 
-    # 验证 model 在 provider.models 中
     if model and model not in provider.models:
         models_str = ", ".join(f"`{m}`" for m in provider.models)
         return {
@@ -168,34 +171,27 @@ async def set_model_tool(args: dict) -> dict:
 
     models = get_all_models()
 
-    # 查找该 provider 是否已有配置（通过 base_url 匹配）
+    # 通过 base_url 查找该 provider 是否已有配置
     matched_mid = None
-    matched_entry = None
     for mid, mentry in models.items():
         if mentry.env.ANTHROPIC_BASE_URL == provider.base_url:
             matched_mid = mid
-            matched_entry = mentry
             break
 
     changed = []
-    new_model_id = matched_mid or provider_id
+    env_to_validate: ModelEnv | None = None
 
-    import supercc.claude.model_config as mc
-    from supercc.claude.model_config import save_models_config, _active_model_id, validate_model_env
-
-    if matched_entry:
-        # 已有配置，更新
+    if matched_mid:
+        entry = models[matched_mid]
         if api_key:
-            matched_entry.env.ANTHROPIC_AUTH_TOKEN = api_key
+            entry.env.ANTHROPIC_AUTH_TOKEN = api_key
             changed.append("API Key")
         if model:
-            matched_entry.env.ANTHROPIC_MODEL = model
-            matched_entry.name = provider.name  # 同步更新 name，避免包含过时模型名
+            entry.env.ANTHROPIC_MODEL = model
+            entry.name = provider.name
             changed.append(f"模型 → `{model}`")
-        final_env = matched_entry.env
-        mc._active_model_id = matched_mid
+        env_to_validate = entry.env
     else:
-        # 新增配置
         new_entry = ModelEntry(
             name=provider.name,
             description=provider.description,
@@ -205,16 +201,22 @@ async def set_model_tool(args: dict) -> dict:
                 ANTHROPIC_MODEL=model,
             ),
         )
-        models[new_model_id] = new_entry
+        added = add_model(provider_id, provider.name, provider.description, new_entry.env)
+        if not added:
+            return {"content": [{"type": "text", "text": f"供应商 `{provider.name}` 添加失败（ID 可能已存在）"}], "is_error": True}
         changed.append(f"新增供应商 `{provider.name}`")
         if model:
             changed.append(f"模型 → `{model}`")
         if api_key:
             changed.append("API Key")
-        final_env = new_entry.env
+        env_to_validate = new_entry.env
 
-    # 保存前先校验 API credentials 是否有效
-    valid, err_msg = validate_model_env(final_env)
+    # 校验前必须先写入文件（validate 失败不影响已保存的配置）
+    if matched_mid:
+        update_model_token(matched_mid, env_to_validate.ANTHROPIC_AUTH_TOKEN)
+        switch_model(matched_mid)
+
+    valid, err_msg = validate_model_env(env_to_validate)
     if not valid:
         return {
             "content": [{
@@ -224,21 +226,10 @@ async def set_model_tool(args: dict) -> dict:
             "is_error": True,
         }
 
-    # 新增供应商时，将其设为激活模型
-    if not matched_entry:
-        mc._active_model_id = new_model_id
-
-    save_models_config(mc._active_model_id, models)
-
-    # 同步写入 Claude Code 内部配置文件
-    active_env = models[mc._active_model_id].env
-    mc._update_claude_settings(active_env)
-    mc._ensure_claude_onboarding()
-
     changed_str = "、".join(changed)
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model or matched_entry.env.ANTHROPIC_MODEL if matched_entry else model}`\n下次对话起生效。"
+            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model or (models[matched_mid].env.ANTHROPIC_MODEL if matched_mid else model)}`\n已激活。"
         }]
     }

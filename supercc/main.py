@@ -817,7 +817,6 @@ def _run_config_interactive() -> None:
         get_active_model,
         switch_model,
         delete_model,
-        save_models_config,
     )
     from supercc.claude.model_providers import PROVIDERS
 
@@ -897,36 +896,32 @@ def _run_config_interactive() -> None:
             # 4. 保存
             model_id = provider_id
             name = f"{provider.name} ({selected_model})"
-            models = get_all_models()
-            if model_id in models:
-                print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换：`supercc config switch {model_id}`")
-                continue
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=token,
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=selected_model,
             )
-            models[model_id] = ModelEntry(
-                name=name,
-                description=f"供应商: {provider.name}",
-                env=env,
-                is_default=False,
-            )
-            save_models_config(model_id, models)
-            print(f"\n✅ 模型 **{name}** (`{model_id}`) 已添加")
+            added = add_model(model_id, name, f"供应商: {provider.name}", env)
+            if not added:
+                print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换：`supercc config switch {model_id}`")
+                continue
+            switch_model(model_id)
+            print(f"\n✅ 模型 **{name}** (`{model_id}`) 已添加并设为激活")
             print(f"   端点: `{provider.base_url}`")
-            print(f"   模型: `{selected_model}`")
-            print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。\n")
+            print(f"   模型: `{selected_model}`\n")
 
         elif choice == "switch":
             models = get_all_models()
             if not models:
                 print("⚠️  没有任何已配置的模型\n")
                 continue
+            active_entry = get_active_model()
             active_id = None
-            for mid, mentry in models.items():
-                if mentry is get_active_model():
-                    active_id = mid
+            if active_entry:
+                for mid, mentry in models.items():
+                    if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
+                        active_id = mid
+                        break
 
             model_choices = [
                 questionary.Choice(
@@ -962,10 +957,13 @@ def _run_config_interactive() -> None:
             if not models:
                 print("⚠️  没有任何已配置的模型\n")
                 continue
+            active_entry = get_active_model()
             active_id = None
-            for mid, mentry in models.items():
-                if mentry is get_active_model():
-                    active_id = mid
+            if active_entry:
+                for mid, mentry in models.items():
+                    if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
+                        active_id = mid
+                        break
 
             model_choices = [
                 questionary.Choice(
@@ -1081,11 +1079,13 @@ def _run_config_command(args) -> None:
             return
 
         models = get_all_models()
+        active_entry = get_active_model()
         active_id = None
-        for mid, mentry in models.items():
-            if mentry is get_active_model():
-                active_id = mid
-                break
+        if active_entry:
+            for mid, mentry in models.items():
+                if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
+                    active_id = mid
+                    break
 
         print("🤖 **已配置的模型**\n")
         for model_id, entry in models.items():

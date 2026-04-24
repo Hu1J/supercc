@@ -130,10 +130,12 @@ class MessageHandler:
         self.validator = validator
         self.claude = claude
         # Dedicated Claude instance for memory self-optimization — does not block main conversation
+        # memory_only=True 限制只能使用记忆相关 MCP 工具，禁止写文件等操作
         self.claude_memory = ClaudeIntegration(
             cli_path=config.claude.cli_path,
             max_turns=5,
             approved_directory=approved_directory,
+            memory_only=True,
         )
         # Dedicated Claude instance for skill self-evolution — separate session, does not block
         self.claude_skill = ClaudeIntegration(
@@ -1373,7 +1375,7 @@ class MessageHandler:
         子命令：
         - /model switch <provider_id> — 切换到已配置的供应商
         """
-        from supercc.claude.model_config import get_all_models, ModelEntry, switch_model
+        from supercc.claude.model_config import get_all_models, get_active_model, ModelEntry, switch_model
         from supercc.claude.model_providers import PROVIDERS
 
         # 处理子命令
@@ -1443,8 +1445,8 @@ class MessageHandler:
         configured = []
         unconfigured = []
 
-        import supercc.claude.model_config as mc
-        active_id = mc._active_model_id
+        active_entry = get_active_model()
+        active_base_url = active_entry.env.ANTHROPIC_BASE_URL if active_entry else ""
 
         for p in PROVIDERS.values():
             matched = None
@@ -1464,7 +1466,7 @@ class MessageHandler:
                     mentry.env.ANTHROPIC_AUTH_TOKEN or "",
                     mentry.env.ANTHROPIC_MODEL or "—",
                     p.models,
-                    mid == active_id,
+                    mentry.env.ANTHROPIC_BASE_URL == active_base_url,
                 ))
             else:
                 unconfigured.append((p.id, p.name, p.models))
@@ -1486,18 +1488,30 @@ class MessageHandler:
                     parts.append(f"`{m}`")
             return " / ".join(parts)
 
-        # 当前激活的条目放最前面
-        configured.sort(key=lambda x: 0 if x[5] else 1)
+        # 当前激活的条目放最前面（通过 base_url 匹配，而非 active_id 字符串比较）
+        def _is_active_row(row) -> bool:
+            _, _, _, _, _, row_active = row
+            return row_active
+
+        configured.sort(key=lambda x: 0 if _is_active_row(x) else 1)
 
         # 构建表格头部（第一行）
         table_header = "| 状态 | Provider | 当前模型 | API Key | 所有可用模型 |"
         # 构建表格分隔符（第二行）
         table_sep = "|------|----------|---------|---------|------------|"
 
+        # 标题中的 active_name：优先用 PROVIDERS 里的名称，active_id 无效时从 base_url 推导
         active_name = active_id or "未设置"
         active_model = "—"
         if active_id and active_id in models:
-            active_model = models[active_id].env.ANTHROPIC_MODEL or "—"
+            active_entry = models[active_id]
+            active_model = active_entry.env.ANTHROPIC_MODEL or "—"
+        # active_id 不在 PROVIDERS 中时（如旧版 "default"），从 base_url 反查 provider 名
+        if active_id and active_id not in PROVIDERS and active_base_url:
+            for pid, p in PROVIDERS.items():
+                if p.base_url == active_base_url:
+                    active_name = p.name
+                    break
 
         # 构建表格内容（整张表格放一个 markdown element）
         table_lines = [table_header, table_sep]
