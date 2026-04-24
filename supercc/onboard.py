@@ -12,7 +12,9 @@ from supercc.claude.model_config import (
     ModelEntry,
     save_models_config,
     get_current_claude_settings,
+    get_all_models,
 )
+from supercc.claude.model_providers import PROVIDERS
 
 
 def _print_step(step: int, total: int, title: str) -> None:
@@ -72,15 +74,23 @@ def run_onboard_flow() -> bool:
         ).ask()
 
         if import_to_current:
-            model_id = "default"
-            name = f"导入配置 ({env_cfg.get('ANTHROPIC_MODEL', '未知')})"
+            base_url = env_cfg.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+            # 用 base_url 匹配 provider，用 provider id 作为 model_id
+            matched_id = None
+            for pid, p in PROVIDERS.items():
+                if p.base_url == base_url:
+                    matched_id = pid
+                    break
+            if matched_id is None:
+                matched_id = "imported"
+            model_id = matched_id
+            name = matched_id  # 用 provider id 作为 name
             description = "从现有 Claude Code 配置导入"
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=detected_token,
-                ANTHROPIC_BASE_URL=env_cfg.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+                ANTHROPIC_BASE_URL=base_url,
                 ANTHROPIC_MODEL=env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5"),
             )
-            from supercc.claude.model_config import get_all_models
             models = get_all_models()
             models[model_id] = ModelEntry(
                 name=name,
