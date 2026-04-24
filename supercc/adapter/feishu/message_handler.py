@@ -1383,14 +1383,15 @@ class MessageHandler:
             target = parts[1] if len(parts) > 1 else ""
 
             if action == "switch":
+                models = get_all_models()
                 if not target:
+                    available = ", ".join(f"`{mid}`" for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        "❌ 请指定要切换的供应商 ID，如：\n`/model switch volcano`",
+                        f"❌ 请指定要切换的供应商 ID。\n当前已配置的供应商：{available}",
                     )
                     return HandlerResult(success=True)
 
-                models = get_all_models()
                 if target not in models:
                     available = ", ".join(f"`{mid}`" for mid in models)
                     await self._safe_send(
