@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.6] - 2026-04-24
+
+### Added
+
+- **模型配置系统重构**：新增 volcano、qwen、minimax、kimi 等国内供应商，统一使用 Anthropic Messages API 兼容端点
+- **/model switch {provider}**：切换已配置的模型供应商
+- **/model 无参数**：列出所有已配置的供应商，不再列出未配置的
+- **API Key 有效性验证**：onboard 配置环节实时调用 API 验证 Key 有效性
+- **启动时强制同步**：启动时自动将激活模型同步到 Claude 内部配置
+- **日志格式升级**：[MM-DD HH:MM:SS.mmm] 时间戳 + module 列，LEVEL 列宽度 8→5 右对齐
+- **Plan 工具 CardKit 化**：EnterPlanMode/ExitPlanMode 也使用卡片渲染
+- **Gateway uninstall 命令**：`supercc gateway uninstall` 完整卸载服务
+- **launchd/systemd 服务化**：gateway stop 改用平台服务机制（launchctl/systemd）
+- **__main__.py 支持**：`python -m supercc` 现已可用
+- **novita 供应商移除**：清理所有相关引用
+
+### Changed
+
+- **统一入口为 start_bridge()**：移除 gateway run，所有内部 subprocess 改用 console script supercc
+- **gateway 服务名用路径 hash**：避免同名项目冲突
+- **PID 文件名统一为 supercc.pid**：原 gateway.pid 不再使用
+- **模型命名统一为 provider ID**：models.yaml 的 key 统一使用 minimax/volcano 等，移除 "default"
+- **README 重写**：核心亮点 + 完整指令集 + ASCII logo
+
+### Fixed
+
+- **onboard 导入配置后同步 Claude 设置**：补充 _update_claude_settings() + _ensure_claude_onboarding()
+- **switcher.py 文件句柄泄漏**：try/finally + null-check 保护
+- **/model 显示过时模型名**：切换时同步更新 name 字段
+- **_active_model_id 更新遗漏**：所有 save_models_config 调用路径统一同步
+- **model_tools.py UnboundLocalError**：import 统一提到函数顶部
+- **gateway stop 未等待进程退出**：增加 .instance.lock 清理
+- **_handle_skill AttributeError**：用 getattr 读取 _current_project_path
+- **yaml.safe_load 空文件返回 None**：所有加载点加 or {}
+- **/model switch 错误消息**：通过 base_url 匹配 PROVIDER ID，不再依赖 models.yaml 的 key
+
 ## [Unreleased]
 
 ## [0.1.5] - 2026-04-23
