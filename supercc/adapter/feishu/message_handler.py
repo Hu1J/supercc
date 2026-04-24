@@ -1403,19 +1403,13 @@ class MessageHandler:
                         model_id_to_switch = url_to_mid[provider.base_url]
 
                 def fmt_name(mid: str) -> str:
-                    # 优先通过 base_url 匹配 PROVIDER（model_id 与 PROVIDER key 可能不一致）
-                    mentry = models.get(mid)
-                    if mentry and mentry.env.ANTHROPIC_BASE_URL:
-                        for pid, p in PROVIDERS.items():
-                            if p.base_url == mentry.env.ANTHROPIC_BASE_URL:
-                                return f"{p.name} (`{mid}`)"
                     return f"`{mid}`"
 
                 if not target:
                     available = " / ".join(fmt_name(mid) for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 请指定要切换的供应商。\n当前已配置的供应商：\n{available}",
+                        f"❌ 请指定要切换的 provider ID。\n当前已配置的 provider：\n{available}",
                     )
                     return HandlerResult(success=True)
 
@@ -1423,18 +1417,16 @@ class MessageHandler:
                     available = " / ".join(fmt_name(mid) for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 未找到已配置的供应商 `{target}`。\n当前已配置的供应商：\n{available}",
+                        f"❌ 未找到已配置的 provider `{target}`。\n当前已配置的 provider：\n{available}",
                     )
                     return HandlerResult(success=True)
 
                 # 执行切换
                 switch_model(model_id_to_switch)
-                provider = PROVIDERS.get(model_id_to_switch)
-                name = provider.name if provider else model_id_to_switch
                 model = models[model_id_to_switch].env.ANTHROPIC_MODEL or "—"
                 await self._safe_send(
                     message.chat_id, message.message_id,
-                    f"✅ 已切换为 **{name}**（`{model}`）",
+                    f"✅ 已切换为 `{model_id_to_switch}`（模型：`{model}`）",
                 )
                 return HandlerResult(success=True)
 
@@ -1498,27 +1490,24 @@ class MessageHandler:
         configured.sort(key=lambda x: 0 if x[5] else 1)
 
         # 构建表格头部（第一行）
-        table_header = "| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |"
+        table_header = "| 状态 | Provider | 当前模型 | API Key | 所有可用模型 |"
         # 构建表格分隔符（第二行）
-        table_sep = "|------|--------|---------|---------|------------|"
+        table_sep = "|------|----------|---------|---------|------------|"
 
-        active_name = "未设置"
+        active_name = active_id or "未设置"
         active_model = "—"
         if active_id and active_id in models:
             active_model = models[active_id].env.ANTHROPIC_MODEL or "—"
-            # 用 PROVIDERS 的固定名称，不用 e.name（可能包含过时的模型名）
-            provider_entry = PROVIDERS.get(active_id)
-            active_name = provider_entry.name if provider_entry else active_id
 
         # 构建表格内容（整张表格放一个 markdown element）
         table_lines = [table_header, table_sep]
         for pid, pname, api_key, model, all_models, is_active in configured:
             mark = "✅" if is_active else "✴️"
             avail = fmt_models(all_models, model)
-            table_lines.append(f"| {mark} | **{pname}** | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
+            table_lines.append(f"| {mark} | `{pid}` | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
         for pid, pname, all_models in unconfigured:
             avail = " / ".join(f"`{m}`" for m in all_models)
-            table_lines.append(f"| 📛 | {pname} | — | — | {avail} |")
+            table_lines.append(f"| 📛 | `{pid}` | — | — | {avail} |")
         table_content = "\n".join(table_lines)
 
         # 构建卡片 elements
@@ -1528,7 +1517,7 @@ class MessageHandler:
                 "content": (
                     "## 🤖 模型配置\n"
                     f"当前使用：**{active_name}**（`{active_model}`）\n\n"
-                    f"共 **{len(configured)}** 个供应商已配置，**{len(unconfigured)}** 个未配置。\n\n"
+                    f"共 **{len(configured)}** 个已配置，**{len(unconfigured)}** 个未配置。\n\n"
                     + table_content
                     + "\n\n---\n💡 如需切换模型或更新配置，直接跟我说即可。"
                 ),
