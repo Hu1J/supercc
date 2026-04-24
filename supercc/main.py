@@ -202,6 +202,31 @@ class _SafeStreamHandler(logging.StreamHandler):
                 pass
 
 
+def _sync_active_model_to_claude() -> None:
+    """启动时强制把 models.yaml 中激活的模型同步到 Claude 内部配置。
+
+    如果 models.yaml 中有 active 模型（且有 API Key），则写入 ~/.claude/settings.json。
+    这样即使 Claude 内部配置被人为改动过，启动时也会自动恢复。
+    """
+    import supercc.claude.model_config as mc
+
+    try:
+        models = mc.get_all_models()
+        active = mc.get_active_model()
+        if active and active.env.ANTHROPIC_AUTH_TOKEN:
+            mc._update_claude_settings(active.env)
+            mc._ensure_claude_onboarding()
+            logger.info(
+                "Synced active model to Claude settings: %s @ %s",
+                active.env.ANTHROPIC_MODEL,
+                active.env.ANTHROPIC_BASE_URL,
+            )
+        else:
+            logger.debug("No active model with API key to sync")
+    except Exception:
+        logger.warning("Failed to sync active model to Claude settings", exc_info=True)
+
+
 # ANSI color codes for terminal output
 
 
@@ -405,6 +430,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         sys.exit(1)
 
     config = init_config(config_path)
+
+    # Startup: sync active model to Claude's internal settings
+    _sync_active_model_to_claude()
+
     handler = create_handler(config, data_dir, config_path=config_path)
     _ensure_claude_md(config.claude.approved_directory)
 
