@@ -115,7 +115,7 @@ class Config:
 def _upgrade_config(path: str) -> None:
     """Auto-upgrade config.yaml: add proactive section if missing, remove stale server section."""
     with open(path) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
 
     changed = False
 

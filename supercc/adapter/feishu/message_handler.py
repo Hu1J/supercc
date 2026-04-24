@@ -18,6 +18,7 @@ from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
 from supercc.claude.cron_tools import CRON_GUIDE
 from supercc.claude.session_manager import SessionManager
 from supercc.evolve.skill_nudge import SkillNudge, trigger_skill_review
+from supercc.adapter.feishu.format.agent_card import format_agent_card
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
@@ -219,7 +220,7 @@ class MessageHandler:
 
         asyncio.create_task(do_review())
 
-    def _get_group_config(self, chat_id: str):
+    async def _get_group_config(self, chat_id: str):
         """Get GroupConfigEntry for a chat_id, auto-registering if first seen."""
         if chat_id in self._feishu_groups:
             return self._feishu_groups[chat_id]
@@ -230,13 +231,13 @@ class MessageHandler:
         self._feishu_groups[chat_id] = entry
         if self._config_path:
             try:
-                register_group_config(self._config_path, chat_id, entry)
+                await asyncio.to_thread(register_group_config, self._config_path, chat_id, entry)
                 logger.info(f"Auto-registered new group {chat_id} in config")
             except Exception as ex:
                 logger.warning(f"Failed to auto-register group {chat_id} in config: {ex}")
         return entry
 
-    def _check_group_access(self, message: IncomingMessage) -> bool:
+    async def _check_group_access(self, message: IncomingMessage) -> bool:
         """Check if a group chat message should be processed.
 
         Returns True if allowed, False if should be skipped.
@@ -250,7 +251,7 @@ class MessageHandler:
             logger.warning(f"Group chat message has empty chat_id, skipping")
             return False
 
-        group_cfg = self._get_group_config(message.chat_id)
+        group_cfg = await self._get_group_config(message.chat_id)
 
         # If group is explicitly disabled, skip
         if group_cfg and not group_cfg.enabled:
@@ -392,7 +393,7 @@ class MessageHandler:
 
         # Group chat: skip if bot was not @mentioned (no response to avoid spam)
         # Group access control check (per-group config: enabled, allow_from, require_mention)
-        if not self._check_group_access(message):
+        if not await self._check_group_access(message):
             return
 
         if message.message_type not in ("text", "image", "file"):
@@ -1140,7 +1141,6 @@ class MessageHandler:
                             except json.JSONDecodeError:
                                 data = {}
                             if "prompt" in data:
-                                from supercc.adapter.feishu.format.agent_card import format_agent_card
                                 card = format_agent_card(claude_msg.tool_input)
                                 try:
                                     await self.feishu.send_card(message.chat_id, card)
@@ -1150,7 +1150,6 @@ class MessageHandler:
 
                         # Plan 工具 → CardKit 卡片（📋 标题）
                         if claude_msg.tool_name in ("EnterPlanMode", "ExitPlanMode"):
-                            from supercc.adapter.feishu.format.agent_card import format_agent_card
                             title = "## 📋 Plan" if claude_msg.tool_name == "EnterPlanMode" else "## 📋 Plan End"
                             card = format_agent_card(claude_msg.tool_input or "", title=title)
                             try:

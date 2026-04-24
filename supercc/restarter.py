@@ -319,7 +319,7 @@ def _get_package_name() -> str:
     try:
         with open(Path(__file__).resolve().parent.parent / "pyproject.toml") as f:
             return yaml.safe_load(f)["project"]["name"]
-    except Exception:
+    except (KeyError, FileNotFoundError, PermissionError, TypeError):
         return "pysupercc"  # fallback
 
 

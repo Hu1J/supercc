@@ -52,7 +52,7 @@ def load_models_config() -> tuple[str, dict[str, ModelEntry]]:
         _create_default_config()
 
     with open(MODELS_CONFIG_PATH) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(f) or {}
 
     _active_model_id = raw.get("active_model", "default")
     _models_cache = {}
