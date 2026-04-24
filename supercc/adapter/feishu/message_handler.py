@@ -1384,7 +1384,24 @@ class MessageHandler:
 
             if action == "switch":
                 models = get_all_models()
-                # 显示供应商名称而非内部 model_id
+
+                # 建立 base_url -> model_id 反查表
+                url_to_mid: dict[str, str] = {}
+                for mid, mentry in models.items():
+                    if mentry.env.ANTHROPIC_BASE_URL:
+                        url_to_mid[mentry.env.ANTHROPIC_BASE_URL] = mid
+
+                # 尝试把 target（provider ID）解析为 model_id
+                model_id_to_switch: str | None = None
+                if target in models:
+                    # 直接是 models.yaml 的 key（如 "volcano"）
+                    model_id_to_switch = target
+                elif target in PROVIDERS:
+                    # 是 PROVIDER ID（如 "minimax"），通过 base_url 找
+                    provider = PROVIDERS[target]
+                    if provider.base_url in url_to_mid:
+                        model_id_to_switch = url_to_mid[provider.base_url]
+
                 def fmt_name(mid: str) -> str:
                     p = PROVIDERS.get(mid)
                     if p:
@@ -1399,7 +1416,7 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
-                if target not in models:
+                if model_id_to_switch is None:
                     available = " / ".join(fmt_name(mid) for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
@@ -1408,10 +1425,10 @@ class MessageHandler:
                     return HandlerResult(success=True)
 
                 # 执行切换
-                switch_model(target)
-                provider = PROVIDERS.get(target)
-                name = provider.name if provider else target
-                model = models[target].env.ANTHROPIC_MODEL or "—"
+                switch_model(model_id_to_switch)
+                provider = PROVIDERS.get(model_id_to_switch)
+                name = provider.name if provider else model_id_to_switch
+                model = models[model_id_to_switch].env.ANTHROPIC_MODEL or "—"
                 await self._safe_send(
                     message.chat_id, message.message_id,
                     f"✅ 已切换为 **{name}**（`{model}`）",
