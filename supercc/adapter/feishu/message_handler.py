@@ -563,7 +563,7 @@ class MessageHandler:
             return await self._handle_git(message)
 
         elif cmd == "/model":
-            return await self._handle_model(message)
+            return await self._handle_model(message, arg)
 
         elif cmd == "/switch":
             return await self._handle_switch(message)
@@ -1367,10 +1367,50 @@ class MessageHandler:
         await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude，当前任务已停止。")
         return HandlerResult(success=True)
 
-    async def _handle_model(self, message: IncomingMessage) -> HandlerResult:
-        """处理 /model 命令：显示所有供应商的模型配置（飞书卡片表格）。"""
-        from supercc.claude.model_config import get_all_models, ModelEntry
+    async def _handle_model(self, message: IncomingMessage, subcmd: str = "") -> HandlerResult:
+        """处理 /model 命令：显示所有供应商的模型配置（飞书卡片表格）。
+
+        子命令：
+        - /model switch <provider_id> — 切换到已配置的供应商
+        """
+        from supercc.claude.model_config import get_all_models, ModelEntry, switch_model
         from supercc.claude.model_providers import PROVIDERS
+
+        # 处理子命令
+        if subcmd:
+            parts = subcmd.strip().split(maxsplit=1)
+            action = parts[0].lower()
+            target = parts[1] if len(parts) > 1 else ""
+
+            if action == "switch":
+                if not target:
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        "❌ 请指定要切换的供应商 ID，如：\n`/model switch volcano`",
+                    )
+                    return HandlerResult(success=True)
+
+                models = get_all_models()
+                if target not in models:
+                    available = ", ".join(f"`{mid}`" for mid in models)
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ 未找到已配置的供应商 `{target}`。\n当前已配置的供应商：{available}",
+                    )
+                    return HandlerResult(success=True)
+
+                # 执行切换
+                switch_model(target)
+                provider = PROVIDERS.get(target)
+                name = provider.name if provider else target
+                model = models[target].env.ANTHROPIC_MODEL or "—"
+                await self._safe_send(
+                    message.chat_id, message.message_id,
+                    f"✅ 已切换为 **{name}**（`{model}`）",
+                )
+                return HandlerResult(success=True)
+
+        # 默认：显示卡片表格
 
         models = get_all_models()
 
