@@ -1403,9 +1403,12 @@ class MessageHandler:
                         model_id_to_switch = url_to_mid[provider.base_url]
 
                 def fmt_name(mid: str) -> str:
-                    p = PROVIDERS.get(mid)
-                    if p:
-                        return f"{p.name} (`{mid}`)"
+                    # 优先通过 base_url 匹配 PROVIDER（model_id 与 PROVIDER key 可能不一致）
+                    mentry = models.get(mid)
+                    if mentry and mentry.env.ANTHROPIC_BASE_URL:
+                        for pid, p in PROVIDERS.items():
+                            if p.base_url == mentry.env.ANTHROPIC_BASE_URL:
+                                return f"{p.name} (`{mid}`)"
                     return f"`{mid}`"
 
                 if not target:
