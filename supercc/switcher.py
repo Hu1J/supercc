@@ -164,9 +164,11 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
 
     # Start SuperCC via the installed binary
     data_dir = os.path.join(target_path, ".supercc")
-    stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
-    stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
+    stdout_log = None
+    stderr_log = None
     try:
+        stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
+        stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
         proc = subprocess.Popen(
             ["supercc", "start"],
             cwd=target_path,
@@ -190,8 +192,10 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
             f"PID file did not appear within {timeout}s after starting SuperCC"
         )
     finally:
-        stdout_log.close()
-        stderr_log.close()
+        if stdout_log is not None:
+            stdout_log.close()
+        if stderr_log is not None:
+            stderr_log.close()
 
 
 def switch_to(target_path: str):

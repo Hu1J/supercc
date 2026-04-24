@@ -1322,7 +1322,7 @@ class MessageHandler:
             logger.exception(f"Error in _run_query: {e}")
             # CLI 进程异常崩溃，每次 query 内部创建新 client，下一次自动恢复
             logger.warning(f"[_run_query] CLI error: {e}")
-            error_msg = f"⚠️ 内部错误：{e}"
+            error_msg = "⚠️ 内部错误，请稍后重试。"
             await self._safe_send(message.chat_id, message.message_id, error_msg)
         finally:
             if reaction_id:
