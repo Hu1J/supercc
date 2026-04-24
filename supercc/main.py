@@ -207,39 +207,10 @@ def _sync_active_model_to_claude() -> None:
 
     如果 models.yaml 中有 active 模型（且有 API Key），则写入 ~/.claude/settings.json。
     这样即使 Claude 内部配置被人为改动过，启动时也会自动恢复。
-
-    同时处理旧的 "default" key 迁移：用 base_url 匹配 PROVIDER，
-    将 key 改为 provider id（如 "default" → "minimax"）。
     """
     from supercc.claude import model_config as mc
-    from supercc.claude.model_providers import PROVIDERS
 
     try:
-        models = mc.get_all_models()
-
-        # 迁移旧的 "default" key
-        if "default" in models:
-            old = models["default"]
-            if old.env.ANTHROPIC_BASE_URL:
-                matched_id = None
-                for pid, p in PROVIDERS.items():
-                    if p.base_url == old.env.ANTHROPIC_BASE_URL:
-                        matched_id = pid
-                        break
-                if matched_id is None:
-                    matched_id = "imported"
-
-                if matched_id not in models:
-                    models[matched_id] = old
-                    del models["default"]
-                    mc.save_models_config(mc._active_model_id, models)
-                    mc._active_model_id = matched_id
-                    logger.info("Migrated 'default' -> '%s' (base_url match)", matched_id)
-                else:
-                    del models["default"]
-                    mc.save_models_config(mc._active_model_id, models)
-                    logger.info("Removed duplicate 'default' (already exists as '%s')", matched_id)
-
         active = mc.get_active_model()
         if active and active.env.ANTHROPIC_AUTH_TOKEN:
             mc._update_claude_settings(active.env)
