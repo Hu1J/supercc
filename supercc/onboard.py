@@ -265,16 +265,8 @@ def _do_model_config_step() -> None:
     name = f"{provider.name} ({selected_model})"
     description = f"供应商: {provider.name}"
 
-    from supercc.claude.model_config import get_all_models, save_models_config, switch_model, _models_cache
-    models = get_all_models()
-    models[model_id] = ModelEntry(
-        name=name,
-        description=description,
-        env=env,
-        is_default=True,
-    )
-    _models_cache.update(models)  # 先同步到内存 cache
-    save_models_config(model_id, models)
+    from supercc.claude.model_config import add_model, switch_model
+    add_model(model_id, name, description, env)
     switch_model(model_id)  # 设置为激活模型，同步写入 Claude 内部配置
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.name}")

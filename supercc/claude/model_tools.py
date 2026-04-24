@@ -204,6 +204,7 @@ async def set_model_tool(args: dict) -> dict:
         added = add_model(provider_id, provider.name, provider.description, new_entry.env)
         if not added:
             return {"content": [{"type": "text", "text": f"供应商 `{provider.name}` 添加失败（ID 可能已存在）"}], "is_error": True}
+        switch_model(provider_id)
         changed.append(f"新增供应商 `{provider.name}`")
         if model:
             changed.append(f"模型 → `{model}`")

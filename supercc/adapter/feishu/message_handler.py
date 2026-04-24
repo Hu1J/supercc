@@ -1297,17 +1297,18 @@ class MessageHandler:
             else:
                 self.sessions.update_session(session.session_id, cost=last_cost, message_increment=1, update_last_message=True)
 
-            # 检测 sdk_session_id 变化，通知用户（strip 消除隐藏字符；排除首次 None->有值的情况）
+            # 存储 sdk_session_id（首次建立或变化时都更新；空值不覆盖有效值）
             new_sid = (sdk_session_id_from_query or "").strip()
             old_sid = (session.sdk_session_id or "").strip()
-            if new_sid and old_sid and new_sid != old_sid:
-                logger.info(f"[_run_query] sdk_session_id changed: {session.sdk_session_id!r} -> {sdk_session_id_from_query!r}")
+            if new_sid and new_sid != old_sid:
+                logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
                 self.sessions.update_sdk_session_id(session.session_id, new_sid)
-                await self._safe_send(
-                    message.chat_id, message.message_id,
-                    f"🔄 检测到新 Session，已自动切换\n新 Session ID: `{new_sid}`",
-                    log_reply=False,
-                )
+                if old_sid:  # 旧值存在才通知用户（首次建无需通知）
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"🔄 检测到新 Session，已自动切换\n新 Session ID: `{new_sid}`",
+                        log_reply=False,
+                    )
 
             # Send final text response as a Feishu card if no text was streamed.
             # If text was streamed in real-time, it is already visible and not sent again.
@@ -1447,6 +1448,8 @@ class MessageHandler:
 
         active_entry = get_active_model()
         active_base_url = active_entry.env.ANTHROPIC_BASE_URL if active_entry else ""
+        active_id = next((mid for mid, m in models.items()
+                         if m.env.ANTHROPIC_BASE_URL == active_base_url), "")
 
         for p in PROVIDERS.values():
             matched = None
