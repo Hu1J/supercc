@@ -1384,19 +1384,26 @@ class MessageHandler:
 
             if action == "switch":
                 models = get_all_models()
+                # 显示供应商名称而非内部 model_id
+                def fmt_name(mid: str) -> str:
+                    p = PROVIDERS.get(mid)
+                    if p:
+                        return f"{p.name} (`{mid}`)"
+                    return f"`{mid}`"
+
                 if not target:
-                    available = ", ".join(f"`{mid}`" for mid in models)
+                    available = " / ".join(fmt_name(mid) for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 请指定要切换的供应商 ID。\n当前已配置的供应商：{available}",
+                        f"❌ 请指定要切换的供应商。\n当前已配置的供应商：\n{available}",
                     )
                     return HandlerResult(success=True)
 
                 if target not in models:
-                    available = ", ".join(f"`{mid}`" for mid in models)
+                    available = " / ".join(fmt_name(mid) for mid in models)
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 未找到已配置的供应商 `{target}`。\n当前已配置的供应商：{available}",
+                        f"❌ 未找到已配置的供应商 `{target}`。\n当前已配置的供应商：\n{available}",
                     )
                     return HandlerResult(success=True)
 
