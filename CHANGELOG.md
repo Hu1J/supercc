@@ -40,6 +40,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **yaml.safe_load 空文件返回 None**：所有加载点加 or {}
 - **/model switch 错误消息**：通过 base_url 匹配 PROVIDER ID，不再依赖 models.yaml 的 key
 
+## [Unreleased]
+
+## [0.1.8] - 2026-04-27
+
+### Fixed
+
+- **CronCreate MCP 暴露 verbose 参数**：schema 和调用参数新增 verbose bool，_fmt_job_summary() 展示 verbose 状态
+
 ## [0.1.7] - 2026-04-27
 
 ### Added
@@ -60,8 +68,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **默认模型改为 gpt-5.5**：config.py 和 config.example.yaml 均已更新
 - **Legacy 模型名迁移**：`gpt-5.5-codex` → `gpt-5.5` 自动迁移
-
-## [Unreleased]
 
 ## [0.1.5] - 2026-04-23
 

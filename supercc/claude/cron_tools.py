@@ -63,7 +63,11 @@ def _fmt_job_summary(j: dict) -> str:
     state = j.get('state', 'scheduled')
     schedule = j.get('schedule_display', '?')
     next_run = j.get('next_run_at', '—')
-    return f"⏰ **{j.get('name', j['id'])}** (`{j['id']}`) [{state}] {schedule} | next: {next_run}"
+    verbose = '✓ verbose' if j.get('verbose') else ''
+    parts = [f"⏰ **{j.get('name', j['id'])}** (`{j['id']}`) [{state}] {schedule} | next: {next_run}"]
+    if verbose:
+        parts.append(verbose)
+    return ' '.join(parts)
 
 
 # ── tools ──────────────────────────────────────────────────────────────────────
@@ -76,6 +80,7 @@ def _fmt_job_summary(j: dict) -> str:
         "prompt": str,
         "name": str,
         "repeat": int,
+        "verbose": bool,
     },
 )
 async def cron_create(args: dict) -> dict:
@@ -83,6 +88,7 @@ async def cron_create(args: dict) -> dict:
     prompt = args.get("prompt", "").strip()
     name = args.get("name", "").strip() or None
     repeat = args.get("repeat")
+    verbose = bool(args.get("verbose", False))
     if repeat is not None:
         repeat = int(repeat)
 
@@ -101,6 +107,7 @@ async def cron_create(args: dict) -> dict:
             chat_id=chat_id,
             name=name,
             repeat=repeat,
+            verbose=verbose,
             data_dir=data_dir,
         )
     except ValueError as e:
