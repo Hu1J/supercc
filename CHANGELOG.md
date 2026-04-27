@@ -40,6 +40,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **yaml.safe_load 空文件返回 None**：所有加载点加 or {}
 - **/model switch 错误消息**：通过 base_url 匹配 PROVIDER ID，不再依赖 models.yaml 的 key
 
+## [0.1.7] - 2026-04-27
+
+### Added
+
+- **Codex MCP 集成重构**：SuperCC 自研 MCP Server，直接执行 `codex exec`，结果通过 JSONL tailing 实时推送，全程在 SuperCC 统一处理飞书渲染
+- **CodexRunTailingRunner**：tail Codex JSONL 文件实现实时流式输出
+- **/codex available**：快速判断 Codex 当前是否可用
+- **/codex models**：查看 Codex 可选模型列表
+- **/codex setup**：立即写入/刷新 Claude Code 的 Codex MCP 配置
+
+### Fixed
+
+- **CodexStreamEvent 缺少字段**：`command`、`tool_name`、`tool_input`、`file_path` 字段缺失导致 AttributeError
+- **/codex <prompt> 解析错误**：双重 split 导致 prompt 被截断
+- **exit_code==0 图标错误**：成功时应显示 ✅ 而非 ⚠️
+
+### Changed
+
+- **默认模型改为 gpt-5.5**：config.py 和 config.example.yaml 均已更新
+- **Legacy 模型名迁移**：`gpt-5.5-codex` → `gpt-5.5` 自动迁移
+
 ## [Unreleased]
 
 ## [0.1.5] - 2026-04-23
