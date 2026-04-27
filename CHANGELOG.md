@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.9] - 2026-04-27
+
+### Fixed
+
+- **Windows ZoneInfo 兼容性问题**：Windows 没有内置 IANA 时区数据，`ZoneInfo("Asia/Shanghai")` 报错，改用 `timezone(timedelta(hours=8))` 跨平台兼容
+
 ## [0.1.6] - 2026-04-24
 
 ### Added
