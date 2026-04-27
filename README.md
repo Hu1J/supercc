@@ -220,6 +220,9 @@ SuperCC/
 **Q: 飞书机器人收不到消息？**
 检查 `~/.supercc/config.yaml` 中的 `app_id`/`app_secret` 是否正确，机器人是否已启用。
 
+**Q: 群聊 @CC 时上下文消息注入不生效？**
+确认飞书应用已开通 `im:message.group_msg` 权限，否则 `get_chat_history()` 无法拉取群聊历史。
+
 **Q: 如何切换模型？**
 发送 `/model` 查看当前配置，`/model switch <provider>` 切换供应商。
 
