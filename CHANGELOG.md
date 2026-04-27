@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.10] - 2026-04-27
+
+### Fixed
+
+- **Kimi provider base_url 错误**：改为官方 `https://api.kimi.com/coding/`，原 `https://api.moonshot.cn/anthropic` 为错误地址
+
 ## [0.1.9] - 2026-04-27
 
 ### Fixed
