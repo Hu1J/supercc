@@ -110,7 +110,7 @@ PROVIDERS: dict[str, Provider] = {
     "kimi": Provider(
         id="kimi",
         name="Kimi 月之暗面",
-        base_url="https://api.moonshot.cn/anthropic",
+        base_url="https://api.kimi.com/coding",
         auth_type="bearer",
         models=[
             "kimi-k2.6",
