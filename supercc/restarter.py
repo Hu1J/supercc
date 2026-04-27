@@ -163,10 +163,10 @@ def _restart_to(file_lock=None, package: str = "supercc"):
 
 
 async def run_restart(file_lock, feishu: "FeishuClient",
-                      chat_id: str, reply_to_message_id: str) -> None:
+                      chat_id: str, reply_to_message_id: str):
     """Run the restart with detailed step-by-step Feishu notifications.
 
-    Sends a rich progress card to Feishu, updating it as each step completes.
+    Yields RestartStep objects. Caller must iterate with `async for` to execute the generator.
     """
     current_path = os.getcwd()
     total = 5
@@ -191,6 +191,8 @@ async def run_restart(file_lock, feishu: "FeishuClient",
                 f"⏳ 即将重启，请稍候..."
             )
             await feishu.send_interactive_reply(chat_id, progress_card, reply_to_message_id)
+
+        yield step_obj
 
 
 def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None):
@@ -423,9 +425,10 @@ def _do_update(file_lock=None):
 
 def _pip_install(package: str) -> None:
     """Install a package via pip. Raises RestartError on failure."""
+    import sys
     try:
         result = subprocess.run(
-            ["pip", "install", "-U", package, "-i", "https://pypi.org/simple/"],
+            [sys.executable, "-m", "pip", "install", "-U", package, "-i", "https://pypi.org/simple/"],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode != 0:

@@ -277,7 +277,7 @@ async def _detect_skill_changes(
         try:
             await send_to_feishu(chat_id, msg)
         except Exception as e:
-            logger.warning(f"[skill_nudge] failed to send to Feishu: {e}")
+            logger.warning(f"[skill_nudge] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
 
 
 async def poll_skill_changes_and_notify(
@@ -349,7 +349,7 @@ async def poll_skill_changes_and_notify(
         try:
             await send_to_feishu(chat_id, msg)
         except Exception as e:
-            logger.warning(f"[poll_skill_changes] failed to send to Feishu: {e}")
+            logger.warning(f"[poll_skill_changes] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
 
 
 async def trigger_skill_review(

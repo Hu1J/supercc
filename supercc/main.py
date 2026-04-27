@@ -174,13 +174,12 @@ def _get_active_chat_id(data_dir: str) -> str | None:
         return None
     try:
         import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return row["chat_id"] if row else None
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
+            ).fetchone()
+            return row["chat_id"] if row else None
     except Exception:
         return None
 
@@ -224,6 +223,19 @@ def _sync_active_model_to_claude() -> None:
             logger.debug("No active model with API key to sync")
     except Exception:
         logger.warning("Failed to sync active model to Claude settings", exc_info=True)
+
+
+def _ensure_codex_mcp(config) -> None:
+    """Best-effort Codex MCP setup for Claude Code."""
+    try:
+        from supercc.claude.codex_mcp import ensure_codex_mcp_configured
+
+        status = ensure_codex_mcp_configured(config.codex)
+        logger.info("Codex MCP status: %s", status.state)
+        if status.state in {"missing_cli", "conflict", "error"}:
+            logger.warning("Codex MCP not ready: %s", status.message or status.state)
+    except Exception:
+        logger.warning("Failed to configure Codex MCP", exc_info=True)
 
 
 # ANSI color codes for terminal output
@@ -432,6 +444,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     # Startup: sync active model to Claude's internal settings
     _sync_active_model_to_claude()
+    _ensure_codex_mcp(config)
 
     handler = create_handler(config, data_dir, config_path=config_path)
     _ensure_claude_md(config.claude.approved_directory)

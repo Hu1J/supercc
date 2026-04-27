@@ -9,6 +9,7 @@ from supercc.claude.model_config import (
     ModelEntry,
     ModelEnv,
     switch_model,
+    update_model_env,
     update_model_token,
     add_model,
     validate_model_env,
@@ -117,11 +118,10 @@ async def list_models(args: dict) -> dict:
   "model": "kimi-k2.6",     // 选填，模型 ID（必须在该 provider 的可用模型列表中）
   "api_key": "sk-xxx"        // 选填，如需更新 API Key 则传入
 }
-说明：provider 必填；model 和 api_key 二选一（至少传一个）。
-支持三种场景：
-1. 切换供应商：provider + model + api_key（完整切换）
+说明：provider 和 model 必填；api_key 选填（如需更新 API Key 则传入）。
+支持两种场景：
+1. 完整切换：provider + model + api_key
 2. 切换模型（同供应商）：provider + model（api_key 不变）
-3. 仅更新 API Key：provider（原 model 不变）+ api_key
 """,
     {"config": str},
 )
@@ -154,8 +154,8 @@ async def set_model_tool(args: dict) -> dict:
 
     if not provider_id:
         return {"content": [{"type": "text", "text": "provider 是必填的"}], "is_error": True}
-    if not model and not api_key:
-        return {"content": [{"type": "text", "text": "model 和 api_key 至少要传一个"}], "is_error": True}
+    if not model:
+        return {"content": [{"type": "text", "text": "model 是必填的"}], "is_error": True}
 
     provider = PROVIDERS.get(provider_id)
     if not provider:
@@ -214,7 +214,7 @@ async def set_model_tool(args: dict) -> dict:
 
     # 校验前必须先写入文件（validate 失败不影响已保存的配置）
     if matched_mid:
-        update_model_token(matched_mid, env_to_validate.ANTHROPIC_AUTH_TOKEN)
+        update_model_env(matched_mid, env_to_validate)
         switch_model(matched_mid)
 
     valid, err_msg = validate_model_env(env_to_validate)

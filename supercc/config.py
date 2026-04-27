@@ -96,6 +96,22 @@ class ClaudeConfig:
 
 
 @dataclass
+class CodexCaptureConfig:
+    capture_mode: bool = True
+
+
+@dataclass
+class CodexMcpConfig:
+    enabled: bool = True
+    cli_path: str = ""
+    model: str = "gpt-5.5"
+    sandbox: str = "workspace-write"
+    approval: str = "on-request"
+    auto_configure_mcp: bool = True
+    capture: CodexCaptureConfig = field(default_factory=CodexCaptureConfig)
+
+
+@dataclass
 class SkillNudgeConfig:
     enabled: bool = True
     interval: int = 10
@@ -107,6 +123,7 @@ class Config:
     channels: ChannelsConfig
     auth: AuthConfig
     claude: ClaudeConfig
+    codex: CodexMcpConfig = field(default_factory=CodexMcpConfig)
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
     data_dir: str = ""
     bypass_accepted: bool = False
@@ -122,6 +139,17 @@ def _upgrade_config(path: str) -> None:
     # Remove stale server section (deprecated in v0.2.3)
     if "server" in raw:
         del raw["server"]
+        changed = True
+
+    # Migrate legacy model names
+    codex = raw.get("codex") or {}
+    model_migrations = {
+        "gpt-5.5-codex": "gpt-5.5",
+        "gpt-5.3-codex": "gpt-5.4",
+    }
+    if codex.get("model") in model_migrations:
+        codex["model"] = model_migrations[codex["model"]]
+        raw["codex"] = codex
         changed = True
 
     if changed:
@@ -162,10 +190,23 @@ def load_config(path: str, data_dir: str = "") -> Config:
 
     channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
 
+    # Deserialize codex.capture if present
+    codex_raw = raw.get("codex") or {}
+    _known_codex_keys = {"enabled", "cli_path", "model", "sandbox", "approval", "auto_configure_mcp", "capture"}
+    _known_capture_keys = {"capture_mode"}
+    capture_raw = codex_raw.get("capture") or {}
+    codex_cfg = CodexMcpConfig(
+        **{k: v for k, v in codex_raw.items() if k in _known_codex_keys and k != "capture"},
+        capture=CodexCaptureConfig(
+            **{k: v for k, v in (capture_raw or {}).items() if k in _known_capture_keys}
+        ) if capture_raw else CodexCaptureConfig(),
+    )
+
     return Config(
         channels=channels_cfg,
         auth=AuthConfig(**raw.get("auth", {})),
         claude=ClaudeConfig(**raw.get("claude", {})),
+        codex=codex_cfg,
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
@@ -182,6 +223,15 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
     """Save a complete config to a YAML file (legacy param-based signature)."""
+    # 如果文件已存在，保留 codex 配置
+    existing_codex = None
+    if Path(path).exists():
+        try:
+            existing_cfg = load_config(path)
+            existing_codex = existing_cfg.codex
+        except Exception:
+            pass
+
     cfg = Config(
         channels=ChannelsConfig(
             feishu=FeishuChannelConfig(
@@ -201,6 +251,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
             max_turns=claude_max_turns,
             approved_directory=claude_approved_directory,
         ),
+        codex=existing_codex if existing_codex is not None else CodexMcpConfig(),
         bypass_accepted=bypass_accepted,
     )
     _write_config_to_path(path, cfg)
@@ -241,6 +292,17 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
             "cli_path": cfg.claude.cli_path,
             "max_turns": cfg.claude.max_turns,
             "approved_directory": cfg.claude.approved_directory,
+        },
+        "codex": {
+            "enabled": cfg.codex.enabled,
+            "cli_path": cfg.codex.cli_path,
+            "model": cfg.codex.model,
+            "sandbox": cfg.codex.sandbox,
+            "approval": cfg.codex.approval,
+            "auto_configure_mcp": cfg.codex.auto_configure_mcp,
+            "capture": {
+                "capture_mode": cfg.codex.capture.capture_mode,
+            },
         },
         "skill_nudge": {
             "enabled": cfg.skill_nudge.enabled,

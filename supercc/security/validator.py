@@ -54,8 +54,9 @@ class SecurityValidator:
         """Validate a path is within approved_directory."""
         try:
             resolved = (self.approved_directory / path).resolve()
-            if not str(resolved).startswith(str(self.approved_directory)):
-                return False, "Path outside approved directory"
+            resolved.relative_to(self.approved_directory)
             return True, None
+        except ValueError:
+            return False, "Path outside approved directory"
         except Exception as e:
             return False, f"Invalid path: {e}"

@@ -12,6 +12,14 @@ claude:
   max_turns: 50
   approved_directory: /Users/you/projects
 
+codex:
+  enabled: true
+  cli_path: ""
+  model: gpt-5.5
+  sandbox: workspace-write
+  approval: on-request
+  auto_configure_mcp: true
+
 storage:
   db_path: ./data/sessions.db
 

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,14 +17,82 @@ from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
 from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
 from supercc.claude.cron_tools import CRON_GUIDE
+from supercc.claude.codex_mcp import (
+    ensure_codex_mcp_configured,
+    format_codex_availability,
+    format_codex_models,
+    format_codex_status,
+    get_codex_mcp_guide,
+    get_codex_mcp_status,
+)
+from supercc.claude.codex_exec import CodexStreamEvent
 from supercc.claude.session_manager import SessionManager
 from supercc.evolve.skill_nudge import SkillNudge, trigger_skill_review
-from supercc.adapter.feishu.format.agent_card import format_agent_card
+from supercc.adapter.feishu.format.agent_card import format_agent_card, format_codex_card
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
 
 logger = logging.getLogger(__name__)
+
+
+def _is_codex_tool_name(tool_name: str | None) -> bool:
+    """Return True for Claude SDK's plain and MCP-qualified Codex tool names."""
+    if not tool_name:
+        return False
+    return tool_name == "codex" or tool_name == "mcp__codex__codex"
+
+
+
+
+def _format_codex_event(event: CodexStreamEvent) -> str:
+    """Format a CodexStreamEvent for Feishu rendering."""
+    if event.type == "text":
+        return event.content
+
+    elif event.type == "command_execution":
+        cmd = (event.command or "").strip()
+        content = (event.content or "").strip()
+        parts = []
+        if cmd:
+            parts.append(f"```bash\n{cmd}\n```")
+        if content:
+            parts.append(content)
+        return "\n\n".join(parts)
+
+    elif event.type == "command_output":
+        return ""
+
+    elif event.type == "tool_use":
+        tool = event.tool_name or "unknown"
+        inp = event.tool_input or ""
+        if len(inp) > 800:
+            inp = inp[:800] + "..."
+        return f"tool: `{tool}`\n\n```json\n{inp}\n```"
+
+    elif event.type == "file_change":
+        path = event.file_path or ""
+        return f"`{path}`\n\n{event.content[:300]}"
+
+    elif event.type == "reasoning":
+        return event.content[:500]
+
+    elif event.type == "todo_list":
+        return event.content[:1000]
+
+    elif event.type == "error":
+        return event.content[:500]
+
+    elif event.type == "finished":
+        ec = event.exit_code
+        if ec is None or ec == 0:
+            return event.content or "执行完成"
+        return f"{event.content}\n\nexit_code: `{ec}`".strip()
+
+    elif event.type == "started":
+        return event.content or "started"
+
+    return ""
 
 # Match a slash-command like "/stop", "/new", "/feishu auth", "/status foo"
 # Commands: / + letter + word-chars, optionally followed by space + args
@@ -119,12 +188,19 @@ class MessageHandler:
         session_manager: SessionManager,
         formatter: ReplyFormatter,
         approved_directory: str,
-        config,
+        config=None,
         data_dir: str = "",
         feishu_groups: dict | None = None,
         config_path: str | None = None,
         skill_nudge: SkillNudge | None = None,
     ):
+        if config is None:
+            from supercc.config import AuthConfig, ChannelsConfig, ClaudeConfig, Config
+            config = Config(
+                channels=ChannelsConfig(),
+                auth=AuthConfig(),
+                claude=ClaudeConfig(approved_directory=approved_directory),
+            )
         self.feishu = feishu_client
         self.auth = authenticator
         self.validator = validator
@@ -147,6 +223,7 @@ class MessageHandler:
         self.formatter = formatter
         self.approved_directory = approved_directory
         self.data_dir = data_dir
+        self.config = config
         # Group config: group_id -> GroupConfigEntry (for per-group access control)
         self._feishu_groups = feishu_groups or {}
         # Config path for auto-registering new groups
@@ -434,10 +511,12 @@ class MessageHandler:
         project_path = session.project_path if session else self.approved_directory
         self._current_project_path = project_path  # 供 stream_callback 使用
 
+        codex_status = get_codex_mcp_status(self.config.codex)
         system_prompt_append = (
             MEMORY_SYSTEM_GUIDE
             + FEISHU_FILE_GUIDE
             + CRON_GUIDE
+            + get_codex_mcp_guide(self.config.codex, codex_status)
             + self.memory_manager.inject_context(
                 user_open_id=message.user_open_id,
                 project_path=project_path,
@@ -552,6 +631,7 @@ class MessageHandler:
                     "• /stop — 打断当前查询\n"
                     "• /git — 显示 Git 状态\n"
                     "• /model — 查看模型配置\n"
+                    "• /codex — 查看或配置 Codex MCP 状态\n"
                     "• /switch <路径> — 切换到另一个项目的 SuperCC 实例\n"
                     "• /restart — 重启当前 SuperCC\n"
                     "• /update — 检查并更新到最新版本\n"
@@ -566,6 +646,9 @@ class MessageHandler:
 
         elif cmd == "/model":
             return await self._handle_model(message, arg)
+
+        elif cmd == "/codex":
+            return await self._handle_codex(message, arg)
 
         elif cmd == "/switch":
             return await self._handle_switch(message)
@@ -594,13 +677,15 @@ class MessageHandler:
 
         await self.feishu.add_typing_reaction(message.message_id)
         try:
-            await run_restart(_active_lock, self.feishu, message.chat_id, message.message_id)
+            async for step in run_restart(_active_lock, self.feishu, message.chat_id, message.message_id):
+                if step.status == "final":
+                    # 成功完成，重启新进程已在运行
+                    os._exit(0)
         except Exception as e:
             await self._safe_send(
                 message.chat_id, message.message_id,
                 f"❌ 重启失败: {e}"
             )
-        os._exit(0)
 
     async def _handle_update(self, message: IncomingMessage) -> HandlerResult:
         from supercc.restarter import run_update
@@ -1114,7 +1199,38 @@ class MessageHandler:
             for retry_round in range(3):
                 accumulator = StreamAccumulator(message.chat_id, message.message_id, self._safe_send)
 
-                async def stream_callback(claude_msg):
+                async def stream_callback(stream_item):
+                    # Handle Codex internal events — flush Claude accumulator and render Codex event
+                    if isinstance(stream_item, CodexStreamEvent):
+                        await accumulator.flush()
+                        text = _format_codex_event(stream_item)
+                        if text:
+                            card = format_codex_card(
+                                stream_item.type,
+                                text,
+                                {
+                                    "command": stream_item.command,
+                                    "exit_code": stream_item.exit_code,
+                                    "tool_name": stream_item.tool_name,
+                                },
+                            )
+                            try:
+                                await self.feishu.send_interactive(message.chat_id, card, message.message_id)
+                            except Exception:
+                                await self._safe_send(message.chat_id, message.message_id, text, log_reply=False)
+                        return
+
+                    claude_msg = stream_item
+                    # Codex MCP 工具调用 → 渲染成与 Agent card 一致的卡片
+                    if _is_codex_tool_name(claude_msg.tool_name):
+                        await accumulator.flush()
+                        card = format_agent_card(claude_msg.tool_input or "", title="## 🤖 Codex")
+                        try:
+                            await self.feishu.send_interactive(message.chat_id, card, message.message_id)
+                        except Exception:
+                            await self._safe_send(message.chat_id, message.message_id, claude_msg.tool_input or "", log_reply=False)
+                        return
+
                     if claude_msg.tool_name:
                         await accumulator.flush()
                         # 记忆工具传入 memory_manager 和默认 project_path
@@ -1317,7 +1433,7 @@ class MessageHandler:
                     formatted = self.formatter.format_text(response)
                     chunks = self.formatter.split_messages(formatted)
                     for chunk in chunks:
-                        await self._safe_send(message.chat_id, message.message_id, chunk)
+                        await self._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
 
         except asyncio.CancelledError:
             await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
@@ -1369,6 +1485,35 @@ class MessageHandler:
         self.claude.stop_event.set()
         await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude，当前任务已停止。")
         return HandlerResult(success=True)
+
+    async def _handle_codex(self, message: IncomingMessage, arg: str = "") -> HandlerResult:
+        """Handle /codex — Codex MCP status and setup. Direct execution removed in favor of MCP tool call."""
+        parts = (arg or "").strip().split()
+        first_word = parts[0].lower() if parts else "status"
+
+        if first_word == "status":
+            status = get_codex_mcp_status(self.config.codex)
+            return HandlerResult(success=True, response_text=format_codex_status(status))
+        if first_word in {"available", "availability", "ready"}:
+            status = get_codex_mcp_status(self.config.codex)
+            return HandlerResult(success=True, response_text=format_codex_availability(status))
+        if first_word in {"models", "model"}:
+            return HandlerResult(success=True, response_text=format_codex_models())
+        if first_word == "setup":
+            status = ensure_codex_mcp_configured(self.config.codex)
+            return HandlerResult(success=True, response_text=format_codex_status(status))
+
+        # Default: show help
+        return HandlerResult(
+            success=True,
+            response_text=(
+                "Codex 命令：\n"
+                "• /codex status — 查看 Codex MCP 状态\n"
+                "• /codex available — 快速判断 Codex 当前是否可用\n"
+                "• /codex models — 查看 Codex 可选模型\n"
+                "• /codex setup — 立即写入/刷新 Claude Code 的 Codex MCP 配置"
+            ),
+        )
 
     async def _handle_model(self, message: IncomingMessage, subcmd: str = "") -> HandlerResult:
         """处理 /model 命令：显示所有供应商的模型配置（飞书卡片表格）。
@@ -1650,15 +1795,15 @@ class MessageHandler:
 
         return HandlerResult(success=True)
 
-    async def _safe_send(self, chat_id: str, reply_to_message_id: str, text: str, log_reply: bool = True):
+    async def _safe_send(self, chat_id: str, reply_to_message_id: str, text: str, log_reply: bool = True, preformatted: bool = False):
         """Send a markdown message as a threaded Feishu post/card, ignoring errors.
 
         Uses Interactive Card for content with fenced code blocks or tables,
         falls back to rich text post for plain markdown.
         """
         try:
-            # Optimize and decide format
-            formatted = self.formatter.format_text(text)
+            # Optimize and decide format — skip if already formatted to avoid double-processing
+            formatted = text if preformatted else self.formatter.format_text(text)
             if not formatted.strip():
                 return
             if self.formatter.should_use_card(formatted):
@@ -1766,4 +1911,3 @@ class MessageHandler:
             return f"[File: {save_path}] ({orig_name})"
 
         return ""
-

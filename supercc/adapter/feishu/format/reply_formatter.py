@@ -78,9 +78,11 @@ def _optimize_markdown_style_impl(text: str, card_version: int = 2) -> str:
             r,
         )
 
-        # 5. Restore code blocks with <br> wrapping
+        # 5. Restore code blocks — no <br> wrapper needed; Feishu CardKit
+        # renders fenced code blocks with native spacing, and <br> creates
+        # visible extra blank lines above/below the block.
         for i, block in enumerate(code_blocks):
-            r = r.replace(f"{_CODE_BLOCK_MARK}{i}{_CODE_BLOCK_MARK_END}", f"\n<br>\n{block}\n<br>\n")
+            r = r.replace(f"{_CODE_BLOCK_MARK}{i}{_CODE_BLOCK_MARK_END}", block)
     else:
         # 5. Restore code blocks (no <br>)
         for i, block in enumerate(code_blocks):

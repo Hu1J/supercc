@@ -40,13 +40,12 @@ def _get_active_chat_id(data_dir: str) -> str | None:
     if not os.path.exists(db_path):
         return None
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
-        ).fetchone()
-        conn.close()
-        return row["chat_id"] if row else None
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
+            ).fetchone()
+            return row["chat_id"] if row else None
     except Exception:
         return None
 
@@ -866,12 +865,16 @@ class CronScheduler:
         """Synchronous stop — safe to call from signal handlers."""
         if self._thread is None:
             return
+        # Capture task reference immediately — _run() may reassign self._task
+        # on its next iteration before call_soon_threadsafe callbacks execute.
+        running_task = self._task
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._stop.set)
-            self._loop.call_soon_threadsafe(self._task.cancel if self._task else None)
+            self._loop.call_soon_threadsafe(running_task.cancel if running_task else None)
         self._thread.join(timeout=5)
         self._thread = None
         self._loop = None
+        self._task = None
         logger.info("CronScheduler stopped")
 
     async def _run(self):

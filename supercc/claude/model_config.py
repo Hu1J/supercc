@@ -174,6 +174,20 @@ def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool
     return True
 
 
+def update_model_env(model_id: str, env: ModelEnv) -> bool:
+    """更新已有模型的完整 env（token + model + base_url）。"""
+    raw = _load_yaml()
+    _, models = _parse_models(raw)
+
+    if model_id not in models:
+        return False
+
+    models[model_id].env = env
+    raw["models"] = _serialize_models(models)
+    _save_yaml(raw)
+    return True
+
+
 def update_model_token(model_id: str, new_token: str) -> bool:
     """更新已有模型的 API Key。"""
     raw = _load_yaml()

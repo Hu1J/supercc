@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import shutil
+import time as time_module
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Awaitable
+
+from supercc.claude.codex_exec import CodexRunTailingRunner, CodexStreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +24,9 @@ class ClaudeMessage:
     tool_input: str | None = None
 
 
-StreamCallback = Callable[[ClaudeMessage], Awaitable[None]]
+# Union type for stream events from both Claude and Codex
+StreamItem = ClaudeMessage | CodexStreamEvent
+StreamCallback = Callable[[StreamItem], Awaitable[None]]
 
 
 class ClaudeIntegration:
@@ -41,6 +49,7 @@ class ClaudeIntegration:
         self._system_prompt_append: str | None = None
         self._query_lock = asyncio.Lock()  # 保证同一时间只有一个 query 在执行
         self.stop_event = asyncio.Event()  # /stop 信号，listener 收到后 interrupt
+        self._codex_capture_tasks: set[asyncio.Task] = set()
 
     def mark_system_prompt_stale(self) -> None:
         """标记 system prompt 已过期，下次 query 时重新初始化。"""
@@ -64,6 +73,24 @@ class ClaudeIntegration:
         else:
             supercc_server = get_supercc_mcp_server()
 
+        mcp_servers = {
+            "SuperCC": supercc_server,
+        }
+        try:
+            from supercc.config import get_config
+            from supercc.claude.codex_mcp import (
+                build_supercc_codex_mcp_config,
+            )
+
+            codex_cfg = get_config().codex
+            if codex_cfg.enabled and not self.memory_only:
+                mcp_servers["codex"] = build_supercc_codex_mcp_config(
+                    codex_cfg,
+                    cwd=self.approved_directory or ".",
+                )
+        except Exception:
+            logger.debug("Codex MCP server was not added to Claude options", exc_info=True)
+
         # memory_only 模式：禁用所有内置工具，仅允许 MCP 工具（记忆相关）
         _DISABLED_BUILTIN_TOOLS = [
             "Read", "Write", "Edit", "Bash", "Grep",
@@ -78,9 +105,7 @@ class ClaudeIntegration:
             include_partial_messages=True,
             permission_mode="bypassPermissions",
             continue_conversation=continue_conversation,
-            mcp_servers={
-                "SuperCC": supercc_server,
-            },
+            mcp_servers=mcp_servers,
             disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
         )
 
@@ -110,6 +135,13 @@ class ClaudeIntegration:
         收到 /stop 信号时立即 interrupt 并 await consume_task。
         on_start 回调在 _query_lock 拿到后立即调用（异步），用于显示 typing 等前置状态。
         """
+        try:
+            import claude_agent_sdk  # noqa: F401
+        except Exception as exc:
+            raise RuntimeError(
+                "claude-agent-sdk is required. Install with: pip install claude-agent-sdk"
+            ) from exc
+
         if self._options is None:
             raise RuntimeError(
                 "ClaudeIntegration not initialized. Call _init_options() first."
@@ -149,6 +181,12 @@ class ClaudeIntegration:
                             parsed = self._parse_message(message)
                             if parsed:
                                 await on_stream(parsed)
+                                if self._should_capture_codex(parsed):
+                                    capture_task = asyncio.create_task(
+                                        self._run_codex_capture(parsed, on_stream, t_query)
+                                    )
+                                    self._codex_capture_tasks.add(capture_task)
+                                    capture_task.add_done_callback(self._codex_capture_tasks.discard)
                     return (result_text, result_session_id, result_cost)
 
                 consume_task = asyncio.create_task(_consume())
@@ -156,6 +194,8 @@ class ClaudeIntegration:
                 # Listener：监听 stop_event，收到信号时 interrupt
                 async def _listener():
                     await self.stop_event.wait()
+                    for task in list(self._codex_capture_tasks):
+                        task.cancel()
                     await client.interrupt()
                     await consume_task
                     logger.info("[listener] stop handling done")
@@ -165,11 +205,59 @@ class ClaudeIntegration:
                     result = await consume_task
                 finally:
                     listener_task.cancel()
+                    if self._codex_capture_tasks:
+                        await asyncio.gather(*list(self._codex_capture_tasks), return_exceptions=True)
+                        self._codex_capture_tasks.clear()
             return result
 
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
+
+    def _should_capture_codex(self, msg: ClaudeMessage) -> bool:
+        if msg.tool_name != "mcp__codex__codex":
+            return False
+        try:
+            from supercc.config import get_config
+            cfg = get_config()
+            return (
+                cfg.codex.enabled
+                and cfg.codex.capture.capture_mode
+                and not self.memory_only
+            )
+        except Exception:
+            return False
+
+    async def _run_codex_capture(
+        self,
+        claude_tool_msg: ClaudeMessage,
+        on_stream: StreamCallback,
+        started_after: float,
+    ) -> None:
+        try:
+            payload = json.loads(claude_tool_msg.tool_input or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        prompt = payload.get("prompt") or ""
+        if not prompt:
+            return
+        cwd = payload.get("cwd") or self.approved_directory or "."
+        runner = CodexRunTailingRunner(
+            cwd=cwd,
+            prompt=prompt,
+            on_codex_event=on_stream,
+            started_after=started_after,
+            poll_interval=0.25,
+            find_timeout=20,
+            idle_timeout=600,
+        )
+        try:
+            await runner.run()
+        except asyncio.CancelledError:
+            runner.cancel()
+            raise
+        except Exception:
+            logger.warning("[codex_capture] failed", exc_info=True)
 
     def _parse_message(self, message) -> ClaudeMessage | None:
         """Parse SDK Message into ClaudeMessage."""

@@ -1,4 +1,4 @@
-# SuperCC 🐉
+# SuperCC 🐲
 
 ```
 ███████╗██╗  ██╗███████╗███████╗██████╗ ███████╗███████╗
@@ -97,6 +97,21 @@ supercc update
 | `/model` | 查看当前模型配置状态 |
 | `/model switch <provider>` | 切换到已配置的供应商（如 `/model switch volcano`） |
 
+### Codex 子代理
+
+| 指令 | 说明 |
+|------|------|
+| `/codex` | 查看 Codex MCP 状态 |
+| `/codex available` | 快速判断 Codex 当前是否可用 |
+| `/codex models` | 查看 Codex 可选模型 |
+| `/codex setup` | 立即写入/刷新 Claude Code 的 Codex MCP 配置 |
+
+**Codex MCP 集成**（v0.1.7+）：
+- SuperCC 自研 MCP Server（`supercc-codex-mcp-server`），直接执行 `codex exec`，结果通过 JSONL 文件 tailing 实时推送
+- 支持多个 Codex 模型：`gpt-5.5`（推荐）、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.2`
+- Legacy 模型名自动迁移：`gpt-5.5-codex` → `gpt-5.5`
+- Claude Code 对话中自动识别 Codex/GPT-5.5 相关需求，调用 MCP 工具执行
+
 ### 项目管理
 
 | 指令 | 说明 |
@@ -140,12 +155,27 @@ supercc update
 │                   Claude Code CLI                        │
 │              （本地执行，真正的 AI 能力）                   │
 └─────────────────────────────────────────────────────────┘
+                         │
+          ┌──────────────┴──────────────┐
+          │         Codex MCP           │
+          │   SuperCC 自研 MCP Server    │
+          │   直接执行 codex exec        │
+          │   JSONL tailing 实时推送     │
+          └─────────────────────────────┘
 ```
 
 SuperCC 充当 IM 平台和本地 Claude Code 之间的桥梁：
 - 接收飞书消息 → 转发给本地 Claude Code
 - Claude Code 回复 → 转发回飞书
 - 全程对话自动注入记忆，上下文中始终包含相关信息
+- SuperCC 自研 Codex MCP Server，Claude 在需要时通过 MCP 工具调用 Codex/GPT-5.5
+
+启用 Codex MCP 前，请先安装并登录 Codex CLI：
+
+```bash
+codex --version
+codex login
+```
 
 ---
 
