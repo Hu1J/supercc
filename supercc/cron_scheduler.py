@@ -23,9 +23,8 @@ import tempfile
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
-_CST = ZoneInfo("Asia/Shanghai")
+_CST = timezone(timedelta(hours=8))
 from pathlib import Path
 from typing import Optional
 
