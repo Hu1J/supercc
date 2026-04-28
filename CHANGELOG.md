@@ -4,14 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.1.13] - 2026-04-28
+
+### Changed
+
+- **DeepSeek 模型列表**：新增 `deepseek-v4-pro` 和 `deepseek-v4-flash`
 
 ## [0.1.12] - 2026-04-28
-
-### Fixed
-
-- **/new 指令不生效**：`_new_session_requested` 一次性消耗标志替代直接覆盖 `continue_conversation`，确保 /new 后第一条消息开启全新 CLI session
-- **上下文超限无提示**：stream 检测到 "Prompt is too long" 后增加 `/new` 提示
 
 ## [0.1.10] - 2026-04-27
 

@@ -101,10 +101,12 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.deepseek.com/anthropic",
         auth_type="bearer",
         models=[
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
             "deepseek-chat",
             "deepseek-reasoner",
         ],
-        description="DeepSeek（DeepSeek V3 / Reasoner）",
+        description="DeepSeek（V4 Pro/Flash + V3 / Reasoner）",
     ),
 
     "kimi": Provider(
