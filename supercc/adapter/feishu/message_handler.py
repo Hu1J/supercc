@@ -544,7 +544,7 @@ class MessageHandler:
                 self.approved_directory,
                 chat_id=message.chat_id if message.is_group_chat else None,
             )
-            self._init_options(continue_conversation=False)
+            self.claude._new_session_requested = True
             return HandlerResult(
                 success=True,
                 response_text=f"✅ 新会话已创建\n会话ID: {session.session_id}\n工作目录: {session.project_path}",
@@ -1196,6 +1196,7 @@ class MessageHandler:
             # 常见于 /stop 后 CLI 状态不稳或 MCP server 临时故障。
             # 自动重试最多 3 次，每次用新的 accumulator 确保 stream 状态干净。
             last_cost = 0.0
+            _stream_too_long = [False]
             for retry_round in range(3):
                 accumulator = StreamAccumulator(message.chat_id, message.message_id, self._safe_send)
 
@@ -1371,6 +1372,15 @@ class MessageHandler:
                     elif claude_msg.content:
                         logger.info(f"[stream] text: {claude_msg.content[:100]}")
                         await accumulator.add_text(claude_msg.content)
+                        _content_lower = claude_msg.content.lower()
+                        if (
+                            "too long" in _content_lower
+                            or "超出" in _content_lower
+                            or "context window" in _content_lower
+                            or "context_length" in _content_lower
+                            or "max_tokens" in _content_lower
+                        ):
+                            _stream_too_long[0] = True
 
                 response, sdk_session_id_from_query, cost = await self.claude.query(
                     prompt=full_prompt,
@@ -1385,6 +1395,12 @@ class MessageHandler:
                 # 如果这次尝试有实质内容（发了任何消息或返回了文本），认为成功，退出重试循环
                 if accumulator.sent_something or response:
                     _last_response = response or ""
+                    if _stream_too_long[0]:
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            "💡 上下文已满，发送 **/new** 可开启新会话，我会记住之前的进度。",
+                            log_reply=False,
+                        )
                     break
 
                 # 这次尝试是空结果（cost > 0 但没有任何内容），重试
@@ -1419,10 +1435,10 @@ class MessageHandler:
             if new_sid and new_sid != old_sid:
                 logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
                 self.sessions.update_sdk_session_id(session.session_id, new_sid)
-                if old_sid:  # 旧值存在才通知用户（首次建无需通知）
+                if old_sid:  # 旧值存在才通知（首次建无需通知）
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"🔄 检测到新 Session，已自动切换\n新 Session ID: `{new_sid}`",
+                        f"🔄 已切换到新 Session\nSession ID: `{new_sid}`",
                         log_reply=False,
                     )
 

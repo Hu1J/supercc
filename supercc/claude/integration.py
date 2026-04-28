@@ -47,6 +47,8 @@ class ClaudeIntegration:
         self.memory_only = memory_only
         self._options: Any = None  # 持久化的 ClaudeAgentOptions
         self._system_prompt_append: str | None = None
+        self._continue_conversation: bool = True  # 持久化
+        self._new_session_requested: bool = False  # /new 一次性标志，下一次 query 消耗
         self._query_lock = asyncio.Lock()  # 保证同一时间只有一个 query 在执行
         self.stop_event = asyncio.Event()  # /stop 信号，listener 收到后 interrupt
         self._codex_capture_tasks: set[asyncio.Task] = set()
@@ -60,13 +62,22 @@ class ClaudeIntegration:
     # -------------------------------------------------------------------------
 
     def _init_options(self, system_prompt_append: str | None = None,
-                      continue_conversation: bool = True) -> None:
+                      continue_conversation: bool | None = None) -> None:
         """
         构建持久化 ClaudeAgentOptions，供整个 worker 生命周期复用。
         system prompt 更新只需重新调用此方法。
+        _new_session_requested 标志由 /new 设置，只对下一次 query 生效，之后自动清除。
         """
         from claude_agent_sdk import ClaudeAgentOptions
         from supercc.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
+
+        # 一次性标志消耗：/new 设置后，只对下一次 query 生效，之后清除
+        if self._new_session_requested:
+            self._new_session_requested = False
+            self._continue_conversation = False
+        elif continue_conversation is not None:
+            self._continue_conversation = continue_conversation
+        # else: 复用 self._continue_conversation（默认为 True）
 
         if self.memory_only:
             supercc_server = get_memory_only_mcp_server()
@@ -104,7 +115,7 @@ class ClaudeIntegration:
             # 显式指定 cli_path 在 Windows 上会导致 initialize() 超时。
             include_partial_messages=True,
             permission_mode="bypassPermissions",
-            continue_conversation=continue_conversation,
+            continue_conversation=self._continue_conversation,
             mcp_servers=mcp_servers,
             disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
         )
