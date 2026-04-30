@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-04-30
+
+### Fixed
+
+- **poll_skill_changes 报 "Bot can NOT be out of chat"**：`_get_active_chat_id()` SQL 加 `project_path` 过滤，解决夸项目串台导致的 chat_id 张冠李戴；发送失败后 `_invalidate_chat_id()` 兜底清理失效 chat_id
+
 ## [0.1.14] - 2026-04-28
 
 ### Fixed
