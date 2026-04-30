@@ -34,15 +34,18 @@ from supercc.adapter.feishu.client import FeishuClient
 
 
 def _get_active_chat_id(data_dir: str) -> str | None:
-    """Get the most recent active session's chat_id."""
+    """Get the most recent active session's chat_id for this project."""
     db_path = SESSIONS_DB_PATH
     if not os.path.exists(db_path):
         return None
+    # project_path 是 data_dir 的父目录（data_dir = {project}/.supercc）
+    project_path = str(Path(data_dir).resolve().parent)
     try:
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
+                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL AND project_path = ? ORDER BY last_used DESC LIMIT 1",
+                (project_path,),
             ).fetchone()
             return row["chat_id"] if row else None
     except Exception:

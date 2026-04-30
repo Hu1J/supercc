@@ -10,11 +10,14 @@ import asyncio
 import json
 import logging
 import shutil
+import sqlite3
 import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Awaitable
+
+from supercc.config import SESSIONS_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +353,19 @@ async def poll_skill_changes_and_notify(
             await send_to_feishu(chat_id, msg)
         except Exception as e:
             logger.warning(f"[poll_skill_changes] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
+            # 清除 sessions.db 中该 chat_id，避免无限重试
+            _invalidate_chat_id(chat_id)
+
+
+def _invalidate_chat_id(chat_id: str) -> None:
+    """清除 sessions.db 中指定 chat_id，避免 poll 无限重试失败."""
+    try:
+        with sqlite3.connect(SESSIONS_DB_PATH) as conn:
+            conn.execute("UPDATE sessions SET chat_id = NULL WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            logger.info(f"[poll_skill_changes] invalidated stale chat_id={chat_id!r}")
+    except Exception:
+        pass  # 非关键路径，失败不影响主流程
 
 
 async def trigger_skill_review(
