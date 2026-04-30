@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
+from pathlib import Path
 from typing import Optional
 
 from claude_agent_sdk import tool
@@ -61,19 +63,17 @@ def _get_feishu_client() -> "FeishuClient":
     )
 
 
-def _get_session_manager() -> "SessionManager":
-    """延迟初始化 SessionManager。"""
-    from supercc.config import resolve_config_path
-    from supercc.claude.session_manager import SessionManager
-    _, _ = resolve_config_path()
-    return SessionManager(db_path=SESSIONS_DB_PATH)
-
-
 def _get_chat_id() -> Optional[str]:
-    """从当前活跃会话获取 chat_id。"""
-    sm = _get_session_manager()
-    session = sm.get_active_session_by_chat_id()
-    return session.chat_id if session else None
+    """从当前活跃会话获取 chat_id（按 project_path 过滤）。"""
+    from supercc.config import get_config
+    project_path = get_config().claude.approved_directory
+    with sqlite3.connect(SESSIONS_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL AND project_path = ? ORDER BY last_used DESC LIMIT 1",
+            (project_path,),
+        ).fetchone()
+    return row["chat_id"] if row else None
 
 
 async def _send_single_file(file_path: str, chat_id: str) -> str:
@@ -154,5 +154,49 @@ async def feishu_send_file(args: dict) -> dict:
         lines.append(f"❌ 失败 {len(fail)} 个")
         for fp, err in fail:
             lines.append(f"  • {os.path.basename(fp)}: {err}")
+
+    return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+
+
+# ── chat members tool ─────────────────────────────────────────────────────────
+
+FEISHU_CHAT_MEMBERS_GUIDE = """
+【飞书群聊艾特】当需要艾特群里的某个用户时，调用 mcp__SuperCC__GetChatMembers()，MCP 自动从当前会话获取 chat_id，返回群内所有成员的 mention 格式。
+"""
+
+
+@tool(
+    "GetChatMembers",
+    "获取当前飞书群的所有成员及其 mention 格式。入参为空，MCP 自动从当前会话获取 chat_id。"
+    "返回成员列表，每项包含 name（用户名）和 mention（飞书 mention 标签）。"
+    "当需要艾特群友时，先调用此工具获取正确格式。",
+    {},
+)
+async def get_chat_members(args: dict) -> dict:
+    """获取当前群的成员列表及 mention 格式。"""
+    chat_id = _get_chat_id()
+    if not chat_id:
+        return {
+            "content": [{"type": "text", "text": "未找到活跃飞书群会话，请先在群聊里发一条消息"}],
+            "is_error": True,
+        }
+
+    feishu = _get_feishu_client()
+    members = await feishu.get_chat_members(chat_id)
+    if not members:
+        return {
+            "content": [{"type": "text", "text": "无法获取群成员列表，可能 bot 未加入该群"}],
+            "is_error": True,
+        }
+
+    lines = ["群成员列表："]
+    for m in members:
+        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+        name = getattr(m, "name", "") or getattr(m, "member_id", "") or str(m)
+        if member_id and name:
+            mention = f"<at user_id=\"{member_id}\">{name}</at>"
+            lines.append(f"  {name}: {mention}")
+        else:
+            lines.append(f"  {name or str(m)}")
 
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}

@@ -730,3 +730,27 @@ class FeishuClient:
         except Exception as e:
             logger.warning(f"get_chat_history error: {e}")
             return []
+
+    async def get_chat_members(self, chat_id: str) -> list[dict]:
+        """Fetch members of a group chat via Feishu API.
+
+        Returns a list of member dicts with keys: member_id, name, tenant_key, etc.
+        """
+        import lark_oapi as lark
+        client = self._get_client()
+        request = (
+            lark.im.v1.ListMemberRequest.builder()
+            .chat_id(chat_id)
+            .build()
+        )
+        try:
+            resp = await asyncio.to_thread(client.im.v1.chat_member.list, request)
+            if not resp.success():
+                logger.warning(f"get_chat_members failed: code={resp.code} msg={getattr(resp, 'msg', '')}")
+                return []
+            items = resp.data.items if resp.data and hasattr(resp.data, 'items') else []
+            logger.debug(f"[CHAT_MEMBERS][API] chat_id={chat_id} returned {len(items)} members")
+            return items
+        except Exception as e:
+            logger.warning(f"get_chat_members error: {e}")
+            return []

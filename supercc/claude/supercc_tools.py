@@ -16,7 +16,7 @@ from supercc.claude.memory_tools import (
     memory_list_proj,
     memory_search_proj,
 )
-from supercc.claude.feishu_file_tools import feishu_send_file
+from supercc.claude.feishu_file_tools import feishu_send_file, get_chat_members
 from supercc.claude.cron_tools import (
     cron_create,
     cron_list,
@@ -49,6 +49,7 @@ def get_supercc_mcp_server():
             memory_list_proj,
             memory_search_proj,
             feishu_send_file,
+            get_chat_members,
             cron_create,
             cron_list,
             cron_delete,
