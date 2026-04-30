@@ -566,6 +566,29 @@ class MessageHandler:
                 await self._safe_send(message.chat_id, message.message_id, "暂无活跃会话")
                 return HandlerResult(success=True)
 
+            # 获取当前模型信息
+            try:
+                from supercc.claude.model_config import get_active_model
+                model_entry = get_active_model()
+                model_provider = model_entry.name if model_entry else "未知"
+                model_id = model_entry.env.ANTHROPIC_MODEL if model_entry else "未知"
+            except Exception:
+                model_provider = "未知"
+                model_id = "未知"
+
+            # 获取 Git 分支
+            try:
+                import subprocess
+                branch = subprocess.check_output(
+                    ["git", "branch", "--show-current"],
+                    text=True,
+                    cwd=session.project_path,
+                ).strip()
+                if not branch:
+                    branch = "(无分支)"
+            except Exception:
+                branch = "无分支"
+
             # 检查是否有新版本
             title = f"🐲龙王 **SuperCC v{__version__}**"
             try:
@@ -607,6 +630,9 @@ class MessageHandler:
                                 f"| 会话ID | `{sdk_sid}` |\n"
                                 f"| 消息数 | {session.message_count} |\n"
                                 f"| 累计费用 | `${session.total_cost:.4f}` |\n"
+                                f"| 供应商 | {model_provider} |\n"
+                                f"| 模型ID | `{model_id}` |\n"
+                                f"| Git分支 | `{branch}` |\n"
                                 f"| 工作目录 | `{session.project_path}` |\n"
                                 f"| 项目技能数 | {project_skills} |\n"
                                 f"| 全局技能数 | {global_skills} |"
