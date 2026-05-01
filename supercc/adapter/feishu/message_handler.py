@@ -523,6 +523,27 @@ class MessageHandler:
             )
         )
 
+        # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
+        if message.is_group_chat and message.chat_id:
+            try:
+                members = await self.feishu.get_chat_members(message.chat_id)
+                if members:
+                    lines = [
+                        "【群聊 @mention 规则】每次回复时，必须在末尾 mention 所有相关用户（发送者及被提及者）。使用格式：<at user_id=\"open_id\">姓名</at>。不得遗漏。",
+                    ]
+                    for m in members:
+                        if isinstance(m, dict):
+                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                            name = m.get("name") or m.get("bot_name", "")
+                        else:
+                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                            name = getattr(m, "name", None) or ""
+                        if member_id and name:
+                            lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
+                    system_prompt_append += "\n".join(lines) + "\n"
+            except Exception as ex:
+                logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
+
         # 确保 options 已初始化
         self._init_options(system_prompt_append)
 
