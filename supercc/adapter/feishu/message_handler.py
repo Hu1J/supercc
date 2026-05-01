@@ -427,12 +427,15 @@ class MessageHandler:
         self,
         system_prompt_append: str | None = None,
         continue_conversation: bool = True,
+        message: "IncomingMessage | None" = None,
     ) -> None:
         """
         初始化/更新持久化 options。
         system prompt 更新只需重新调用此方法。
+        include_feishu_tools=True 时注册飞书 MCP 工具（FeishuSendFile、GetChatMembers）。
         """
-        self.claude._init_options(system_prompt_append, continue_conversation)
+        include_feishu = getattr(message, "domain", None) == "feishu" if message else True
+        self.claude._init_options(system_prompt_append, continue_conversation, include_feishu)
 
     async def _worker_loop(self) -> None:
         """串行出队并处理消息。"""
@@ -545,7 +548,7 @@ class MessageHandler:
                 logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
 
         # 确保 options 已初始化
-        self._init_options(system_prompt_append)
+        self._init_options(system_prompt_append, message=message)
 
         await self._run_query(message, session)
 

@@ -62,7 +62,8 @@ class ClaudeIntegration:
     # -------------------------------------------------------------------------
 
     def _init_options(self, system_prompt_append: str | None = None,
-                      continue_conversation: bool | None = None) -> None:
+                      continue_conversation: bool | None = None,
+                      include_feishu_tools: bool = True) -> None:
         """
         构建持久化 ClaudeAgentOptions，供整个 worker 生命周期复用。
         system prompt 更新只需重新调用此方法。
@@ -80,9 +81,9 @@ class ClaudeIntegration:
         # else: 复用 self._continue_conversation（默认为 True）
 
         if self.memory_only:
-            supercc_server = get_memory_only_mcp_server()
+            supercc_server = get_memory_only_mcp_server(include_feishu=False)
         else:
-            supercc_server = get_supercc_mcp_server()
+            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu_tools)
 
         mcp_servers = {
             "SuperCC": supercc_server,

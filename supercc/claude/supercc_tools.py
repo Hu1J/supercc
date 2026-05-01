@@ -33,55 +33,55 @@ from supercc.claude.model_tools import (
 )
 
 
-def get_supercc_mcp_server():
+def get_supercc_mcp_server(include_feishu: bool = True):
+    tools = [
+        memory_add_user,
+        memory_delete_user,
+        memory_update_user,
+        memory_list_user,
+        memory_search_user,
+        memory_add_proj,
+        memory_delete_proj,
+        memory_update_proj,
+        memory_list_proj,
+        memory_search_proj,
+        cron_create,
+        cron_list,
+        cron_delete,
+        cron_pause,
+        cron_resume,
+        cron_trigger,
+        cron_logs,
+        skill_search,
+        list_models,
+        set_model_tool,
+    ]
+    if include_feishu:
+        tools.extend([feishu_send_file, get_chat_members])
     return create_sdk_mcp_server(
         name="SuperCC",
         version="1.0.0",
-        tools=[
-            memory_add_user,
-            memory_delete_user,
-            memory_update_user,
-            memory_list_user,
-            memory_search_user,
-            memory_add_proj,
-            memory_delete_proj,
-            memory_update_proj,
-            memory_list_proj,
-            memory_search_proj,
-            feishu_send_file,
-            get_chat_members,
-            cron_create,
-            cron_list,
-            cron_delete,
-            cron_pause,
-            cron_resume,
-            cron_trigger,
-            cron_logs,
-            skill_search,
-            list_models,
-            set_model_tool,
-        ],
+        tools=tools,
     )
 
 
-# 仅包含记忆相关工具的 MCP server，用于 cloud/memory 实例限制工具范围
-_MEMORY_TOOLS = [
-    memory_add_user,
-    memory_delete_user,
-    memory_update_user,
-    memory_list_user,
-    memory_search_user,
-    memory_add_proj,
-    memory_delete_proj,
-    memory_update_proj,
-    memory_list_proj,
-    memory_search_proj,
-]
-
-
-def get_memory_only_mcp_server():
+def get_memory_only_mcp_server(include_feishu: bool = False):
+    tools = [
+        memory_add_user,
+        memory_delete_user,
+        memory_update_user,
+        memory_list_user,
+        memory_search_user,
+        memory_add_proj,
+        memory_delete_proj,
+        memory_update_proj,
+        memory_list_proj,
+        memory_search_proj,
+    ]
+    if include_feishu:
+        tools.extend([feishu_send_file, get_chat_members])
     return create_sdk_mcp_server(
         name="SuperCC",
         version="1.0.0",
-        tools=_MEMORY_TOOLS,
+        tools=tools,
     )
