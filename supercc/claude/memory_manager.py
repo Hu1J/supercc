@@ -40,6 +40,8 @@ def get_memory_manager() -> "MemoryManager":
 
 
 MEMORY_SYSTEM_GUIDE = """
+【记忆系统】
+
 收到用户提问，或 CC 开始在项目上开发前，先用 mcp__SuperCC__MemorySearchProj 搜索项目记忆、用 mcp__SuperCC__MemorySearchUser 搜索用户偏好，看有没有相关信息。
 
 ## 项目记忆（按项目隔离）
