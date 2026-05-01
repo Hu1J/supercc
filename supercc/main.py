@@ -877,6 +877,62 @@ def _run_config_interactive() -> None:
                 continue
             provider = PROVIDERS[provider_id]
 
+            # ── custom 模式 ─────────────────────────────────────────────────
+            if provider_id == "custom":
+                base_url = questionary.text(
+                    "Base URL（例如 https://api.example.com/v1）",
+                    style=questionary.Style([("input", "fg:#CCCCCC")]),
+                ).ask()
+                if not base_url:
+                    print("⚠️  未提供 Base URL，已取消\n")
+                    continue
+                base_url = base_url.strip().rstrip("/")
+
+                selected_model = questionary.text(
+                    "模型 ID（例如 gpt-4、my-model）",
+                    style=questionary.Style([("input", "fg:#CCCCCC")]),
+                ).ask()
+                if not selected_model:
+                    print("⚠️  未提供模型 ID，已取消\n")
+                    continue
+                selected_model = selected_model.strip()
+
+                token = questionary.password(
+                    "API Key",
+                    style=questionary.Style([("password", "fg:#CCCCCC")]),
+                ).ask()
+                if not token:
+                    print("⚠️  未提供 API Key，已取消\n")
+                    continue
+
+                provider_name_raw = questionary.text(
+                    "供应商名称（可选，回车跳过使用默认 'custom'）",
+                    style=questionary.Style([("input", "fg:#CCCCCC")]),
+                ).ask()
+                provider_name = provider_name_raw.strip() or "custom"
+
+                import hashlib
+                model_id = f"custom-{hashlib.md5(selected_model.encode()).hexdigest()[:8]}"
+                name = selected_model
+                env = ModelEnv(
+                    ANTHROPIC_AUTH_TOKEN=token,
+                    ANTHROPIC_BASE_URL=base_url,
+                    ANTHROPIC_MODEL=selected_model,
+                )
+                added = add_model(
+                    model_id, name, f"自定义供应商: {provider_name}", env, provider_name=provider_name,
+                )
+                switch_model(model_id)
+                if not added:
+                    print(f"⚠️  模型 ID `{model_id}` 已存在，已切换到该模型\n")
+                else:
+                    print(f"\n✅ 自定义模型 **{name}** (`{model_id}`) 已添加并设为激活")
+                    print(f"   供应商: {provider_name}")
+                    print(f"   Base URL: `{base_url}`")
+                    print(f"   模型: `{selected_model}`\n")
+                continue
+            # ── 预置供应商模式 ─────────────────────────────────────────────
+
             # 2. 选模型
             model_choices = [
                 questionary.Choice(f"`{m}`", value=m)
@@ -914,7 +970,7 @@ def _run_config_interactive() -> None:
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=selected_model,
             )
-            added = add_model(model_id, name, f"供应商: {provider.name}", env)
+            added = add_model(model_id, name, f"供应商: {provider.name}", env, provider_name=provider.name)
             if not added:
                 print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换：`supercc config switch {model_id}`")
                 continue
@@ -1121,6 +1177,11 @@ def _run_config_command(args) -> None:
             if not provider:
                 available = ", ".join(f"`{p}`" for p in PROVIDERS.keys())
                 print(f"未知供应商 `{provider_id}`\n可用供应商: {available}")
+                return
+            if provider_id == "custom":
+                print("错误: 不支持 `--provider custom` 快捷方式")
+                print("用法: supercc config add <model_id>|<name>|<description>|<api_key>|<base_url>|<model>")
+                print("示例: supercc config add my-model|MyModel|自定义|gpt-4-api-key|https://api.example.com/v1|gpt-4")
                 return
 
             pos_args = raw_args.split() if raw_args else []

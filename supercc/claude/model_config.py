@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from supercc.claude.model_providers import PROVIDERS
+
 logger = logging.getLogger(__name__)
 
 import yaml
@@ -29,6 +31,7 @@ class ModelEnv:
 class ModelEntry:
     """单个模型配置条目"""
     name: str
+    provider_name: str = "custom"  # 供应商展示名，custom 为用户自定义模型
     description: str = ""
     env: ModelEnv = field(default_factory=ModelEnv)
     is_default: bool = False
@@ -65,8 +68,19 @@ def _parse_models(raw: dict) -> tuple[str, dict[str, ModelEntry]]:
             ANTHROPIC_BASE_URL=env_data.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
             ANTHROPIC_MODEL=env_data.get("ANTHROPIC_MODEL", ""),
         )
+        # 反查 base_url 对应的预置供应商名，找不到才用 "custom"
+        base_url = env_data.get("ANTHROPIC_BASE_URL", "")
+        provider_name = model_data.get("provider_name")
+        if provider_name is None:
+            provider_name = "custom"
+            for p in PROVIDERS.values():
+                if p.base_url and p.base_url == base_url:
+                    provider_name = p.name
+                    break
+
         models[model_id] = ModelEntry(
             name=model_data.get("name", model_id),
+            provider_name=provider_name,
             description=model_data.get("description", ""),
             env=env,
             is_default=model_data.get("is_default", False),
@@ -80,6 +94,7 @@ def _serialize_models(models: dict[str, ModelEntry]) -> dict:
     for model_id, entry in models.items():
         raw_models[model_id] = {
             "name": entry.name,
+            "provider_name": entry.provider_name,
             "description": entry.description,
             "is_default": entry.is_default,
             "env": {
@@ -154,7 +169,7 @@ def switch_model(model_id: str) -> bool:
     return True
 
 
-def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool:
+def add_model(model_id: str, name: str, description: str, env: ModelEnv, provider_name: str = "custom") -> bool:
     """添加新模型，返回是否成功（ID 冲突返回 False）"""
     raw = _load_yaml()
     _, models = _parse_models(raw)
@@ -164,6 +179,7 @@ def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool
 
     models[model_id] = ModelEntry(
         name=name,
+        provider_name=provider_name,
         description=description,
         env=env,
         is_default=False,
@@ -174,8 +190,8 @@ def add_model(model_id: str, name: str, description: str, env: ModelEnv) -> bool
     return True
 
 
-def update_model_env(model_id: str, env: ModelEnv) -> bool:
-    """更新已有模型的完整 env（token + model + base_url）。"""
+def update_model_env(model_id: str, env: ModelEnv, provider_name: str | None = None) -> bool:
+    """更新已有模型的完整 env（token + model + base_url）。可选更新 provider_name。"""
     raw = _load_yaml()
     _, models = _parse_models(raw)
 
@@ -183,6 +199,8 @@ def update_model_env(model_id: str, env: ModelEnv) -> bool:
         return False
 
     models[model_id].env = env
+    if provider_name is not None:
+        models[model_id].provider_name = provider_name
     raw["models"] = _serialize_models(models)
     _save_yaml(raw)
     return True
@@ -232,6 +250,15 @@ def validate_model_env(env: ModelEnv) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status == 200:
+                body = resp.read().decode("utf-8", errors="replace")
+                try:
+                    body_json = json.loads(body)
+                    if body_json.get("error"):
+                        err = body_json["error"]
+                        msg = err.get("message", err.get("type", body)) if isinstance(err, dict) else str(err)
+                        return False, f"API 返回错误：{msg}"
+                except Exception:
+                    pass
                 return True, ""
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")

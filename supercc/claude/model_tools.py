@@ -68,11 +68,14 @@ async def list_models(args: dict) -> dict:
 
     configured = []  # (provider_id, provider_name, current_model, masked_api_key, all_models, is_active)
     unconfigured = []  # (provider_id, provider_name, all_models)
+    custom_models = []  # (model_id, provider_name, model, masked_key, base_url, is_active)
 
     active_entry = get_active_model()
     active_base_url = active_entry.env.ANTHROPIC_BASE_URL if active_entry else ""
 
     for p in PROVIDERS.values():
+        if p.id == "custom":
+            continue  # custom 模型单独处理
         matched = None
         if p.base_url and p.base_url in url_to_model:
             matched = url_to_model[p.base_url]
@@ -95,6 +98,25 @@ async def list_models(args: dict) -> dict:
         else:
             unconfigured.append((p.id, p.name, p.models))
 
+    # 收集自定义模型（base_url 不匹配任何预置供应商）
+    for mid, mentry in models.items():
+        is_custom = (
+            mentry.provider_name != "custom"
+            and not any(
+                p.base_url and mentry.env.ANTHROPIC_BASE_URL == p.base_url
+                for p in PROVIDERS.values()
+            )
+        )
+        if mentry.provider_name == "custom" or is_custom:
+            custom_models.append((
+                mid,
+                mentry.provider_name,
+                mentry.env.ANTHROPIC_MODEL or "—",
+                _mask_api_key(mentry.env.ANTHROPIC_AUTH_TOKEN),
+                mentry.env.ANTHROPIC_BASE_URL,
+                mentry.env.ANTHROPIC_BASE_URL == active_base_url,
+            ))
+
     lines = ["## 🤖 模型配置\n"]
     lines.append("| 状态 | 供应商 | 当前模型 | API Key | 所有可用模型 |")
     lines.append("|------|--------|---------|---------|------------|")
@@ -105,6 +127,15 @@ async def list_models(args: dict) -> dict:
     for pid, pname, all_models in unconfigured:
         avail = " / ".join(f"`{m}`" for m in all_models)
         lines.append(f"| 📛 | {pname} | — | — | {avail} |")
+
+    if custom_models:
+        lines.append("")
+        lines.append("### 自定义模型\n")
+        lines.append("| 状态 | 供应商 | 模型 | API Key | Base URL |")
+        lines.append("|------|--------|------|---------|----------|")
+        for mid, pname, model, masked_key, base_url, is_active in custom_models:
+            mark = "✅" if is_active else "✴️"
+            lines.append(f"| {mark} | {pname} | `{model}` | `{masked_key}` | `{base_url}` |")
 
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
@@ -122,6 +153,10 @@ async def list_models(args: dict) -> dict:
 支持两种场景：
 1. 完整切换：provider + model + api_key
 2. 切换模型（同供应商）：provider + model（api_key 不变）
+3. 自定义模型：provider="custom"，必须同时提供 base_url；provider_name 可选（默认 "custom"）
+```json
+{"provider": "custom", "model": "my-model", "base_url": "https://my.api.com/v1", "api_key": "sk-xxx", "provider_name": "My Provider"}
+```
 """,
     {"config": str},
 )
@@ -157,6 +192,63 @@ async def set_model_tool(args: dict) -> dict:
     if not model:
         return {"content": [{"type": "text", "text": "model 是必填的"}], "is_error": True}
 
+    # ── custom 模式 ──────────────────────────────────────────────────────────
+    if provider_id == "custom":
+        base_url = cfg.get("base_url", "").strip()
+        if not base_url:
+            return {"content": [{"type": "text", "text": "custom 模式必须提供 base_url"}], "is_error": True}
+        if not api_key:
+            return {"content": [{"type": "text", "text": "custom 模式必须提供 api_key"}], "is_error": True}
+
+        provider_name = cfg.get("provider_name", "custom").strip() or "custom"
+        custom_model_id = f"custom-{model}"
+        env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=api_key,
+            ANTHROPIC_BASE_URL=base_url.rstrip("/"),
+            ANTHROPIC_MODEL=model,
+        )
+
+        all_models = get_all_models()
+        matched_mid = None
+        for mid, mentry in all_models.items():
+            if mentry.env.ANTHROPIC_BASE_URL == base_url.rstrip("/"):
+                matched_mid = mid
+                break
+
+        if matched_mid:
+            changed_str = f"更新自定义模型 `{model}`"
+        else:
+            added = add_model(
+                custom_model_id,
+                model,
+                f"自定义供应商: {provider_name}",
+                env,
+                provider_name=provider_name,
+            )
+            if not added:
+                return {"content": [{"type": "text", "text": f"自定义模型 `{model}` 添加失败"}], "is_error": True}
+            changed_str = f"新增自定义模型 `{model}`"
+
+        valid, err_msg = validate_model_env(env)
+        if not valid:
+            return {
+                "content": [{"type": "text", "text": f"❌ 配置无效：{err_msg}"}],
+                "is_error": True,
+            }
+
+        if matched_mid:
+            update_model_env(matched_mid, env, provider_name=provider_name)
+            switch_model(matched_mid)
+        else:
+            switch_model(custom_model_id)
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"✅ {changed_str}\n供应商：{provider_name}\n模型：`{model}`\nBase URL：{base_url}\n已激活。",
+            }]
+        }
+
+    # ── 预置供应商模式 ────────────────────────────────────────────────────────
     provider = PROVIDERS.get(provider_id)
     if not provider:
         available = ", ".join(f"`{p.id}`" for p in PROVIDERS.values())
@@ -188,7 +280,6 @@ async def set_model_tool(args: dict) -> dict:
             changed.append("API Key")
         if model:
             entry.env.ANTHROPIC_MODEL = model
-            entry.name = provider.name
             changed.append(f"模型 → `{model}`")
         env_to_validate = entry.env
     else:
@@ -201,10 +292,9 @@ async def set_model_tool(args: dict) -> dict:
                 ANTHROPIC_MODEL=model,
             ),
         )
-        added = add_model(provider_id, provider.name, provider.description, new_entry.env)
+        added = add_model(provider_id, provider.name, provider.description, new_entry.env, provider_name=provider.name)
         if not added:
             return {"content": [{"type": "text", "text": f"供应商 `{provider.name}` 添加失败（ID 可能已存在）"}], "is_error": True}
-        switch_model(provider_id)
         changed.append(f"新增供应商 `{provider.name}`")
         if model:
             changed.append(f"模型 → `{model}`")
@@ -212,11 +302,7 @@ async def set_model_tool(args: dict) -> dict:
             changed.append("API Key")
         env_to_validate = new_entry.env
 
-    # 校验前必须先写入文件（validate 失败不影响已保存的配置）
-    if matched_mid:
-        update_model_env(matched_mid, env_to_validate)
-        switch_model(matched_mid)
-
+    # 先校验，失败则不切换
     valid, err_msg = validate_model_env(env_to_validate)
     if not valid:
         return {
@@ -227,10 +313,17 @@ async def set_model_tool(args: dict) -> dict:
             "is_error": True,
         }
 
+    # 校验通过后再写入文件并切换
+    if matched_mid:
+        update_model_env(matched_mid, env_to_validate)
+        switch_model(matched_mid)
+    else:
+        switch_model(provider_id)
+
     changed_str = "、".join(changed)
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model or (models[matched_mid].env.ANTHROPIC_MODEL if matched_mid else model)}`\n已激活。"
+            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model or (env_to_validate.ANTHROPIC_MODEL if matched_mid else model)}`\n已激活。"
         }]
     }

@@ -1633,7 +1633,13 @@ class MessageHandler:
                     return HandlerResult(success=True)
 
                 # 执行切换
-                switch_model(model_id_to_switch)
+                ok = switch_model(model_id_to_switch)
+                if not ok:
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ 切换失败：未找到模型 `{model_id_to_switch}`",
+                    )
+                    return HandlerResult(success=True)
                 model = models[model_id_to_switch].env.ANTHROPIC_MODEL or "—"
                 await self._safe_send(
                     message.chat_id, message.message_id,

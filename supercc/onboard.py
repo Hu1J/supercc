@@ -91,7 +91,7 @@ def run_onboard_flow() -> bool:
                 ANTHROPIC_BASE_URL=base_url,
                 ANTHROPIC_MODEL=env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5"),
             )
-            add_model(model_id, name, description, env)
+            add_model(model_id, name, description, env, provider_name=PROVIDERS.get(matched_id, PROVIDERS["custom"]).name if matched_id != "imported" else "custom")
             switch_model(model_id)
             print("✅ 现有配置已导入为默认模型\n")
         else:
@@ -200,6 +200,77 @@ def _do_model_config_step() -> None:
         return
 
     provider = PROVIDERS[provider_id]
+
+    # ── custom 模式 ──────────────────────────────────────────────────────────
+    if provider_id == "custom":
+        base_url = questionary.text(
+            "Base URL（例如 https://api.example.com/v1）",
+            style=questionary.Style([("input", "fg:#CCCCCC")]),
+        ).ask()
+        if not base_url:
+            print("\n⚠️  未提供 Base URL，跳过模型配置\n")
+            return
+        base_url = base_url.strip().rstrip("/")
+
+        selected_model = questionary.text(
+            "模型 ID（例如 gpt-4、my-model）",
+            style=questionary.Style([("input", "fg:#CCCCCC")]),
+        ).ask()
+        if not selected_model:
+            print("\n⚠️  未提供模型 ID，跳过\n")
+            return
+        selected_model = selected_model.strip()
+
+        token = questionary.password(
+            "API Key",
+            style=questionary.Style([("password", "fg:#CCCCCC")]),
+        ).ask()
+        if not token:
+            print("\n⚠️  未提供 API Key，跳过模型配置\n")
+            return
+
+        provider_name_raw = questionary.text(
+            "供应商名称（可选，回车跳过使用默认 'custom'）",
+            style=questionary.Style([("input", "fg:#CCCCCC")]),
+        ).ask()
+        provider_name = provider_name_raw.strip() or "custom"
+
+        import hashlib
+        model_id = f"custom-{hashlib.md5(selected_model.encode()).hexdigest()[:8]}"
+        env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=token,
+            ANTHROPIC_BASE_URL=base_url,
+            ANTHROPIC_MODEL=selected_model,
+        )
+
+        from supercc.claude.model_config import validate_model_env, add_model, switch_model
+        while True:
+            valid, err_msg = validate_model_env(env)
+            if valid:
+                break
+            print(f"\n❌ API 验证失败: {err_msg}")
+            retry = questionary.confirm("是否重新输入 API Key？", default=True).ask()
+            if not retry:
+                print("\n⚠️  跳过模型配置\n")
+                return
+            token = questionary.password("API Key", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            if not token:
+                print("\n⚠️  未提供 API Key，跳过模型配置\n")
+                return
+            env.ANTHROPIC_AUTH_TOKEN = token
+
+        added = add_model(model_id, selected_model, f"自定义供应商: {provider_name}", env, provider_name=provider_name)
+        switch_model(model_id)
+        if not added:
+            print(f"\n⚠️  模型 ID `{model_id}` 已存在，已切换到该模型\n")
+        else:
+            print(f"\n✅ 自定义模型配置已保存")
+        print(f"   供应商: {provider_name}")
+        print(f"   Base URL: {base_url}")
+        print(f"   模型: `{selected_model}`\n")
+        return
+    # ── 预置供应商模式 ───────────────────────────────────────────────────────
+
     auth_display = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}.get(provider.auth_type, provider.auth_type)
 
     # Step 2: 输入 API Key
@@ -266,7 +337,7 @@ def _do_model_config_step() -> None:
     description = f"供应商: {provider.name}"
 
     from supercc.claude.model_config import add_model, switch_model
-    add_model(model_id, name, description, env)
+    add_model(model_id, name, description, env, provider_name=provider.name)
     switch_model(model_id)  # 设置为激活模型，同步写入 Claude 内部配置
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.name}")
