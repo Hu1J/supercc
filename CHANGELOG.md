@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-05-01
+
+### Added
+
+- **自定义模型支持**：SetModel MCP / supercc config add / onboard 三个入口均支持配置自定义模型（base_url + model_id + api_key + provider_name 可选）
+- **AGENTS.md 注入**：读取 `{project_path}/AGENTS.md` 注入到 system prompt 最前面，定义 CC 人格和工作职能
+
+### Fixed
+
+- **validate_model_env**：HTTP 200 时检查 body 里的 error 字段（修复 API 返回 200 但认证失败的问题）
+- **SetModel validate 顺序**：先 validate 再 save+switch（之前先写 settings.json 再校验，失败时 Claude Code 已用无效配置）
+- **entry.name 覆盖**：更新已有预置模型时不再覆盖用户自定义的名称
+- **SetModel 响应消息**：使用更新后的 env 而非已加载的旧 models dict
+- **Feishu /model switch**：检查 switch_model 返回值，失败时显示错误消息
+- **provider_name 传递**：所有 add_model 调用点补传 provider_name（预置供应商分支全部修复）
+
 ## [0.1.19] - 2026-05-01
 
 ### Fixed
