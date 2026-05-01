@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-05-01
+
+### Added
+
+- **群聊 @mention 规则**：群聊时（is_group_chat）自动获取成员列表，注入【群聊 @mention 规则】到 system prompt，要求 CC 每次回复必须 mention 相关用户（发送者及被提及者）
+- **GetChatMembers 支持机器人成员**：修复 bots endpoint URI（`/open-apis/im/v1/chats/:open_chat_id/members/bots`）和 token 类型（TENANT），同时返回人类 + 机器人成员
+
 ## [0.1.15] - 2026-04-30
 
 ### Fixed
