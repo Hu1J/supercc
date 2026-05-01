@@ -427,15 +427,12 @@ class MessageHandler:
         self,
         system_prompt_append: str | None = None,
         continue_conversation: bool = True,
-        message: "IncomingMessage | None" = None,
     ) -> None:
         """
         初始化/更新持久化 options。
         system prompt 更新只需重新调用此方法。
-        channel 由 message.domain 决定，透传给 integration._init_options。
         """
-        channel = getattr(message, "domain", "feishu") if message else "feishu"
-        self.claude._init_options(system_prompt_append, continue_conversation, channel=channel)
+        self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
 
     async def _worker_loop(self) -> None:
         """串行出队并处理消息。"""
@@ -548,7 +545,7 @@ class MessageHandler:
                 logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
 
         # 确保 options 已初始化
-        self._init_options(system_prompt_append, message=message)
+        self._init_options(system_prompt_append)
 
         await self._run_query(message, session)
 
