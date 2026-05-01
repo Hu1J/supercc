@@ -511,8 +511,20 @@ class MessageHandler:
         project_path = session.project_path if session else self.approved_directory
         self._current_project_path = project_path  # 供 stream_callback 使用
 
+        # 读取 AGENTS.md（如存在）注入到 system prompt 最前面
+        agents_md_path = os.path.join(project_path, "AGENTS.md")
+        agents_md_content = ""
+        if os.path.isfile(agents_md_path):
+            try:
+                with open(agents_md_path, encoding="utf-8") as f:
+                    agents_md_content = f.read().strip()
+            except Exception:
+                pass
+
         codex_status = get_codex_mcp_status(self.config.codex)
         system_prompt_append = (
+            (agents_md_content + "\n\n") if agents_md_content else ""
+        ) + (
             MEMORY_SYSTEM_GUIDE
             + FEISHU_FILE_GUIDE
             + CRON_GUIDE
