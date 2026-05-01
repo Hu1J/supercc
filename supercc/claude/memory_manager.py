@@ -54,6 +54,7 @@ mcp__SuperCC__MemoryListProj — 列出项目记忆
 mcp__SuperCC__MemorySearchProj — 搜索项目记忆
 
 ## 用户偏好（按飞书用户隔离，MCP 自动从当前会话获取 user_open_id）
+记录用户本人的信息：工作风格、语言偏好、沟通习惯等。与项目代码/工具/规范无关的属于这里。如果不确定，就问用户。
 mcp__SuperCC__MemoryAddUser — 新增用户偏好（title + content + keywords 三样必填，关键词逗号分隔）
 mcp__SuperCC__MemoryUpdateUser — 更新用户偏好（id + title + content + keywords）
 mcp__SuperCC__MemoryDeleteUser — 删除用户偏好（只需 id）
