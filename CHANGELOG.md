@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-05-01
+
+### Fixed
+
+- **inject_context() docstring** 与实际行为一致
+
+## [0.1.18] - 2026-05-01
+
+### Added
+
+- **用户记忆预检索注入**：CC运行前根据消息内容搜索相关偏好（limit=3）
+
 ## [0.1.17] - 2026-05-01
 
 ### Added
