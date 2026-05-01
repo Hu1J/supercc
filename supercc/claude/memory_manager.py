@@ -42,7 +42,7 @@ def get_memory_manager() -> "MemoryManager":
 MEMORY_SYSTEM_GUIDE = """
 【记忆系统】
 
-收到用户提问前，先用 mcp__SuperCC__MemorySearchProj 和 MemorySearchUser 搜索相关记忆。
+收到用户提问后，先用 mcp__SuperCC__MemorySearchProj 和 MemorySearchUser 搜索相关记忆。
 
 ## 项目记忆
 mcp__SuperCC__MemoryAddProj/MemoryDeleteProj/MemoryUpdateProj/MemoryListProj/MemorySearchProj
