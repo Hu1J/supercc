@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-05-01
+
+### Added
+
+- **记忆系统提示词强化**：用户偏好描述区分边界，做梦时自动纠正放错类别的记忆
+- **Feishu MCP 工具热插拔**：channel="feishu" 时才注册飞书工具（FeishuSendFile、GetChatMembers）
+
+### Changed
+
+- **MEMORY_SYSTEM_GUIDE**：精简描述，用户偏好改为 CC 主动按需搜索
+- **CRON_GUIDE/CODEX_GUIDE/FEISHU_FILE_GUIDE**：精简冗余描述
+- `integration._init_options()` 接收 `channel` 参数，支持多通道工具热插拔
+
+### Fixed
+
+- `inject_context()` docstring 与实际行为一致（用户偏好不注入，项目记忆仅最新 5 条 title）
+
 ## [0.1.16] - 2026-05-01
 
 ### Added
