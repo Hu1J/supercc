@@ -66,6 +66,7 @@ def _get_feishu_client() -> "FeishuClient":
 def _get_chat_id() -> Optional[str]:
     """从当前活跃会话获取 chat_id（按 project_path 过滤）。"""
     from supercc.config import get_config
+
     project_path = get_config().claude.approved_directory
     with sqlite3.connect(SESSIONS_DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -191,8 +192,15 @@ async def get_chat_members(args: dict) -> dict:
 
     lines = ["群成员列表："]
     for m in members:
-        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
-        name = getattr(m, "name", "") or getattr(m, "member_id", "") or str(m)
+        # Support both user dict (member_id/name) and bot dict (bot_id/bot_name)
+        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", None) or m.get("bot_id") if isinstance(m, dict) else None
+        name = getattr(m, "name", None) or m.get("bot_name") if isinstance(m, dict) else None
+        if isinstance(m, dict):
+            member_id = member_id or m.get("bot_id")
+            name = name or m.get("bot_name")
+        else:
+            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+            name = getattr(m, "name", "") or ""
         if member_id and name:
             mention = f"<at user_id=\"{member_id}\">{name}</at>"
             lines.append(f"  {name}: {mention}")

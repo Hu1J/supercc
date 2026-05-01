@@ -731,26 +731,57 @@ class FeishuClient:
             logger.warning(f"get_chat_history error: {e}")
             return []
 
-    async def get_chat_members(self, chat_id: str) -> list[dict]:
-        """Fetch members of a group chat via Feishu API.
+    async def get_chat_members(self, chat_id: str) -> list:
+        """Fetch all members of a group chat (humans + bots) via Feishu API.
 
-        Returns a list of member dicts with keys: member_id, name, tenant_key, etc.
+        Returns a list of member objects. Human members are lark ListMember objects with
+        attributes: member_id, name, member_id_type, tenant_key.
+        Bot members are plain dicts with keys: bot_id, bot_name.
         """
         import lark_oapi as lark
+        import json
         client = self._get_client()
-        request = (
-            lark.im.v1.ListMemberRequest.builder()
-            .chat_id(chat_id)
-            .build()
-        )
+        all_members = []
+
+        # 1. Human members
         try:
-            resp = await asyncio.to_thread(client.im.v1.chat_member.list, request)
-            if not resp.success():
-                logger.warning(f"get_chat_members failed: code={resp.code} msg={getattr(resp, 'msg', '')}")
-                return []
-            items = resp.data.items if resp.data and hasattr(resp.data, 'items') else []
-            logger.debug(f"[CHAT_MEMBERS][API] chat_id={chat_id} returned {len(items)} members")
-            return items
+            request = (
+                lark.im.v1.GetChatMembersRequest.builder()
+                .chat_id(chat_id)
+                .member_id_type("open_id")
+                .build()
+            )
+            resp = await asyncio.to_thread(client.im.v1.chat_members.get, request)
+            if resp.success():
+                items = resp.data.items if resp.data and hasattr(resp.data, 'items') else []
+                all_members.extend(items)
+                logger.debug(f"[CHAT_MEMBERS] humans={len(items)}")
+            else:
+                logger.warning(f"[CHAT_MEMBERS] humans failed: code={resp.code} msg={resp.msg}")
         except Exception as e:
-            logger.warning(f"get_chat_members error: {e}")
-            return []
+            logger.warning(f"[CHAT_MEMBERS] humans error: {e}")
+
+        # 2. Bot members (use TENANT token only — USER token may lack permission)
+        try:
+            bot_request = (
+                lark.im.v1.BaseRequest.builder()
+                .http_method(lark.core.http.HttpMethod.GET)
+                .uri("/open-apis/im/v1/chats/:open_chat_id/members/bots")
+                .paths({"open_chat_id": chat_id})
+                .token_types({lark.core.enum.AccessTokenType.TENANT})
+                .build()
+            )
+            bot_resp = await asyncio.to_thread(client.request, bot_request)
+            if bot_resp.success():
+                raw = bot_resp.raw.content if bot_resp.raw else None
+                if raw:
+                    body = json.loads(raw)
+                    bots = body.get("data", {}).get("items", []) if isinstance(body, dict) else []
+                    all_members.extend(bots)
+                    logger.debug(f"[CHAT_MEMBERS] bots={len(bots)}")
+            else:
+                logger.warning(f"[CHAT_MEMBERS] bots failed: code={bot_resp.code} msg={bot_resp.msg}")
+        except Exception as e:
+            logger.warning(f"[CHAT_MEMBERS] bots error: {e}")
+
+        return all_members
