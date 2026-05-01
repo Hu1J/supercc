@@ -63,11 +63,12 @@ class ClaudeIntegration:
 
     def _init_options(self, system_prompt_append: str | None = None,
                       continue_conversation: bool | None = None,
-                      include_feishu_tools: bool = True) -> None:
+                      channel: str = "feishu") -> None:
         """
         构建持久化 ClaudeAgentOptions，供整个 worker 生命周期复用。
         system prompt 更新只需重新调用此方法。
         _new_session_requested 标志由 /new 设置，只对下一次 query 生效，之后自动清除。
+        channel: 当前聊天频道（feishu/dingtalk/wechat 等），用于决定注册哪些 MCP 工具。
         """
         from claude_agent_sdk import ClaudeAgentOptions
         from supercc.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
@@ -80,10 +81,11 @@ class ClaudeIntegration:
             self._continue_conversation = continue_conversation
         # else: 复用 self._continue_conversation（默认为 True）
 
+        include_feishu = channel == "feishu"
         if self.memory_only:
             supercc_server = get_memory_only_mcp_server()
         else:
-            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu_tools)
+            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu)
 
         mcp_servers = {
             "SuperCC": supercc_server,

@@ -432,10 +432,10 @@ class MessageHandler:
         """
         初始化/更新持久化 options。
         system prompt 更新只需重新调用此方法。
-        include_feishu_tools=True 时注册飞书 MCP 工具（FeishuSendFile、GetChatMembers）。
+        channel 由 message.domain 决定，透传给 integration._init_options。
         """
-        include_feishu = getattr(message, "domain", None) == "feishu" if message else True
-        self.claude._init_options(system_prompt_append, continue_conversation, include_feishu)
+        channel = getattr(message, "domain", "feishu") if message else "feishu"
+        self.claude._init_options(system_prompt_append, continue_conversation, channel=channel)
 
     async def _worker_loop(self) -> None:
         """串行出队并处理消息。"""
