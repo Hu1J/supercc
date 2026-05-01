@@ -16,7 +16,7 @@ MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
 
 
 FEISHU_FILE_GUIDE = """
-【飞书文件发送】当用户要求发送文件/图片/截图/压缩包时，调用 mcp__SuperCC__FeishuSendFile(file_paths: list[str])，MCP 自动从当前会话获取 chat_id。
+【飞书文件】用户要求发送文件/图片/截图时，调用 mcp__SuperCC__FeishuSendFile(file_paths: list[str])。
 """
 
 

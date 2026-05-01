@@ -7,18 +7,8 @@ from typing import Optional
 from claude_agent_sdk import tool
 
 CRON_GUIDE = """
-【定时任务】工具前缀: mcp__SuperCC__
-
-当用户要求创建、查看、管理定时任务时，使用以下 MCP 工具：
-
-## 定时任务工具
-mcp__SuperCC__CronCreate — 创建定时任务（自动发送到当前飞书会话）
-mcp__SuperCC__CronList — 列出所有定时任务
-mcp__SuperCC__CronDelete — 删除定时任务
-mcp__SuperCC__CronPause — 暂停定时任务
-mcp__SuperCC__CronResume — 恢复被暂停的定时任务
-mcp__SuperCC__CronTrigger — 立即触发一次定时任务
-mcp__SuperCC__CronLogs — 查看定时任务的执行日志（返回文件路径，需 CC 自行读取文件生成摘要）
+【定时任务】
+需要创建/查看/管理定时任务时，用 mcp__SuperCC__CronCreate/CronList/CronDelete/CronPause/CronResume/CronTrigger/CronLogs。
 """
 
 from supercc.cron_scheduler import (

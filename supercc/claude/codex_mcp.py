@@ -20,17 +20,10 @@ CODEX_SUPPORTED_MODELS = [
     ("gpt-5.2", "兼容保守"),
 ]
 CODEX_MCP_GUIDE_TEMPLATE = """
-【Codex 子代理】
-当前状态：{availability}
-
-当用户明确提到 Codex、GPT-5.5、OpenAI，或要求使用第二个代码代理进行实现、审查、调试、架构分析时，调用 Codex MCP 工具。
-
-用法：
-- 新任务调用 codex 工具，工作目录使用当前项目目录，优先使用 {model}。
-- 如果用户明确指定 Codex 模型（如 gpt-5.5、gpt-5.4、gpt-5.4-mini、gpt-5.2），调用 codex 工具时必须把该值写入 model 参数。
-- 当用户要求设计方案、代码审查/review、找 bug 或排查问题，且 Codex 当前可用时，在开始普通分析或调用非 Codex 工具前，先用一句话询问用户是否要调用 Codex 协助；用户确认后再调用 codex 工具。
-- 普通聊天、简单问答、SuperCC 内置记忆/文件/定时任务不要调用 Codex。
-- Codex 返回后，汇总它的结论、修改内容和验证结果给用户。
+【Codex】
+用户要求代码审查/实现/调试/架构分析时，用 mcp__SuperCC__Codex（当前可用：{availability}）。
+优先使用 {model}，用户指定模型时在调用时传入 model 参数。
+普通聊天/简单问答/记忆/文件/定时任务不要调用 Codex。
 """
 
 
