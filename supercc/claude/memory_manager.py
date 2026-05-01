@@ -55,6 +55,7 @@ mcp__SuperCC__MemorySearchProj — 搜索项目记忆
 
 ## 用户偏好（按飞书用户隔离，MCP 自动从当前会话获取 user_open_id）
 记录用户本人的信息：工作风格、语言偏好、沟通习惯等。与项目代码/工具/规范无关的属于这里。如果不确定，就问用户。
+**注意：用户偏好不自动注入，收到消息时主动搜索相关条目**，用 `mcp__SuperCC__MemorySearchUser` 按关键词查询，用 `mcp__SuperCC__MemoryListUser` 查看全部。
 mcp__SuperCC__MemoryAddUser — 新增用户偏好（title + content + keywords 三样必填，关键词逗号分隔）
 mcp__SuperCC__MemoryUpdateUser — 更新用户偏好（id + title + content + keywords）
 mcp__SuperCC__MemoryDeleteUser — 删除用户偏好（只需 id）
@@ -357,20 +358,6 @@ class MemoryManager:
         版号使 CC 下一条消息自动获取最新偏好。
         """
         parts: list[str] = []
-
-        prefs = self.get_preferences_by_user(user_open_id)
-        if prefs:
-            lines = ["\n【用户偏好】", "---"]
-            for p in prefs:
-                lines.append(f"**{p.title}**")
-                content = p.content
-                if len(content) > 200:
-                    content = content[:200] + "…"
-                lines.append(content)
-                lines.append("")
-            latest = max((p.updated_at for p in prefs if p.updated_at), default="unknown")
-            lines.append(f"\n__PREFS_VERSION:{latest}__")
-            parts.append("\n".join(lines))
 
         if project_path:
             mems = self.get_project_memories(project_path)[:5]
