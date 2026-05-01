@@ -339,10 +339,25 @@ class MemoryManager:
         project_path: str | None = None,
     ) -> str:
         """
-        注入项目记忆到 prompt。项目记忆：最新 5 条，仅 title。
-        用户偏好不自动注入，由 CC 主动搜索。
+        注入用户偏好和项目记忆到 prompt。
+        用户偏好：最新 50 条，每条 content 截断 200 字。
+        项目记忆：最新 5 条，仅 title。
         """
         parts: list[str] = []
+
+        # 用户偏好：全量，最新 50 条
+        prefs = self.get_preferences_by_user(user_open_id)
+        if prefs:
+            prefs = prefs[:50]
+            lines = ["\n【用户偏好】", "---"]
+            for p in prefs:
+                lines.append(f"**{p.title}**")
+                content = p.content
+                if len(content) > 200:
+                    content = content[:200] + "…"
+                lines.append(content)
+                lines.append("")
+            parts.append("\n".join(lines))
 
         if project_path:
             mems = self.get_project_memories(project_path)[:5]

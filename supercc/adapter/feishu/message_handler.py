@@ -523,26 +523,6 @@ class MessageHandler:
             )
         )
 
-        # 预检索用户记忆：CC 运行前，根据当前消息内容搜索相关用户偏好并注入
-        if message.content:
-            try:
-                user_mem_results = self.memory_manager.search_preferences(
-                    message.content,
-                    user_open_id=message.user_open_id,
-                    limit=3,
-                )
-                if user_mem_results:
-                    lines = ["\n【相关用户偏好】"]
-                    for p in user_mem_results:
-                        content = getattr(p, "content", "") if hasattr(p, "content") else p.get("content", "")
-                        title = getattr(p, "title", "") if hasattr(p, "title") else p.get("title", "")
-                        if len(content) > 150:
-                            content = content[:150] + "…"
-                        lines.append(f"- **{title}**：{content}")
-                    system_prompt_append += "\n".join(lines) + "\n"
-            except Exception as ex:
-                logger.warning(f"[USER_MEMORY_PRELOAD] failed: {ex}")
-
         # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
         if message.is_group_chat and message.chat_id:
             try:
