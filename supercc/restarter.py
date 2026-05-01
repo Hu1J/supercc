@@ -274,41 +274,34 @@ def _start_bridge(project_path: str, package: str = "supercc", timeout: float = 
 
     stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
     stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
-    try:
-        # Hardcode supercc — migration is done, pip package name no longer matters here
-        proc = subprocess.Popen(
-            ["supercc", "start"],
-            cwd=project_path,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_log,
-            stderr=stderr_log,
-            start_new_session=True,
-        )
+    # Hardcode supercc — migration is done, pip package name no longer matters here
+    proc = subprocess.Popen(
+        ["supercc", "start"],
+        cwd=project_path,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout_log,
+        stderr=stderr_log,
+        start_new_session=True,
+    )
+    # 立即关闭 parent 侧句柄，交给 OS 异步释放
+    # Windows 上旧进程被 kill 后句柄释放较慢，等待会导致 "file in use"
+    stdout_log.close()
+    stderr_log.close()
 
-        # Wait for pid file to appear
-        start = time.time()
-        while time.time() - start < timeout:
-            pid = _read_pid(pid_file)
-            if pid is not None:
-                stdout_log.close()
-                stderr_log.close()
-                return pid
-            # Check if process crashed
-            if proc.poll() is not None:
-                stdout_log.close()
-                stderr_log.close()
-                raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
-            time.sleep(0.2)
+    # Wait for pid file to appear
+    start = time.time()
+    while time.time() - start < timeout:
+        pid = _read_pid(pid_file)
+        if pid is not None:
+            return pid
+        # Check if process crashed
+        if proc.poll() is not None:
+            raise StartupTimeoutError(f"SuperCC process exited unexpectedly during startup")
+        time.sleep(0.2)
 
-        stdout_log.close()
-        stderr_log.close()
-        raise StartupTimeoutError(
-            f"PID file did not appear within {timeout}s after starting SuperCC"
-        )
-    except Exception:
-        stdout_log.close()
-        stderr_log.close()
-        raise
+    raise StartupTimeoutError(
+        f"PID file did not appear within {timeout}s after starting SuperCC"
+    )
 
 
 # ---------------------------------------------------------------------------
