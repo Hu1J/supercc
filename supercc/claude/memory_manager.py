@@ -347,12 +347,8 @@ class MemoryManager:
         project_path: str | None = None,
     ) -> str:
         """
-        注入用户偏好和项目记忆到 prompt。
-
-        用户偏好：全量返回，末尾带版号标记 __PREFS_VERSION:timestamp__
-        项目记忆：最新 5 条，仅 title
-
-        版号使 CC 下一条消息自动获取最新偏好。
+        注入项目记忆到 prompt。项目记忆：最新 5 条，仅 title。
+        用户偏好不自动注入，由 CC 主动搜索。
         """
         parts: list[str] = []
 
