@@ -188,21 +188,34 @@ class SessionWorker:
         self.queue: asyncio.Queue[IncomingMessage] = asyncio.Queue()
         self.task: asyncio.Task | None = None
         self.handler = handler
+
+        # 根据 session_mode 决定工作目录
+        if handler.config.claude.session_mode == "isolated":
+            # 每个 chat_id 独立目录
+            self._cwd = os.path.join(
+                handler.data_dir, "sessions",
+                chat_id.replace(":", "_")
+            )
+            os.makedirs(self._cwd, exist_ok=True)
+        else:
+            # 共享项目目录
+            self._cwd = handler.approved_directory
+
         self.claude = ClaudeIntegration(
             cli_path=handler.config.claude.cli_path,
             max_turns=50,
-            approved_directory=handler.approved_directory,
+            approved_directory=self._cwd,
         )
         self.claude_memory = ClaudeIntegration(
             cli_path=handler.config.claude.cli_path,
             max_turns=5,
-            approved_directory=handler.approved_directory,
+            approved_directory=self._cwd,
             memory_only=True,
         )
         self.claude_skill = ClaudeIntegration(
             cli_path=handler.config.claude.cli_path,
             max_turns=5,
-            approved_directory=handler.approved_directory,
+            approved_directory=self._cwd,
         )
         self._running = False
         self._idle_since: float | None = None
