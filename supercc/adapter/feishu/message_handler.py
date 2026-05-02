@@ -191,11 +191,8 @@ class SessionWorker:
 
         # 根据 session_mode 决定工作目录
         if handler.config.claude.session_mode == "isolated":
-            # 每个 chat_id 独立目录
-            self._cwd = os.path.join(
-                handler.data_dir, "sessions",
-                chat_id.replace(":", "_")
-            )
+            # 每个 chat_id 独立目录，直接用 chat_id 作为目录名
+            self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
             os.makedirs(self._cwd, exist_ok=True)
         else:
             # 共享项目目录
