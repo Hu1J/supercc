@@ -790,8 +790,8 @@ class FeishuClient:
         """Check if the bot has required group chat permissions.
 
         Tests:
-        - im:message: ability to read group chat history
-        - im:chat.member:read: ability to read group member list
+        - im:message.group_msg: ability to read group chat history (ListMessageRequest)
+        - im:chat.member:read: ability to read group member list (GetChatMembersRequest)
 
         Returns:
             dict with keys:

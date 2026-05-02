@@ -546,7 +546,7 @@ class MessageHandler:
                     auth_url = perm.get("auth_url", "")
                     missing = []
                     if not perm.get("history_ok"):
-                        missing.append("读取群聊历史（im:message）")
+                        missing.append("读取群聊历史（im:message.group_msg）")
                     if not perm.get("members_ok"):
                         missing.append("读取群成员信息（im:chat.member:read）")
                     if missing:
