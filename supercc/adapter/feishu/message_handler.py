@@ -548,7 +548,7 @@ class MessageHandler:
                     if not perm.get("history_ok"):
                         missing.append("读取群聊历史（im:message.group_msg）")
                     if not perm.get("members_ok"):
-                        missing.append("读取群成员信息（im:chat.member:read）")
+                        missing.append("读取群成员信息（im:chat.members:read）")
                     if missing:
                         missing_text = "\n".join(f"- {m}" for m in missing)
                         card = {

@@ -791,7 +791,7 @@ class FeishuClient:
 
         Tests:
         - im:message.group_msg: ability to read group chat history (ListMessageRequest)
-        - im:chat.member:read: ability to read group member list (GetChatMembersRequest)
+        - im:chat.members:read: ability to read group member list (GetChatMembersRequest)
 
         Returns:
             dict with keys:
