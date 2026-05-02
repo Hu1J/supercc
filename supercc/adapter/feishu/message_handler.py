@@ -355,9 +355,14 @@ class SessionWorker:
                 # Same user in a different group — update session to point to new chat
                 h.sessions.update_chat_id(message.user_open_id, message.chat_id)
         else:
-            session = h.sessions.get_active_session(message.user_open_id)
-            if session and session.chat_id != message.chat_id:
-                h.sessions.update_chat_id(message.user_open_id, message.chat_id)
+            # P2P: use chat-specific session lookup to avoid cross-contamination with group sessions
+            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+            if session is None:
+                session = h.sessions.create_session(
+                    message.user_open_id,
+                    h.approved_directory,
+                    chat_id=message.chat_id,
+                )
 
         project_path = session.project_path if session else h.approved_directory
         h._current_project_path = project_path  # 供 stream_callback 使用
@@ -1106,6 +1111,10 @@ class MessageHandler:
             logger.debug(f"[GROUP_HISTORY][STORE] chat_id={message.chat_id} user={message.user_open_id} content={message.content!r} history_len={len(hist)}")
 
         # Commands are handled immediately — do not queue
+        # BUT in group chat, require @CC mention (skip if some other bot was mentioned)
+        if message.is_group_chat and not message.mention_bot:
+            logger.info(f"Group command without @CC mention in {message.chat_id}, skipping")
+            return HandlerResult(success=True)
         # Strip @mention prefix so '@_user_1 /git' is recognized as /git command
         content = _strip_mention_prefix(message.content)
         if content.startswith("/") and _is_command(content):
@@ -1184,7 +1193,7 @@ class MessageHandler:
                     return [int(x) for x in re.findall(r'\d+', v)]
                 return nums(latest) > nums(current)
 
-            session = self.sessions.get_active_session(message.user_open_id)
+            session = self.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
             if not session:
                 await self._safe_send(message.chat_id, message.message_id, "暂无活跃会话")
                 return HandlerResult(success=True)
