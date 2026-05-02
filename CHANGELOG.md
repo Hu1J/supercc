@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **启动时自动迁移 config.json**：修复 `detect_config()` 只检查 JSON 不检查 YAML，导致已配置项目错误触发 onboard 的问题
 - **启动时自动迁移 model.json**：在 `start_bridge()` 中调用 `get_all_models()` 触发 `~/.supercc/models.yaml` → `{project}/.supercc/model.json` 迁移，实现全量配置启动时自动迁移
+- **detect_config 的 touch() 副作用**：修复 `detect_config()` 内部调用 `resolve_config_path()` 导致 `touch()` 预先创建空 config.json，使得 YAML 迁移被跳过的严重 bug
 
 ## [0.1.22] - 2026-05-02
 
