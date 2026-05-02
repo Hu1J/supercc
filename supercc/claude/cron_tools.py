@@ -41,10 +41,9 @@ def _get_data_dir() -> str:
 
 def _get_chat_id() -> Optional[str]:
     from supercc.claude.session_manager import SessionManager
-    from supercc.config import resolve_config_path, SESSIONS_DB_PATH
-    project_path, _ = resolve_config_path()
-    db_path = SESSIONS_DB_PATH
-    sm = SessionManager(db_path=db_path)
+    from supercc.config import get_config, SESSIONS_DB_PATH
+    project_path = get_config().claude.approved_directory
+    sm = SessionManager(db_path=SESSIONS_DB_PATH)
     session = sm.get_active_session_by_chat_id(project_path=project_path)
     return session.chat_id if session else None
 
