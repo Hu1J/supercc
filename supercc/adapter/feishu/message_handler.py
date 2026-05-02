@@ -207,6 +207,7 @@ class SessionWorker:
         self._running = False
         self._idle_since: float | None = None
         self.IDLE_TIMEOUT = 300  # 5分钟
+        self._current_group_members: list | None = None  # Worker 私有，避免竞态
 
     async def _run_loop(self) -> None:
         import time
@@ -348,7 +349,7 @@ class SessionWorker:
                 logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
             try:
                 members = await h.feishu.get_chat_members(message.chat_id)
-                h._current_group_members = members  # 供后续追加 mention 使用
+                self._current_group_members = members  # Worker 私有，避免竞态
                 if members:
                     # 查找发送者名称
                     sender_name = None
@@ -491,8 +492,8 @@ class SessionWorker:
             _stream_too_long = [False]
             # 预计算 mention tag（群聊时）
             mention_tag = ""
-            if message.is_group_chat and hasattr(h, "_current_group_members"):
-                members = h._current_group_members or []
+            if message.is_group_chat and self._current_group_members is not None:
+                members = self._current_group_members
                 for m in members:
                     if isinstance(m, dict):
                         member_id = m.get("member_id") or m.get("open_id") or ""
@@ -1647,11 +1648,11 @@ class MessageHandler:
         if worker is None or not worker._running:
             await self._safe_send(message.chat_id, message.message_id, "当前没有正在运行的查询。")
             return HandlerResult(success=True)
-        # Cancel the worker task
+        # Interrupt query FIRST, then cancel the worker task
+        worker.claude.stop_event.set()
         if worker.task is not None and not worker.task.done():
             worker.task.cancel()
             worker.task = None
-        worker.claude.stop_event.set()
         await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude，当前任务已停止。")
         return HandlerResult(success=True)
 
