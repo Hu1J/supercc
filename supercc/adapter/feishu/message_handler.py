@@ -537,6 +537,35 @@ class MessageHandler:
 
         # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
         if message.is_group_chat and message.chat_id:
+            # 首次被 @mention 时，检查两个必要权限是否具备
+            first_mention_key = f"_perm_checked_{message.chat_id}"
+            if not getattr(self, first_mention_key, False):
+                setattr(self, first_mention_key, True)
+                try:
+                    perm = await self.feishu.check_group_permissions(message.chat_id)
+                    auth_url = perm.get("auth_url", "")
+                    missing = []
+                    if not perm.get("history_ok"):
+                        missing.append("读取群聊历史（im:message）")
+                    if not perm.get("members_ok"):
+                        missing.append("读取群成员信息（im:chat.member:read）")
+                    if missing:
+                        card = {
+                            "schema": "2.0",
+                            "config": {"wide_screen_mode": True},
+                            "body": {
+                                "elements": [
+                                    {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权。"},
+                                    {"tag": "action", "actions": [
+                                        {"tag": "link", "text": "前往授权", "url": auth_url}
+                                    ]},
+                                ]
+                            }
+                        }
+                        await self.feishu.send_card(message.chat_id, card)
+                        logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
+                except Exception as ex:
+                    logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
             try:
                 members = await self.feishu.get_chat_members(message.chat_id)
                 if members:

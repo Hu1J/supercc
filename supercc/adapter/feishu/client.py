@@ -785,3 +785,53 @@ class FeishuClient:
             logger.warning(f"[CHAT_MEMBERS] bots error: {e}")
 
         return all_members
+
+    async def check_group_permissions(self, chat_id: str) -> dict:
+        """Check if the bot has required group chat permissions.
+
+        Tests:
+        - im:message: ability to read group chat history
+        - im:chat.member:read: ability to read group member list
+
+        Returns:
+            dict with keys:
+                history_ok (bool): True if chat history is accessible
+                members_ok (bool): True if member list is accessible
+                auth_url (str): URL to the app permission settings page
+        """
+        import lark_oapi as lark
+
+        history_ok = False
+        try:
+            client = self._get_client()
+            request = (
+                lark.im.v1.ListMessageRequest.builder()
+                .container_id_type("chat")
+                .container_id(chat_id)
+                .page_size(1)
+                .build()
+            )
+            resp = await asyncio.to_thread(client.im.v1.message.list, request)
+            history_ok = resp.success()
+            logger.debug(f"[PERMISSION_CHECK] history: ok={history_ok} code={getattr(resp, 'code', None)}")
+        except Exception as e:
+            logger.warning(f"[PERMISSION_CHECK] history error: {e}")
+
+        members_ok = False
+        try:
+            client = self._get_client()
+            request = (
+                lark.im.v1.GetChatMembersRequest.builder()
+                .chat_id(chat_id)
+                .member_id_type("open_id")
+                .build()
+            )
+            resp = await asyncio.to_thread(client.im.v1.chat_members.get, request)
+            members_ok = resp.success()
+            logger.debug(f"[PERMISSION_CHECK] members: ok={members_ok} code={getattr(resp, 'code', None)}")
+        except Exception as e:
+            logger.warning(f"[PERMISSION_CHECK] members error: {e}")
+
+        auth_url = f"https://open.feishu.cn/app/{self.app_id}/permission/overview"
+
+        return {"history_ok": history_ok, "members_ok": members_ok, "auth_url": auth_url}
