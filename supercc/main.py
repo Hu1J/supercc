@@ -516,15 +516,17 @@ def stop_bridge(pid: int) -> None:
 
 
 def detect_config() -> tuple[bool, bool]:
-    """Check config usability and YAML presence.
+    """Check config usability and YAML presence (does NOT create files).
 
     Returns (is_installed, yaml_exists):
     - is_installed: True if config.json is non-empty
     - yaml_exists: True if config.yaml exists (for migration)
     """
-    cfg, _ = resolve_config_path()
-    json_path = Path(cfg)
-    yaml_path = json_path.with_suffix(".yaml")
+    # Use same logic as resolve_config_path() but WITHOUT creating files
+    cwd = os.getcwd()
+    cfg_dir = Path(cwd).resolve() / ".supercc"
+    json_path = cfg_dir / "config.json"
+    yaml_path = cfg_dir / "config.yaml"
     yaml_exists = yaml_path.exists() and yaml_path.stat().st_size > 0
     is_installed = json_path.exists() and json_path.stat().st_size > 0
     return (is_installed, yaml_exists)
