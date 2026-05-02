@@ -475,8 +475,8 @@ class SessionWorker:
             except Exception as ex:
                 logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
 
-        # 确保 options 已初始化
-        self._init_options(system_prompt_append)
+        # 确保 options 已初始化，首次对该 chat_id 发消息时创建新 session
+        self._init_options(system_prompt_append, _init_chat_id=message.chat_id)
 
         await self._run_query(message, session)
 
@@ -484,11 +484,18 @@ class SessionWorker:
         self,
         system_prompt_append: str | None = None,
         continue_conversation: bool = True,
+        _init_chat_id: str | None = None,
     ) -> None:
         """初始化/更新持久化 options"""
+        if not hasattr(self, "_seen_chat_ids"):
+            self._seen_chat_ids: set = set()
         # /new 设置了 _new_session_requested，下次 query 用 continue_conversation=False
         if self._new_session_requested:
             self._new_session_requested = False
+            continue_conversation = False
+        # 首次对该 chat_id 发消息时用 False（新 session），后续用 True
+        elif _init_chat_id and _init_chat_id not in self._seen_chat_ids:
+            self._seen_chat_ids.add(_init_chat_id)
             continue_conversation = False
         self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
 
