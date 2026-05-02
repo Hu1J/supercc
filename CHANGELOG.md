@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-05-02
+
+### Fixed
+
+- **群聊权限检查逻辑**：每次消息检查权限，首次不足弹卡后继续处理（不再阻塞后续消息）
+- **授权卡片链接**：卡片 markdown 内容加入授权链接，方便用户直接前往授权
+
 ## [0.1.21] - 2026-05-02
 
 ### Added
