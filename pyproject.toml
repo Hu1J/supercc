@@ -12,6 +12,7 @@ dependencies = [
     "qrcode>=7.4.0",
     "Pillow>=10.0.0",
     "httpx>=0.25.0",
+    "packaging>=23.0",
     "aiohttp>=3.9.0",
     "filelock>=3.13.0",
     "jieba>=0.42.1",
