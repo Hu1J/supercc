@@ -22,10 +22,10 @@ def _get_user_open_id() -> str | None:
     from supercc.claude.session_manager import SessionManager
     from supercc.config import resolve_config_path, SESSIONS_DB_PATH
 
-    _, _ = resolve_config_path()
+    project_path, _ = resolve_config_path()
     db_path = SESSIONS_DB_PATH
     sm = SessionManager(db_path=db_path)
-    session = sm.get_active_session_by_chat_id()
+    session = sm.get_active_session_by_chat_id(project_path=project_path)
     return session.user_id if session else None
 
 
