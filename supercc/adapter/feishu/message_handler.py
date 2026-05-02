@@ -281,8 +281,10 @@ class SessionWorker:
                     continue
 
                 self._idle_since = None
-                await self._process_message(message)
-                self.queue.task_done()
+                try:
+                    await self._process_message(message)
+                finally:
+                    self.queue.task_done()  # 确保即使异常也调用
             except asyncio.CancelledError:
                 break
             except Exception:
