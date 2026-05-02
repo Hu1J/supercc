@@ -27,6 +27,7 @@ class Session:
     proactive_today_count: int = 0
     proactive_today_date: str | None = None   # YYYY-MM-DD 格式
     last_proactive_at: datetime | None = None  # 发完主动推送后，记录时间戳，用于冷却期判断
+    group_members: str | None = None  # 群成员 JSON 字符串，用于 _is_group_chat 判断
 
 
 class SessionManager:
@@ -83,6 +84,11 @@ class SessionManager:
             # Migrate: add last_proactive_at column if it doesn't exist
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN last_proactive_at TIMESTAMP")
+            except sqlite3.OperationalError:
+                pass
+            # Migrate: add group_members column if it doesn't exist (for _is_group_chat)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN group_members TEXT")
             except sqlite3.OperationalError:
                 pass
             conn.execute("""
@@ -184,6 +190,7 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
             )
         return None
 
@@ -213,6 +220,7 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
             )
         return None
 
@@ -284,6 +292,7 @@ class SessionManager:
                     proactive_today_count=row["proactive_today_count"],
                     proactive_today_date=row["proactive_today_date"],
                     last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                    group_members=row["group_members"],
                 )
             return None
 
@@ -300,6 +309,17 @@ class SessionManager:
                        LIMIT 1
                    )""",
                 (chat_id, user_id),
+            )
+
+    def update_group_members(self, chat_id: str, group_members: str) -> None:
+        """Store group members JSON for a session (enables _is_group_chat detection)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE sessions
+                   SET group_members = ?
+                   WHERE chat_id = ? AND (group_members IS NULL OR group_members = '')
+                   LIMIT 1""",
+                (group_members, chat_id),
             )
 
     def get_all_users(self) -> list[Session]:
@@ -326,6 +346,7 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
             )
             for row in rows
         ]

@@ -455,6 +455,18 @@ class SessionWorker:
                         if member_id and name:
                             lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
                     system_prompt_append += "\n".join(lines) + "\n"
+                    # 持久化 group_members 到 session（供 _is_group_chat 判断用）
+                    try:
+                        members_json = json.dumps([
+                            {"id": member_id, "name": name} for name, member_id in (
+                                (m.get("name") or m.get("bot_name", ""),
+                                 m.get("member_id") or m.get("open_id") or m.get("bot_id", ""))
+                                for m in members
+                            ) if member_id
+                        ], ensure_ascii=False)
+                        h.sessions.update_group_members(message.chat_id, members_json)
+                    except Exception as e:
+                        logger.debug(f"[GROUP_MEMBERS] failed to persist: {e}")
             except Exception as ex:
                 logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
 
