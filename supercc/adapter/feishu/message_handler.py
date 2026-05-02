@@ -192,8 +192,14 @@ class SessionWorker:
         # 根据 session_mode 决定工作目录
         if handler.config.claude.session_mode == "isolated":
             # 每个 chat_id 独立目录，直接用 chat_id 作为目录名
-            self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
-            os.makedirs(self._cwd, exist_ok=True)
+            # 确保 data_dir 有效（fallback 到 approved_directory）
+            if handler.data_dir:
+                self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
+                os.makedirs(self._cwd, exist_ok=True)
+            else:
+                # data_dir 为空时，回退到项目目录
+                logger.warning(f"[ISOLATED] data_dir 为空，回退到 approved_directory")
+                self._cwd = handler.approved_directory
         else:
             # 共享项目目录
             self._cwd = handler.approved_directory
@@ -218,6 +224,7 @@ class SessionWorker:
         self._idle_since: float | None = None
         self.IDLE_TIMEOUT = 300  # 5分钟
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
+        self._new_session_requested = False  # /new 标志，SessionWorker 私有
 
     async def _run_loop(self) -> None:
         import time
@@ -398,6 +405,10 @@ class SessionWorker:
         continue_conversation: bool = True,
     ) -> None:
         """初始化/更新持久化 options"""
+        # /new 设置了 _new_session_requested，下次 query 用 continue_conversation=False
+        if self._new_session_requested:
+            self._new_session_requested = False
+            continue_conversation = False
         self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
 
     async def _run_query(
@@ -1044,9 +1055,14 @@ class MessageHandler:
                 # Check concurrency limit
                 active = [w for w in self._session_workers.values() if w._running]
                 if len(active) >= self._max_concurrent_workers:
-                    # Reuse the oldest idle worker
+                    # 达到上限时复用最旧的 worker
+                    # 该 worker 的队列会包含多个 chat_id 的消息（跨 worker 复用）
+                    # worker 处理时按 message.chat_id 正确路由，无需担心
                     oldest = min(active, key=lambda w: w._idle_since or 0)
-                    return oldest
+                    logger.warning(
+                        f"[WORKER_LIMIT] chat_id={chat_id} 复用 worker={oldest.chat_id} "
+                        f"(active={len(active)}, max={self._max_concurrent_workers})"
+                    )
                 self._session_workers[chat_id] = SessionWorker(chat_id, self)
 
             worker = self._session_workers[chat_id]
@@ -1071,7 +1087,10 @@ class MessageHandler:
                 self.approved_directory,
                 chat_id=message.chat_id if message.is_group_chat else None,
             )
-            self.claude._new_session_requested = True
+            # /new 需要设置到对应 chat_id 的 Worker 的 ClaudeIntegration
+            # 如果 Worker 不存在，先创建
+            worker = await self._get_or_create_worker(message.chat_id)
+            worker._new_session_requested = True
             return HandlerResult(
                 success=True,
                 response_text=f"✅ 新会话已创建\n会话ID: {session.session_id}\n工作目录: {session.project_path}",
