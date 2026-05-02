@@ -178,6 +178,635 @@ class StreamAccumulator:
             pass
 
 
+class SessionWorker:
+    """单个 chat_id 的消息处理器（per-chat-id 并行核心）"""
+
+    def __init__(self, chat_id: str, handler: "MessageHandler"):
+        import time
+
+        self.chat_id = chat_id
+        self.queue: asyncio.Queue[IncomingMessage] = asyncio.Queue()
+        self.task: asyncio.Task | None = None
+        self.handler = handler
+        self.claude = ClaudeIntegration(
+            cli_path=handler.config.claude.cli_path,
+            max_turns=50,
+            approved_directory=handler.approved_directory,
+        )
+        self.claude_memory = ClaudeIntegration(
+            cli_path=handler.config.claude.cli_path,
+            max_turns=5,
+            approved_directory=handler.approved_directory,
+            memory_only=True,
+        )
+        self.claude_skill = ClaudeIntegration(
+            cli_path=handler.config.claude.cli_path,
+            max_turns=5,
+            approved_directory=handler.approved_directory,
+        )
+        self._running = False
+        self._idle_since: float | None = None
+        self.IDLE_TIMEOUT = 300  # 5分钟
+
+    async def _run_loop(self) -> None:
+        import time
+
+        self._running = True
+        while True:
+            try:
+                try:
+                    message = await asyncio.wait_for(self.queue.get(), timeout=30)
+                except asyncio.TimeoutError:
+                    if self._idle_since is None:
+                        self._idle_since = time.time()
+                    elif time.time() - self._idle_since > self.IDLE_TIMEOUT:
+                        break
+                    continue
+
+                self._idle_since = None
+                await self._process_message(message)
+                self.queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception(f"Worker {self.chat_id} error")
+
+        self._running = False
+        await self._cleanup()
+
+    async def _cleanup(self) -> None:
+        """Worker 退出时清理"""
+        pass  # ClaudeIntegration 无需显式清理
+
+    async def _process_message(self, message: IncomingMessage) -> None:
+        """处理单条消息：鉴权 → 媒体预处理 → 引用检测 → 查询"""
+        h = self.handler
+
+        # P2P: allowed_users whitelist applies. Group @mention: controlled by GroupConfigEntry.
+        if not message.is_group_chat:
+            auth_result = h.auth.authenticate(message.user_open_id)
+            if not auth_result.authorized:
+                logger.info(f"Ignoring message from unauthorized user: {message.user_open_id}")
+                return
+
+        # Group chat: skip if bot was not @mentioned (no response to avoid spam)
+        # Group access control check (per-group config: enabled, allow_from, require_mention)
+        if not await h._check_group_access(message):
+            return
+
+        if message.message_type not in ("text", "image", "file"):
+            await h._safe_send(message.chat_id, message.message_id, "暂不支持该消息类型，请发送文字消息。")
+            return
+
+        # For group chat, use chat-specific session lookup to isolate group sessions
+        # from p2p sessions. For p2p, use the standard user-level session.
+        if message.is_group_chat:
+            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+            if session is None:
+                # First message in this group chat — create a new session
+                session = h.sessions.create_session(
+                    message.user_open_id,
+                    h.approved_directory,
+                    chat_id=message.chat_id,
+                )
+            elif session.chat_id != message.chat_id:
+                # Same user in a different group — update session to point to new chat
+                h.sessions.update_chat_id(message.user_open_id, message.chat_id)
+        else:
+            session = h.sessions.get_active_session(message.user_open_id)
+            if session and session.chat_id != message.chat_id:
+                h.sessions.update_chat_id(message.user_open_id, message.chat_id)
+
+        project_path = session.project_path if session else h.approved_directory
+        h._current_project_path = project_path  # 供 stream_callback 使用
+
+        # 读取 AGENTS.md（如存在）注入到 system prompt 最前面
+        agents_md_path = os.path.join(project_path, "AGENTS.md")
+        agents_md_content = ""
+        if os.path.isfile(agents_md_path):
+            try:
+                with open(agents_md_path, encoding="utf-8") as f:
+                    agents_md_content = f.read().strip()
+            except Exception:
+                pass
+
+        codex_status = get_codex_mcp_status(h.config.codex)
+        system_prompt_append = (
+            (agents_md_content + "\n\n") if agents_md_content else ""
+        ) + (
+            MEMORY_SYSTEM_GUIDE
+            + FEISHU_FILE_GUIDE
+            + CRON_GUIDE
+            + get_codex_mcp_guide(h.config.codex, codex_status)
+            + h.memory_manager.inject_context(
+                user_open_id=message.user_open_id,
+                project_path=project_path,
+            )
+        )
+
+        # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
+        if message.is_group_chat and message.chat_id:
+            # 每次消息都检查权限（在所有群聊接口调用之前执行）
+            already_sent_key = f"_perm_sent_{message.chat_id}"
+            try:
+                perm = await h.feishu.check_group_permissions(message.chat_id)
+                auth_url = perm.get("auth_url", "")
+                missing = []
+                if not perm.get("history_ok"):
+                    missing.append("读取群聊历史（im:message.group_msg）")
+                if not perm.get("members_ok"):
+                    missing.append("读取群成员信息（im:chat.members:read）")
+                if missing:
+                    logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
+                    # 首次权限不足：发送授权卡片，然后 return
+                    if not getattr(h, already_sent_key, False):
+                        setattr(h, already_sent_key, True)
+                        missing_text = "\n".join(f"- {m}" for m in missing)
+                        card = {
+                            "schema": "2.0",
+                            "body": {
+                                "elements": [
+                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员前往飞书开放平台授权：\n{auth_url}\n\n授权完成后再重新发送消息。"},
+                                ]
+                            }
+                        }
+                        try:
+                            await h.feishu.send_interactive(message.chat_id, card, message.message_id)
+                        except Exception as card_err:
+                            err_str = str(card_err)
+                            fallback = (
+                                f"⚠️ 授权卡片发送失败\n\n"
+                                f"Feishu 错误：{err_str}\n\n"
+                                f"缺少权限：\n{missing_text}\n\n"
+                                f"授权链接：{auth_url}"
+                            )
+                            await h._safe_send(message.chat_id, message.message_id, fallback)
+                            logger.warning(f"[GROUP_PERM] card send failed, fallback text sent: {card_err}")
+                        return  # 首次权限不足：return，等用户重新发
+                    # 已发过授权卡片：继续正常处理（功能受限但不阻塞）
+            except Exception as ex:
+                logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
+            try:
+                members = await h.feishu.get_chat_members(message.chat_id)
+                h._current_group_members = members  # 供后续追加 mention 使用
+                if members:
+                    # 查找发送者名称
+                    sender_name = None
+                    for m in members:
+                        if isinstance(m, dict):
+                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                        else:
+                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                        if member_id == message.user_open_id:
+                            sender_name = m.get("name") or m.get("bot_name") or getattr(m, "name", None) or ""
+                            break
+                    lines = [
+                        f"【群聊规则】必须在最终回复里艾特@{sender_name or message.user_open_id} 以及相关人员。需要使用飞书特定的@格式如：{{消息内容}}<at user_id=\"open_id\">姓名</at>。不得遗漏。",
+                    ]
+                    for m in members:
+                        if isinstance(m, dict):
+                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                            name = m.get("name") or m.get("bot_name", "")
+                        else:
+                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                            name = getattr(m, "name", None) or ""
+                        if member_id and name:
+                            lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
+                    system_prompt_append += "\n".join(lines) + "\n"
+            except Exception as ex:
+                logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
+
+        # 确保 options 已初始化
+        self._init_options(system_prompt_append)
+
+        await self._run_query(message, session)
+
+    def _init_options(
+        self,
+        system_prompt_append: str | None = None,
+        continue_conversation: bool = True,
+    ) -> None:
+        """初始化/更新持久化 options"""
+        self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
+
+    async def _run_query(
+        self,
+        message: IncomingMessage,
+        session,
+    ) -> None:
+        """Run Claude query in background, send results to Feishu on completion."""
+        h = self.handler
+        reaction_id = None
+        _last_response = ""
+
+        async def _show_typing() -> None:
+            """在 _query_lock 拿到后显示 typing（通过 on_start 回调传入 query）"""
+            nonlocal reaction_id
+            reaction_id = await h.feishu.add_typing_reaction(message.message_id)
+            logger.info(f"[typing] on — user={message.user_open_id}, reaction_id={reaction_id!r}")
+
+        try:
+            # Audio is not yet supported — tell the user and skip Claude
+            if message.message_type == "audio":
+                await h._safe_send(message.chat_id, message.message_id, "🎙️ 暂不支持语音消息，请发送文字消息。")
+                return
+
+            # Preprocess media (image/file) before querying Claude
+            media_prompt_prefix = ""
+            media_notify_text = ""
+            logger.debug(f"[_run_query] message_type={message.message_type!r}")
+            if message.message_type in ("image", "file"):
+                logger.debug(f"[_run_query] entering media branch for {message.message_type}")
+                try:
+                    media_prompt_prefix = await h._preprocess_media(message)
+                    if media_prompt_prefix:
+                        logger.info(f"Inbound media saved: {media_prompt_prefix}")
+                        # Notify user in Feishu that media was received
+                        icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
+                        media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
+                        await h._safe_send(message.chat_id, message.message_id, media_notify_text)
+                except Exception as e:
+                    logger.warning(f"Failed to process inbound media: {e}")
+                    media_prompt_prefix = ""
+
+            # Resolve quoted message content
+            quoted_content = ""
+            if message.parent_id:
+                try:
+                    quoted_msg = await h.feishu.get_message(message.parent_id)
+                    if quoted_msg:
+                        sender_id = quoted_msg.get("sender_id", "")
+                        quoted_text = h._extract_quoted_content(quoted_msg)
+                        # Skip only if the user is quoting their OWN message (to avoid
+                        # a user quoting themselves → bot sees it → bot replies → user
+                        # quoting bot → loop). We do want to pass along quoted bot
+                        # messages so the user can get contextual responses.
+                        if sender_id == message.user_open_id:
+                            quoted_content = ""  # User quoting themselves — skip
+                        else:
+                            quoted_content = f"[引用消息: {message.parent_id}] {quoted_text}"
+                        logger.info(f"Quoted message {message.parent_id}: {quoted_text[:100]!r}")
+                    else:
+                        # get_message returned None — message not found/deleted
+                        quoted_content = f"[引用消息不可用: {message.parent_id}]"
+                        logger.warning(f"Quoted message {message.parent_id} not found")
+                except Exception:
+                    # Network/auth error — tell the user so they're not confused
+                    quoted_content = f"[引用消息不可用: {message.parent_id}]"
+                    logger.warning(f"Failed to fetch quoted message {message.parent_id}")
+
+            # Inject group chat history so the bot has context of recent messages.
+            # History was recorded for ALL group messages (including non-@mention ones).
+            group_history_prefix = ""
+            if message.is_group_chat and message.chat_id:
+                hist = h._group_history.get(message.chat_id, [])
+                if hist:
+                    history_text = "\n".join(hist)
+                    group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
+                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} history_len={len(hist)} entries={hist!r}")
+                else:
+                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} NO_HISTORY (empty)")
+
+            prefix_parts = [p for p in [group_history_prefix, media_prompt_prefix, quoted_content] if p]
+            prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
+            # For text messages: prepend prefix to actual text content.
+            # For media messages (image/file): message.content may contain user text
+            # (mixed image+text case). Use media prefix + user text.
+            is_media = message.message_type in ("image", "file")
+            if is_media and media_prompt_prefix:
+                # Media messages: prepend prefix to any user text
+                user_text = message.content.strip()
+                if user_text:
+                    full_prompt = (prefix + user_text).strip()
+                else:
+                    full_prompt = prefix.strip()
+            else:
+                # Text messages: prepend prefix to actual text content
+                full_prompt = (prefix + message.content).strip()
+
+            # Retry loop: SDK 有时会返回空结果（cost > 0 但无任何内容），
+            # 常见于 /stop 后 CLI 状态不稳或 MCP server 临时故障。
+            # 自动重试最多 3 次，每次用新的 accumulator 确保 stream 状态干净。
+            last_cost = 0.0
+            _stream_too_long = [False]
+            # 预计算 mention tag（群聊时）
+            mention_tag = ""
+            if message.is_group_chat and hasattr(h, "_current_group_members"):
+                members = h._current_group_members or []
+                for m in members:
+                    if isinstance(m, dict):
+                        member_id = m.get("member_id") or m.get("open_id") or ""
+                        name = m.get("name") or ""
+                    else:
+                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                        name = getattr(m, "name", None) or ""
+                    if member_id == message.user_open_id and name:
+                        mention_tag = f"\n<at user_id=\"{member_id}\">{name}</at>"
+                        break
+            for retry_round in range(3):
+                accumulator = StreamAccumulator(message.chat_id, message.message_id, h._safe_send)
+
+                async def stream_callback(stream_item):
+                    # Handle Codex internal events — flush Claude accumulator and render Codex event
+                    if isinstance(stream_item, CodexStreamEvent):
+                        await accumulator.flush()
+                        text = _format_codex_event(stream_item)
+                        if text:
+                            card = format_codex_card(
+                                stream_item.type,
+                                text,
+                                {
+                                    "command": stream_item.command,
+                                    "exit_code": stream_item.exit_code,
+                                    "tool_name": stream_item.tool_name,
+                                },
+                            )
+                            try:
+                                await h.feishu.send_interactive(message.chat_id, card, message.message_id)
+                            except Exception:
+                                await h._safe_send(message.chat_id, message.message_id, text, log_reply=False)
+                        return
+
+                    claude_msg = stream_item
+                    # Codex MCP 工具调用 → 渲染成与 Agent card 一致的卡片
+                    if _is_codex_tool_name(claude_msg.tool_name):
+                        await accumulator.flush()
+                        card = format_agent_card(claude_msg.tool_input or "", title="## 🤖 Codex")
+                        try:
+                            await h.feishu.send_interactive(message.chat_id, card, message.message_id)
+                        except Exception:
+                            await h._safe_send(message.chat_id, message.message_id, claude_msg.tool_input or "", log_reply=False)
+                        return
+
+                    if claude_msg.tool_name:
+                        await accumulator.flush()
+                        # 记忆工具传入 memory_manager 和默认 project_path
+                        kwargs = {}
+                        if claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                            kwargs["memory_manager"] = h.memory_manager
+                            kwargs["default_project_path"] = getattr(h, "_current_project_path", "")
+                        result = h.formatter.format_tool_call(
+                            claude_msg.tool_name,
+                            claude_msg.tool_input,
+                            **kwargs,
+                        )
+                        logger.info(f"[stream] tool: {claude_msg.tool_name} | input: {claude_msg.tool_input}")
+
+                        # Hermes-style skill nudge: count tool calls (trigger after query completes)
+                        nudge = h._skill_nudge
+                        if nudge:
+                            nudge.config.current_user = message.user_open_id
+                            nudge.increment()
+
+                        # Agent 工具 → CardKit 卡片（检测 tool_name 包含 "agent" 且 tool_input 有 "prompt"）
+                        if "agent" in claude_msg.tool_name.lower():
+                            import json
+                            try:
+                                data = json.loads(claude_msg.tool_input) if claude_msg.tool_input else {}
+                            except json.JSONDecodeError:
+                                data = {}
+                            if "prompt" in data:
+                                card = format_agent_card(claude_msg.tool_input)
+                                try:
+                                    await h.feishu.send_card(message.chat_id, card)
+                                except Exception:
+                                    logger.warning(f"send_card failed for agent tool, falling back")
+                                return
+
+                        # Plan 工具 → CardKit 卡片（📋 标题）
+                        if claude_msg.tool_name in ("EnterPlanMode", "ExitPlanMode"):
+                            title = "## 📋 Plan" if claude_msg.tool_name == "EnterPlanMode" else "## 📋 Plan End"
+                            card = format_agent_card(claude_msg.tool_input or "", title=title)
+                            try:
+                                await h.feishu.send_card(message.chat_id, card)
+                            except Exception:
+                                logger.warning(f"send_card failed for plan tool, falling back")
+                            return
+
+                        # _DiffMarker / list[_DiffMarker] → 彩色卡片；其他 → backtick 格式
+                        if isinstance(result, _DiffMarker):
+                            for card in result.card if isinstance(result.card, list) else [result.card]:
+                                try:
+                                    await h.feishu.send_edit_diff_card(
+                                        message.chat_id, card, message.message_id, log_reply=False
+                                    )
+                                except Exception:
+                                    # 卡片发送失败，降级为带图标的纯文本
+                                    import json
+                                    try:
+                                        data = json.loads(result.tool_input)
+                                        file_path = data.get("file_path", "unknown")
+                                        # 图标规则：Edit→✏️，cc-工具名→🧰，Bash调用skill→🧰，其他→📝
+                                        if result.tool_name == "Edit":
+                                            icon = "✏️"
+                                        elif result.tool_name.startswith("cc-"):
+                                            icon = "🧰"
+                                        elif result.tool_name == "Bash":
+                                            cmd = data.get("command", "")
+                                            if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
+                                                icon = "🧰"
+                                            else:
+                                                icon = "📝"
+                                        else:
+                                            icon = "📝"
+                                        fallback = f"{icon} **{result.tool_name}** — `{file_path}`"
+                                    except Exception:
+                                        fallback = f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`"
+                                    logger.warning(f"send_edit_diff_card failed, falling back to: {fallback}")
+                                    await h._safe_send(message.chat_id, message.message_id, fallback, log_reply=False)
+                        elif isinstance(result, list):
+                            for marker in result:
+                                if isinstance(marker, _DiffMarker):
+                                    for card in marker.card if isinstance(marker.card, list) else [marker.card]:
+                                        try:
+                                            await h.feishu.send_edit_diff_card(
+                                                message.chat_id, card, message.message_id, log_reply=False
+                                            )
+                                        except Exception:
+                                            import json
+                                            try:
+                                                data = json.loads(marker.tool_input)
+                                                file_path = data.get("file_path", "unknown")
+                                                if marker.tool_name == "Edit":
+                                                    icon = "✏️"
+                                                elif marker.tool_name.startswith("cc-"):
+                                                    icon = "🧰"
+                                                elif marker.tool_name == "Bash":
+                                                    cmd = data.get("command", "")
+                                                    if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
+                                                        icon = "🧰"
+                                                    else:
+                                                        icon = "📝"
+                                                else:
+                                                    icon = "📝"
+                                                fallback = f"{icon} **{marker.tool_name}** — `{file_path}`"
+                                            except Exception:
+                                                fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
+                                            logger.warning(f"send_edit_diff_card failed, falling back to: {fallback}")
+                                            await h._safe_send(message.chat_id, message.message_id, fallback, log_reply=False)
+                        elif isinstance(result, _MemoryCardMarker):
+                            # 记忆工具 → CardKit 原生格式（绕过 markdown 渲染）
+                            card = h._render_memory_card(result)
+                            try:
+                                await h.feishu.send_card(message.chat_id, card)
+                            except Exception:
+                                logger.warning(f"send_card failed for memory tool, falling back to text")
+                                await h._safe_send(message.chat_id, message.message_id, str(card), log_reply=False)
+                        elif isinstance(result, _AskUserQuestionMarker):
+                            # AskUserQuestion → 精美飞书问卷卡片
+                            if result.data is not None:
+                                card = format_questionnaire_card(result)
+                                try:
+                                    await h.feishu.send_edit_diff_card(
+                                        message.chat_id, card, message.message_id, log_reply=False
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"send_edit_diff_card failed for AskUserQuestion: {e}, falling back")
+                                    await h._safe_send(
+                                        message.chat_id, message.message_id,
+                                        f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`",
+                                        log_reply=False,
+                                    )
+                            else:
+                                await h._safe_send(
+                                    message.chat_id, message.message_id,
+                                    f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`",
+                                    log_reply=False,
+                                )
+                        else:
+                            await h._safe_send(message.chat_id, message.message_id, result, log_reply=False)
+                    elif claude_msg.content:
+                        logger.info(f"[stream] text: {claude_msg.content[:100]}")
+                        await accumulator.add_text(claude_msg.content)
+                        _content_lower = claude_msg.content.lower()
+                        if (
+                            "too long" in _content_lower
+                            or "超出" in _content_lower
+                            or "context window" in _content_lower
+                            or "context_length" in _content_lower
+                            or "max_tokens" in _content_lower
+                        ):
+                            _stream_too_long[0] = True
+
+                response, sdk_session_id_from_query, cost = await self.claude.query(
+                    prompt=full_prompt,
+                    on_stream=stream_callback,
+                    on_start=_show_typing,
+                )
+                last_cost = cost
+
+                # Flush any remaining buffered text
+                await accumulator.flush()
+
+                # 如果这次尝试有实质内容（发了任何消息或返回了文本），认为成功，退出重试循环
+                if accumulator.sent_something or response:
+                    _last_response = response or ""
+                    if _stream_too_long[0]:
+                        await h._safe_send(
+                            message.chat_id, message.message_id,
+                            "💡 上下文已满，发送 **/new** 可开启新会话，我会记住之前的进度。",
+                            log_reply=False,
+                        )
+                    break
+
+                # 这次尝试是空结果（cost > 0 但没有任何内容），重试
+                if retry_round < 2:
+                    logger.warning(
+                        f"[_run_query] Empty response (cost={cost}), retrying "
+                        f"({retry_round + 1}/3)"
+                    )
+            else:
+                # 3 次重试全部失败
+                logger.error(f"[_run_query] 3 次重试均失败，放弃查询")
+                await h._safe_send(
+                    message.chat_id, message.message_id,
+                    "⚠️ 查询失败：SDK 返回空响应，请稍后重试。"
+                )
+                return
+
+            # Save session
+            if not session:
+                session = h.sessions.create_session(
+                    message.user_open_id,
+                    h.approved_directory,
+                    sdk_session_id=sdk_session_id_from_query,
+                    chat_id=message.chat_id,
+                )
+            else:
+                h.sessions.update_session(session.session_id, cost=last_cost, message_increment=1, update_last_message=True)
+
+            # 存储 sdk_session_id（首次建立或变化时都更新；空值不覆盖有效值）
+            new_sid = (sdk_session_id_from_query or "").strip()
+            old_sid = (session.sdk_session_id or "").strip()
+            if new_sid and new_sid != old_sid:
+                logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
+                h.sessions.update_sdk_session_id(session.session_id, new_sid)
+                if old_sid:  # 旧值存在才通知（首次建无需通知）
+                    await h._safe_send(
+                        message.chat_id, message.message_id,
+                        f"🔄 已切换到新 Session\nSession ID: `{new_sid}`",
+                        log_reply=False,
+                    )
+
+            # 群聊时：检查回复是否已 mention 提问者本人，无则追加
+            def _mentions_user(text: str, user_id: str) -> bool:
+                return bool(text and f'<at user_id="{user_id}"' in text)
+
+            if mention_tag:
+                sender_id = message.user_open_id
+                if not accumulator.sent_something and _last_response:
+                    # 非流式：检查 response 是否已 mention 提问者
+                    formatted = h.formatter.format_text(_last_response)
+                    chunks = h.formatter.split_messages(formatted)
+                    if chunks and not _mentions_user(chunks[-1], sender_id):
+                        chunks[-1] = chunks[-1].rstrip() + mention_tag
+                        for chunk in chunks:
+                            await h._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
+                else:
+                    # 流式：检查 _buffer 是否已 mention 提问者，无则追加
+                    async with accumulator._lock:
+                        buffered = accumulator._buffer
+                    if not _mentions_user(buffered, sender_id):
+                        await h._safe_send(message.chat_id, message.message_id, mention_tag)
+
+        except asyncio.CancelledError:
+            await h._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
+        except Exception as e:
+            logger.exception(f"Error in _run_query: {e}")
+            # CLI 进程异常崩溃，每次 query 内部创建新 client，下一次自动恢复
+            logger.warning(f"[_run_query] CLI error: {e}")
+            error_msg = f"⚠️ 内部错误：{e}"
+            await h._safe_send(message.chat_id, message.message_id, error_msg)
+        finally:
+            if reaction_id:
+                logger.info(f"[typing] off — user={message.user_open_id}, reaction_id={reaction_id!r}")
+                try:
+                    await h.feishu.remove_typing_reaction(message.message_id, reaction_id)
+                except Exception as exc:
+                    logger.warning(f"[typing] remove_typing_reaction failed: {exc}")
+            # Trigger memory review after [typing] off
+            h._trigger_memory_review(message, _last_response)
+
+            # Trigger skill nudge after query completes (not during streaming)
+            nudge = h._skill_nudge
+            if nudge and nudge._pending:
+                logger.info("[_trigger_skill_review] starting background review")
+                try:
+                    if self.claude_skill._options is None:
+                        self.claude_skill._init_options()
+                    asyncio.create_task(
+                        trigger_skill_review(
+                            make_claude_query=lambda p: self.claude_skill.query(prompt=p),
+                            nudge=nudge,
+                            chat_id=message.chat_id,
+                            send_to_feishu=lambda cid, text: h._safe_send(cid, message.message_id, text),
+                            skills_dir=Path(h.data_dir) / "skills",
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"[_trigger_skill_review] failed to start: {e}")
+
+
 class MessageHandler:
     def __init__(
         self,
@@ -204,20 +833,15 @@ class MessageHandler:
         self.feishu = feishu_client
         self.auth = authenticator
         self.validator = validator
+        # Global Claude instance for command purposes only (e.g. /new resets session)
+        # Actual queries are handled by per-chat-id SessionWorker instances
         self.claude = claude
         # Dedicated Claude instance for memory self-optimization — does not block main conversation
-        # memory_only=True 限制只能使用记忆相关 MCP 工具，禁止写文件等操作
         self.claude_memory = ClaudeIntegration(
             cli_path=config.claude.cli_path,
             max_turns=5,
             approved_directory=approved_directory,
             memory_only=True,
-        )
-        # Dedicated Claude instance for skill self-evolution — separate session, does not block
-        self.claude_skill = ClaudeIntegration(
-            cli_path=config.claude.cli_path,
-            max_turns=5,
-            approved_directory=approved_directory,
         )
         self.sessions = session_manager
         self.formatter = formatter
@@ -229,32 +853,21 @@ class MessageHandler:
         # Config path for auto-registering new groups
         self._config_path = config_path
         self.memory_manager = get_memory_manager()
-        self.memory_manager.set_system_prompt_stale_callback(self.claude.mark_system_prompt_stale)
+        self.memory_manager.set_system_prompt_stale_callback(self._noop_mark_stale)
         self._skill_nudge = skill_nudge
-        self._queue: asyncio.Queue[IncomingMessage] | None = None
-        self._queue_loop_id: int | None = None
         # Group chat history: chat_id -> list of recent message contents (max 20)
         self._group_history: dict[str, list[str]] = {}
         # Track which group chats we've already fetched history for (from Feishu API)
         self._fetched_group_chats: set[str] = set()
-        self._worker_task: asyncio.Task | None = None
-        self._is_processing: bool = False  # True while worker is running or about to run
+        # Per-chat-id worker pool
+        self._session_workers: dict[str, SessionWorker] = {}
+        self._workers_lock = asyncio.Lock()
+        self._max_concurrent_workers = 10  # 最大并发 Worker 数
         self._current_message_id: str = ""
 
-    def _get_queue(self) -> asyncio.Queue[IncomingMessage]:
-        """Lazily create (or recreate) the queue in the current event loop.
-
-        If the event loop has changed since the queue was created (e.g., after
-        tests switch loops), discard the stale queue and create a fresh one.
-        """
-        try:
-            current_loop_id = id(asyncio.get_running_loop())
-        except RuntimeError:
-            current_loop_id = None
-        if self._queue is None or self._queue_loop_id != current_loop_id:
-            self._queue = asyncio.Queue()
-            self._queue_loop_id = current_loop_id
-        return self._queue
+    def _noop_mark_stale(self) -> None:
+        """No-op placeholder — SessionWorker.mark_system_prompt_stale is called instead"""
+        pass
 
     def _trigger_memory_review(self, message: IncomingMessage, response_text: str) -> None:
         """Ask Claude to review conversation and update memory via MCP tools.
@@ -355,10 +968,8 @@ class MessageHandler:
         return True
 
     async def handle(self, message: IncomingMessage) -> HandlerResult:
-        """将消息入队，立即返回。由 Worker 串行处理。
+        """Route message to command handler or per-chat-id worker pool."""
 
-        注意：所有命令（/开头）都不入队，直接处理以确保立即响应。
-        """
         # Group chat: record ALL messages to history FIRST, before any branching.
         # This ensures commands (/stop, /new, etc.) also get stored so that
         # when someone finally @mentions the bot, the full context is available.
@@ -410,208 +1021,29 @@ class MessageHandler:
                 await self._safe_send(message.chat_id, message.message_id, result.response_text)
             return HandlerResult(success=True)
 
-        queue = self._get_queue()
-        await queue.put(message)
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(self._worker_loop())
-            # Set _is_processing immediately (before the coroutine even runs) so that
-            # a concurrent /stop command sees it as True and can interrupt correctly.
-            try:
-                loop = asyncio.get_running_loop()
-                loop.call_soon(lambda: setattr(self, "_is_processing", True))
-            except RuntimeError:
-                pass
+        # Route to per-chat-id worker
+        worker = await self._get_or_create_worker(message.chat_id)
+        await worker.queue.put(message)
         return HandlerResult(success=True)
 
-    def _init_options(
-        self,
-        system_prompt_append: str | None = None,
-        continue_conversation: bool = True,
-    ) -> None:
-        """
-        初始化/更新持久化 options。
-        system prompt 更新只需重新调用此方法。
-        """
-        self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
+    async def _get_or_create_worker(self, chat_id: str) -> SessionWorker:
+        """Get or create a SessionWorker for the given chat_id."""
+        async with self._workers_lock:
+            if chat_id not in self._session_workers:
+                # Check concurrency limit
+                active = [w for w in self._session_workers.values() if w._running]
+                if len(active) >= self._max_concurrent_workers:
+                    # Reuse the oldest idle worker
+                    oldest = min(active, key=lambda w: w._idle_since or 0)
+                    return oldest
+                self._session_workers[chat_id] = SessionWorker(chat_id, self)
 
-    async def _worker_loop(self) -> None:
-        """串行出队并处理消息。"""
-        try:
-            while True:
-                try:
-                    queue = self._get_queue()
-                    message = await queue.get()
-                    try:
-                        self._current_message_id = message.message_id
-                        await self._process_message(message)
-                    finally:
-                        self._current_message_id = ""
-                        queue.task_done()
-                except asyncio.CancelledError:
-                    break
-                except RuntimeError as e:
-                    # Queue bound to a different event loop (e.g., after test teardown) — exit silently.
-                    # Only swallow the specific queue/loop errors; re-raise everything else.
-                    err_msg = str(e)
-                    if "different event loop" in err_msg or "Event loop is closed" in err_msg:
-                        break
-                    raise  # re-raise unknown RuntimeError
-                except Exception:
-                    logger.exception("Worker loop error")
-        finally:
-            self._is_processing = False
+            worker = self._session_workers[chat_id]
+            if worker.task is None or worker.task.done():
+                worker.task = asyncio.create_task(worker._run_loop())
+            return worker
 
-    async def _process_message(self, message: IncomingMessage) -> None:
-        """处理单条消息：鉴权 → 媒体预处理 → 引用检测 → 查询。"""
-        # P2P: allowed_users whitelist applies. Group @mention: controlled by GroupConfigEntry.
-        if not message.is_group_chat:
-            auth_result = self.auth.authenticate(message.user_open_id)
-            if not auth_result.authorized:
-                logger.info(f"Ignoring message from unauthorized user: {message.user_open_id}")
-                return
-
-        # Group chat: skip if bot was not @mentioned (no response to avoid spam)
-        # Group access control check (per-group config: enabled, allow_from, require_mention)
-        if not await self._check_group_access(message):
-            return
-
-        if message.message_type not in ("text", "image", "file"):
-            await self._safe_send(message.chat_id, message.message_id, "暂不支持该消息类型，请发送文字消息。")
-            return
-
-        # Only validate text content — media messages (image/file) have empty
-        # content at this stage and will get their path-injected content in _run_query.
-        # NOTE: SecurityValidator pattern checks are currently disabled.
-        # To re-enable: uncomment the block below.
-        # if message.message_type == "text":
-        #     ok, err = self.validator.validate(message.content)
-        #     if not ok:
-        #         await self._safe_send(message.chat_id, message.message_id, f"⚠️ {err}")
-        #         return
-
-        # For group chat, use chat-specific session lookup to isolate group sessions
-        # from p2p sessions. For p2p, use the standard user-level session.
-        if message.is_group_chat:
-            session = self.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
-            if session is None:
-                # First message in this group chat — create a new session
-                session = self.sessions.create_session(
-                    message.user_open_id,
-                    self.approved_directory,
-                    chat_id=message.chat_id,
-                )
-            elif session.chat_id != message.chat_id:
-                # Same user in a different group — update session to point to new chat
-                self.sessions.update_chat_id(message.user_open_id, message.chat_id)
-        else:
-            session = self.sessions.get_active_session(message.user_open_id)
-            if session and session.chat_id != message.chat_id:
-                self.sessions.update_chat_id(message.user_open_id, message.chat_id)
-
-        project_path = session.project_path if session else self.approved_directory
-        self._current_project_path = project_path  # 供 stream_callback 使用
-
-        # 读取 AGENTS.md（如存在）注入到 system prompt 最前面
-        agents_md_path = os.path.join(project_path, "AGENTS.md")
-        agents_md_content = ""
-        if os.path.isfile(agents_md_path):
-            try:
-                with open(agents_md_path, encoding="utf-8") as f:
-                    agents_md_content = f.read().strip()
-            except Exception:
-                pass
-
-        codex_status = get_codex_mcp_status(self.config.codex)
-        system_prompt_append = (
-            (agents_md_content + "\n\n") if agents_md_content else ""
-        ) + (
-            MEMORY_SYSTEM_GUIDE
-            + FEISHU_FILE_GUIDE
-            + CRON_GUIDE
-            + get_codex_mcp_guide(self.config.codex, codex_status)
-            + self.memory_manager.inject_context(
-                user_open_id=message.user_open_id,
-                project_path=project_path,
-            )
-        )
-
-        # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
-        if message.is_group_chat and message.chat_id:
-            # 每次消息都检查权限（在所有群聊接口调用之前执行）
-            already_sent_key = f"_perm_sent_{message.chat_id}"
-            try:
-                perm = await self.feishu.check_group_permissions(message.chat_id)
-                auth_url = perm.get("auth_url", "")
-                missing = []
-                if not perm.get("history_ok"):
-                    missing.append("读取群聊历史（im:message.group_msg）")
-                if not perm.get("members_ok"):
-                    missing.append("读取群成员信息（im:chat.members:read）")
-                if missing:
-                    logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
-                    # 首次权限不足：发送授权卡片，然后 return
-                    if not getattr(self, already_sent_key, False):
-                        setattr(self, already_sent_key, True)
-                        missing_text = "\n".join(f"- {m}" for m in missing)
-                        card = {
-                            "schema": "2.0",
-                            "body": {
-                                "elements": [
-                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员前往飞书开放平台授权：\n{auth_url}\n\n授权完成后再重新发送消息。"},
-                                ]
-                            }
-                        }
-                        try:
-                            await self.feishu.send_interactive(message.chat_id, card, message.message_id)
-                        except Exception as card_err:
-                            err_str = str(card_err)
-                            fallback = (
-                                f"⚠️ 授权卡片发送失败\n\n"
-                                f"Feishu 错误：{err_str}\n\n"
-                                f"缺少权限：\n{missing_text}\n\n"
-                                f"授权链接：{auth_url}"
-                            )
-                            await self._safe_send(message.chat_id, message.message_id, fallback)
-                            logger.warning(f"[GROUP_PERM] card send failed, fallback text sent: {card_err}")
-                        return  # 首次权限不足：return，等用户重新发
-                    # 已发过授权卡片：继续正常处理（功能受限但不阻塞）
-            except Exception as ex:
-                logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
-            try:
-                members = await self.feishu.get_chat_members(message.chat_id)
-                self._current_group_members = members  # 供后续追加 mention 使用
-                if members:
-                    # 查找发送者名称
-                    sender_name = None
-                    for m in members:
-                        if isinstance(m, dict):
-                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
-                        else:
-                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
-                        if member_id == message.user_open_id:
-                            sender_name = m.get("name") or m.get("bot_name") or getattr(m, "name", None) or ""
-                            break
-                    lines = [
-                        f"【群聊规则】必须在最终回复里艾特@{sender_name or message.user_open_id} 以及相关人员。需要使用飞书特定的@格式如：{{消息内容}}<at user_id=\"open_id\">姓名</at>。不得遗漏。",
-                    ]
-                    for m in members:
-                        if isinstance(m, dict):
-                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
-                            name = m.get("name") or m.get("bot_name", "")
-                        else:
-                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
-                            name = getattr(m, "name", None) or ""
-                        if member_id and name:
-                            lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
-                    system_prompt_append += "\n".join(lines) + "\n"
-            except Exception as ex:
-                logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
-
-        # 确保 options 已初始化
-        self._init_options(system_prompt_append)
-
-        await self._run_query(message, session)
-
+    
     async def _handle_command(self, message: IncomingMessage) -> HandlerResult:
         """Handle slash commands like /new, /status."""
         # Strip @mention prefix so commands work in group chat with @mention
@@ -1207,434 +1639,19 @@ class MessageHandler:
 
 
 
-    async def _run_query(
-        self,
-        message: IncomingMessage,
-        session,
-    ) -> None:
-        """Run Claude query in background, send results to Feishu on completion."""
-        reaction_id = None
-        _last_response = ""
-
-        async def _show_typing() -> None:
-            """在 _query_lock 拿到后显示 typing（通过 on_start 回调传入 query）。"""
-            nonlocal reaction_id
-            reaction_id = await self.feishu.add_typing_reaction(message.message_id)
-            logger.info(f"[typing] on — user={message.user_open_id}, reaction_id={reaction_id!r}")
-
-        try:
-
-            # Audio is not yet supported — tell the user and skip Claude
-            if message.message_type == "audio":
-                await self._safe_send(message.chat_id, message.message_id, "🎙️ 暂不支持语音消息，请发送文字消息。")
-                return
-
-            # Preprocess media (image/file) before querying Claude
-            media_prompt_prefix = ""
-            media_notify_text = ""
-            logger.debug(f"[_run_query] message_type={message.message_type!r}")
-            if message.message_type in ("image", "file"):
-                logger.debug(f"[_run_query] entering media branch for {message.message_type}")
-                try:
-                    media_prompt_prefix = await self._preprocess_media(message)
-                    if media_prompt_prefix:
-                        logger.info(f"Inbound media saved: {media_prompt_prefix}")
-                        # Notify user in Feishu that media was received
-                        icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
-                        media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
-                        await self._safe_send(message.chat_id, message.message_id, media_notify_text)
-                except Exception as e:
-                    logger.warning(f"Failed to process inbound media: {e}")
-                    media_prompt_prefix = ""
-
-            # Resolve quoted message content
-            quoted_content = ""
-            if message.parent_id:
-                try:
-                    quoted_msg = await self.feishu.get_message(message.parent_id)
-                    if quoted_msg:
-                        sender_id = quoted_msg.get("sender_id", "")
-                        quoted_text = self._extract_quoted_content(quoted_msg)
-                        # Skip only if the user is quoting their OWN message (to avoid
-                        # a user quoting themselves → bot sees it → bot replies → user
-                        # quoting bot → loop). We do want to pass along quoted bot
-                        # messages so the user can get contextual responses.
-                        if sender_id == message.user_open_id:
-                            quoted_content = ""  # User quoting themselves — skip
-                        else:
-                            quoted_content = f"[引用消息: {message.parent_id}] {quoted_text}"
-                        logger.info(f"Quoted message {message.parent_id}: {quoted_text[:100]!r}")
-                    else:
-                        # get_message returned None — message not found/deleted
-                        quoted_content = f"[引用消息不可用: {message.parent_id}]"
-                        logger.warning(f"Quoted message {message.parent_id} not found")
-                except Exception:
-                    # Network/auth error — tell the user so they're not confused
-                    quoted_content = f"[引用消息不可用: {message.parent_id}]"
-                    logger.warning(f"Failed to fetch quoted message {message.parent_id}")
-
-            # Inject group chat history so the bot has context of recent messages.
-            # History was recorded for ALL group messages (including non-@mention ones).
-            group_history_prefix = ""
-            if message.is_group_chat and message.chat_id:
-                hist = self._group_history.get(message.chat_id, [])
-                if hist:
-                    history_text = "\n".join(hist)
-                    group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
-                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} history_len={len(hist)} entries={hist!r}")
-                else:
-                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} NO_HISTORY (empty)")
-
-            prefix_parts = [p for p in [group_history_prefix, media_prompt_prefix, quoted_content] if p]
-            prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
-            # For text messages: prepend prefix to actual text content.
-            # For media messages (image/file): message.content may contain user text
-            # (mixed image+text case). Use media prefix + user text.
-            is_media = message.message_type in ("image", "file")
-            if is_media and media_prompt_prefix:
-                # Media messages: prepend prefix to any user text
-                user_text = message.content.strip()
-                if user_text:
-                    full_prompt = (prefix + user_text).strip()
-                else:
-                    full_prompt = prefix.strip()
-            else:
-                # Text messages: prepend prefix to actual text content
-                full_prompt = (prefix + message.content).strip()
-
-            # Retry loop: SDK 有时会返回空结果（cost > 0 但无任何内容），
-            # 常见于 /stop 后 CLI 状态不稳或 MCP server 临时故障。
-            # 自动重试最多 3 次，每次用新的 accumulator 确保 stream 状态干净。
-            last_cost = 0.0
-            _stream_too_long = [False]
-            # 预计算 mention tag（群聊时）
-            mention_tag = ""
-            if message.is_group_chat and hasattr(self, "_current_group_members"):
-                members = self._current_group_members or []
-                for m in members:
-                    if isinstance(m, dict):
-                        member_id = m.get("member_id") or m.get("open_id") or ""
-                        name = m.get("name") or ""
-                    else:
-                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
-                        name = getattr(m, "name", None) or ""
-                    if member_id == message.user_open_id and name:
-                        mention_tag = f"\n<at user_id=\"{member_id}\">{name}</at>"
-                        break
-            for retry_round in range(3):
-                accumulator = StreamAccumulator(message.chat_id, message.message_id, self._safe_send)
-
-                async def stream_callback(stream_item):
-                    # Handle Codex internal events — flush Claude accumulator and render Codex event
-                    if isinstance(stream_item, CodexStreamEvent):
-                        await accumulator.flush()
-                        text = _format_codex_event(stream_item)
-                        if text:
-                            card = format_codex_card(
-                                stream_item.type,
-                                text,
-                                {
-                                    "command": stream_item.command,
-                                    "exit_code": stream_item.exit_code,
-                                    "tool_name": stream_item.tool_name,
-                                },
-                            )
-                            try:
-                                await self.feishu.send_interactive(message.chat_id, card, message.message_id)
-                            except Exception:
-                                await self._safe_send(message.chat_id, message.message_id, text, log_reply=False)
-                        return
-
-                    claude_msg = stream_item
-                    # Codex MCP 工具调用 → 渲染成与 Agent card 一致的卡片
-                    if _is_codex_tool_name(claude_msg.tool_name):
-                        await accumulator.flush()
-                        card = format_agent_card(claude_msg.tool_input or "", title="## 🤖 Codex")
-                        try:
-                            await self.feishu.send_interactive(message.chat_id, card, message.message_id)
-                        except Exception:
-                            await self._safe_send(message.chat_id, message.message_id, claude_msg.tool_input or "", log_reply=False)
-                        return
-
-                    if claude_msg.tool_name:
-                        await accumulator.flush()
-                        # 记忆工具传入 memory_manager 和默认 project_path
-                        kwargs = {}
-                        if claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
-                            kwargs["memory_manager"] = self.memory_manager
-                            kwargs["default_project_path"] = getattr(self, "_current_project_path", "")
-                        result = self.formatter.format_tool_call(
-                            claude_msg.tool_name,
-                            claude_msg.tool_input,
-                            **kwargs,
-                        )
-                        logger.info(f"[stream] tool: {claude_msg.tool_name} | input: {claude_msg.tool_input}")
-
-                        # Hermes-style skill nudge: count tool calls (trigger after query completes)
-                        nudge = self._skill_nudge
-                        if nudge:
-                            nudge.config.current_user = message.user_open_id
-                            nudge.increment()
-
-                        # Agent 工具 → CardKit 卡片（检测 tool_name 包含 "agent" 且 tool_input 有 "prompt"）
-                        if "agent" in claude_msg.tool_name.lower():
-                            import json
-                            try:
-                                data = json.loads(claude_msg.tool_input) if claude_msg.tool_input else {}
-                            except json.JSONDecodeError:
-                                data = {}
-                            if "prompt" in data:
-                                card = format_agent_card(claude_msg.tool_input)
-                                try:
-                                    await self.feishu.send_card(message.chat_id, card)
-                                except Exception:
-                                    logger.warning(f"send_card failed for agent tool, falling back")
-                                return
-
-                        # Plan 工具 → CardKit 卡片（📋 标题）
-                        if claude_msg.tool_name in ("EnterPlanMode", "ExitPlanMode"):
-                            title = "## 📋 Plan" if claude_msg.tool_name == "EnterPlanMode" else "## 📋 Plan End"
-                            card = format_agent_card(claude_msg.tool_input or "", title=title)
-                            try:
-                                await self.feishu.send_card(message.chat_id, card)
-                            except Exception:
-                                logger.warning(f"send_card failed for plan tool, falling back")
-                            return
-
-                        # _DiffMarker / list[_DiffMarker] → 彩色卡片；其他 → backtick 格式
-                        if isinstance(result, _DiffMarker):
-                            for card in result.card if isinstance(result.card, list) else [result.card]:
-                                try:
-                                    await self.feishu.send_edit_diff_card(
-                                        message.chat_id, card, message.message_id, log_reply=False
-                                    )
-                                except Exception:
-                                    # 卡片发送失败，降级为带图标的纯文本
-                                    import json
-                                    try:
-                                        data = json.loads(result.tool_input)
-                                        file_path = data.get("file_path", "unknown")
-                                        # 图标规则：Edit→✏️，cc-工具名→🧰，Bash调用skill→🧰，其他→📝
-                                        if result.tool_name == "Edit":
-                                            icon = "✏️"
-                                        elif result.tool_name.startswith("cc-"):
-                                            icon = "🧰"
-                                        elif result.tool_name == "Bash":
-                                            cmd = data.get("command", "")
-                                            if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
-                                                icon = "🧰"
-                                            else:
-                                                icon = "📝"
-                                        else:
-                                            icon = "📝"
-                                        fallback = f"{icon} **{result.tool_name}** — `{file_path}`"
-                                    except Exception:
-                                        fallback = f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`"
-                                    logger.warning(f"send_edit_diff_card failed, falling back to: {fallback}")
-                                    await self._safe_send(message.chat_id, message.message_id, fallback, log_reply=False)
-                        elif isinstance(result, list):
-                            for marker in result:
-                                if isinstance(marker, _DiffMarker):
-                                    for card in marker.card if isinstance(marker.card, list) else [marker.card]:
-                                        try:
-                                            await self.feishu.send_edit_diff_card(
-                                                message.chat_id, card, message.message_id, log_reply=False
-                                            )
-                                        except Exception:
-                                            import json
-                                            try:
-                                                data = json.loads(marker.tool_input)
-                                                file_path = data.get("file_path", "unknown")
-                                                if marker.tool_name == "Edit":
-                                                    icon = "✏️"
-                                                elif marker.tool_name.startswith("cc-"):
-                                                    icon = "🧰"
-                                                elif marker.tool_name == "Bash":
-                                                    cmd = data.get("command", "")
-                                                    if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
-                                                        icon = "🧰"
-                                                    else:
-                                                        icon = "📝"
-                                                else:
-                                                    icon = "📝"
-                                                fallback = f"{icon} **{marker.tool_name}** — `{file_path}`"
-                                            except Exception:
-                                                fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
-                                            logger.warning(f"send_edit_diff_card failed, falling back to: {fallback}")
-                                            await self._safe_send(message.chat_id, message.message_id, fallback, log_reply=False)
-                        elif isinstance(result, _MemoryCardMarker):
-                            # 记忆工具 → CardKit 原生格式（绕过 markdown 渲染）
-                            card = self._render_memory_card(result)
-                            try:
-                                await self.feishu.send_card(message.chat_id, card)
-                            except Exception:
-                                logger.warning(f"send_card failed for memory tool, falling back to text")
-                                await self._safe_send(message.chat_id, message.message_id, str(card), log_reply=False)
-                        elif isinstance(result, _AskUserQuestionMarker):
-                            # AskUserQuestion → 精美飞书问卷卡片
-                            if result.data is not None:
-                                card = format_questionnaire_card(result)
-                                try:
-                                    await self.feishu.send_edit_diff_card(
-                                        message.chat_id, card, message.message_id, log_reply=False
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"send_edit_diff_card failed for AskUserQuestion: {e}, falling back")
-                                    await self._safe_send(
-                                        message.chat_id, message.message_id,
-                                        f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`",
-                                        log_reply=False,
-                                    )
-                            else:
-                                await self._safe_send(
-                                    message.chat_id, message.message_id,
-                                    f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`",
-                                    log_reply=False,
-                                )
-                        else:
-                            await self._safe_send(message.chat_id, message.message_id, result, log_reply=False)
-                    elif claude_msg.content:
-                        logger.info(f"[stream] text: {claude_msg.content[:100]}")
-                        await accumulator.add_text(claude_msg.content)
-                        _content_lower = claude_msg.content.lower()
-                        if (
-                            "too long" in _content_lower
-                            or "超出" in _content_lower
-                            or "context window" in _content_lower
-                            or "context_length" in _content_lower
-                            or "max_tokens" in _content_lower
-                        ):
-                            _stream_too_long[0] = True
-
-                response, sdk_session_id_from_query, cost = await self.claude.query(
-                    prompt=full_prompt,
-                    on_stream=stream_callback,
-                    on_start=_show_typing,
-                )
-                last_cost = cost
-
-                # Flush any remaining buffered text
-                await accumulator.flush()
-
-                # 如果这次尝试有实质内容（发了任何消息或返回了文本），认为成功，退出重试循环
-                if accumulator.sent_something or response:
-                    _last_response = response or ""
-                    if _stream_too_long[0]:
-                        await self._safe_send(
-                            message.chat_id, message.message_id,
-                            "💡 上下文已满，发送 **/new** 可开启新会话，我会记住之前的进度。",
-                            log_reply=False,
-                        )
-                    break
-
-                # 这次尝试是空结果（cost > 0 但没有任何内容），重试
-                if retry_round < 2:
-                    logger.warning(
-                        f"[_run_query] Empty response (cost={cost}), retrying "
-                        f"({retry_round + 1}/3)"
-                    )
-            else:
-                # 3 次重试全部失败
-                logger.error(f"[_run_query] 3 次重试均失败，放弃查询")
-                await self._safe_send(
-                    message.chat_id, message.message_id,
-                    "⚠️ 查询失败：SDK 返回空响应，请稍后重试。"
-                )
-                return
-
-            # Save session
-            if not session:
-                session = self.sessions.create_session(
-                    message.user_open_id,
-                    self.approved_directory,
-                    sdk_session_id=sdk_session_id_from_query,
-                    chat_id=message.chat_id,
-                )
-            else:
-                self.sessions.update_session(session.session_id, cost=last_cost, message_increment=1, update_last_message=True)
-
-            # 存储 sdk_session_id（首次建立或变化时都更新；空值不覆盖有效值）
-            new_sid = (sdk_session_id_from_query or "").strip()
-            old_sid = (session.sdk_session_id or "").strip()
-            if new_sid and new_sid != old_sid:
-                logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
-                self.sessions.update_sdk_session_id(session.session_id, new_sid)
-                if old_sid:  # 旧值存在才通知（首次建无需通知）
-                    await self._safe_send(
-                        message.chat_id, message.message_id,
-                        f"🔄 已切换到新 Session\nSession ID: `{new_sid}`",
-                        log_reply=False,
-                    )
-
-            # 群聊时：检查回复是否已 mention 提问者本人，无则追加
-            def _mentions_user(text: str, user_id: str) -> bool:
-                return bool(text and f'<at user_id="{user_id}"' in text)
-
-            if mention_tag:
-                sender_id = message.user_open_id
-                if not accumulator.sent_something and _last_response:
-                    # 非流式：检查 response 是否已 mention 提问者
-                    formatted = self.formatter.format_text(_last_response)
-                    chunks = self.formatter.split_messages(formatted)
-                    if chunks and not _mentions_user(chunks[-1], sender_id):
-                        chunks[-1] = chunks[-1].rstrip() + mention_tag
-                        for chunk in chunks:
-                            await self._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
-                else:
-                    # 流式：检查 _buffer 是否已 mention 提问者，无则追加
-                    async with accumulator._lock:
-                        buffered = accumulator._buffer
-                    if not _mentions_user(buffered, sender_id):
-                        await self._safe_send(message.chat_id, message.message_id, mention_tag)
-
-        except asyncio.CancelledError:
-            await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
-        except Exception as e:
-            logger.exception(f"Error in _run_query: {e}")
-            # CLI 进程异常崩溃，每次 query 内部创建新 client，下一次自动恢复
-            logger.warning(f"[_run_query] CLI error: {e}")
-            error_msg = f"⚠️ 内部错误：{e}"
-            await self._safe_send(message.chat_id, message.message_id, error_msg)
-        finally:
-            if reaction_id:
-                logger.info(f"[typing] off — user={message.user_open_id}, reaction_id={reaction_id!r}")
-                try:
-                    await self.feishu.remove_typing_reaction(message.message_id, reaction_id)
-                except Exception as exc:
-                    logger.warning(f"[typing] remove_typing_reaction failed: {exc}")
-            # Trigger memory review after [typing] off
-            self._trigger_memory_review(message, _last_response)
-
-            # Trigger skill nudge after query completes (not during streaming)
-            nudge = self._skill_nudge
-            if nudge and nudge._pending:
-                logger.info("[_trigger_skill_review] starting background review")
-                try:
-                    if self.claude_skill._options is None:
-                        self.claude_skill._init_options()
-                    asyncio.create_task(
-                        trigger_skill_review(
-                            make_claude_query=lambda p: self.claude_skill.query(prompt=p),
-                            nudge=nudge,
-                            chat_id=message.chat_id,
-                            send_to_feishu=lambda cid, text: self._safe_send(cid, message.message_id, text),
-                            skills_dir=Path(self.data_dir) / "skills",
-                        )
-                    )
-                except Exception as e:
-                    logger.warning(f"[_trigger_skill_review] failed to start: {e}")
 
     async def _handle_stop(self, message: IncomingMessage) -> HandlerResult:
-        """Handle /stop — cancel the current worker task and interrupt Claude."""
-        if not self._is_processing:
+        """Handle /stop — cancel the worker for this chat_id and interrupt Claude."""
+        async with self._workers_lock:
+            worker = self._session_workers.get(message.chat_id)
+        if worker is None or not worker._running:
             await self._safe_send(message.chat_id, message.message_id, "当前没有正在运行的查询。")
             return HandlerResult(success=True)
-        # 立即标记为非运行状态，防止重复调用
-        self._is_processing = False
-        if self._worker_task is not None and not self._worker_task.done():
-            self._worker_task.cancel()
-            self._worker_task = None
-        self.claude.stop_event.set()
+        # Cancel the worker task
+        if worker.task is not None and not worker.task.done():
+            worker.task.cancel()
+            worker.task = None
+        worker.claude.stop_event.set()
         await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude，当前任务已停止。")
         return HandlerResult(success=True)
 
