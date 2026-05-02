@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-05-02
+
+### Added
+
+- **群聊后置 mention 强制补发**：最后一条回复无 mention 时自动追加提问者 mention（流式单独发消息，非流式追加到末尾）
+- **群聊规则 system prompt 优化**：规则文本中自动注入发送者名称
+
+### Changed
+
+- **权限卡片**：授权 URL 包含缺失的权限参数，管理员点击直接进入授权页
+- **权限名修正**：`im:chat.members:read`（实测确认）
+
 ## [0.1.20] - 2026-05-01
 
 ### Added
