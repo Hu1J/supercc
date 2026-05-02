@@ -555,15 +555,16 @@ class MessageHandler:
                             "config": {"wide_screen_mode": True},
                             "body": {
                                 "elements": [
-                                    {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权。"},
+                                    {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权，授权完成后再重新发送消息。"},
                                     {"tag": "action", "actions": [
                                         {"tag": "link", "text": "前往授权", "url": auth_url}
                                     ]},
                                 ]
                             }
                         }
-                        await self.feishu.send_card(message.chat_id, card)
+                        await self.feishu.send_interactive_reply(message.chat_id, card, message.message_id)
                         logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
+                        return  # 消息不处理，等用户重新发
                 except Exception as ex:
                     logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
             try:
