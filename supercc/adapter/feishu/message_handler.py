@@ -226,6 +226,45 @@ class SessionWorker:
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
         self._new_session_requested = False  # /new 标志，SessionWorker 私有
 
+    def _trigger_memory_review(self, message: IncomingMessage, response_text: str) -> None:
+        """Worker 私有：使用自己的 claude_memory 实例触发记忆回顾"""
+        logger.info("[_trigger_memory_review] starting background review")
+        h = self.handler
+
+        prompt = (
+            "根据之前的对话，判断是否有值得记住的信息。需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，不需要问我任何问题。\n"
+        )
+
+        async def do_review():
+            if self.claude_memory._options is None:
+                self.claude_memory._init_options()
+
+            async def stream_callback(claude_msg):
+                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                    result = h.formatter.format_tool_call(
+                        claude_msg.tool_name, claude_msg.tool_input,
+                        memory_manager=h.memory_manager,
+                        default_project_path=getattr(h, "_current_project_path", ""),
+                    )
+                    if isinstance(result, _MemoryCardMarker):
+                        card = h._render_memory_card(result)
+                        try:
+                            await h.feishu.send_card(message.chat_id, card)
+                        except Exception:
+                            await h._safe_send(message.chat_id, message.message_id, str(card))
+                    else:
+                        await h._safe_send(message.chat_id, message.message_id, result)
+                    logger.info(f"[memory_review] tool: {claude_msg.tool_name}")
+
+            try:
+                await self.claude_memory.query(prompt=prompt, on_stream=stream_callback)
+            except Exception as e:
+                logger.warning(f"[_trigger_memory_review] failed: {e}")
+            finally:
+                logger.info("[_trigger_memory_review] done.")
+
+        asyncio.create_task(do_review())
+
     async def _run_loop(self) -> None:
         import time
 
@@ -806,8 +845,8 @@ class SessionWorker:
                     await h.feishu.remove_typing_reaction(message.message_id, reaction_id)
                 except Exception as exc:
                     logger.warning(f"[typing] remove_typing_reaction failed: {exc}")
-            # Trigger memory review after [typing] off
-            h._trigger_memory_review(message, _last_response)
+            # Trigger memory review after [typing] off (Worker 私有实例)
+            self._trigger_memory_review(message, _last_response)
 
             # Trigger skill nudge after query completes (not during streaming)
             nudge = h._skill_nudge
