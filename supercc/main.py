@@ -511,11 +511,19 @@ def stop_bridge(pid: int) -> None:
         print(f"Failed to stop PID {pid}: {e}")
 
 
-def detect_config() -> bool:
-    """Check if .supercc/config.yaml exists and is non-empty."""
+def detect_config() -> tuple[bool, bool]:
+    """Check config usability and YAML presence.
+
+    Returns (is_installed, yaml_exists):
+    - is_installed: True if config.json is non-empty
+    - yaml_exists: True if config.yaml exists (for migration)
+    """
     cfg, _ = resolve_config_path()
-    p = Path(cfg)
-    return p.exists() and p.stat().st_size > 0
+    json_path = Path(cfg)
+    yaml_path = json_path.with_suffix(".yaml")
+    yaml_exists = yaml_path.exists() and yaml_path.stat().st_size > 0
+    is_installed = json_path.exists() and json_path.stat().st_size > 0
+    return (is_installed, yaml_exists)
 
 
 async def interactive_install() -> tuple[str, str]:
@@ -1572,13 +1580,18 @@ def main(args=None):
         return
 
     # Default: start (both `supercc` and `supercc start`)
-    is_installed = detect_config()
+    is_installed, yaml_exists = detect_config()
     if not is_installed:
-        logger.info("No config found, running onboard flow...")
-        from supercc.onboard import run_onboard_flow
-        ok = run_onboard_flow()
-        if not ok:
-            return
+        # Only run onboard if NEITHER config.json NOR config.yaml exists.
+        # If config.json is empty but config.yaml has content, init_config will migrate.
+        if yaml_exists:
+            logger.info("Config.json is empty but config.yaml found — migrating...")
+        else:
+            logger.info("No config found, running onboard flow...")
+            from supercc.onboard import run_onboard_flow
+            ok = run_onboard_flow()
+            if not ok:
+                return
         cfg_path, data_dir = resolve_config_path()
     else:
         cfg_path, data_dir = resolve_config_path()
