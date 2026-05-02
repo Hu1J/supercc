@@ -550,12 +550,13 @@ class MessageHandler:
                     if not perm.get("members_ok"):
                         missing.append("读取群成员信息（im:chat.member:read）")
                     if missing:
+                        missing_text = "\n".join(f"- {m}" for m in missing)
                         card = {
                             "schema": "2.0",
                             "config": {"wide_screen_mode": True},
                             "body": {
                                 "elements": [
-                                    {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权，授权完成后再重新发送消息。"},
+                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员点击下方按钮前往授权，授权完成后再重新发送消息。"},
                                     {"tag": "action", "actions": [
                                         {"tag": "link", "text": "前往授权", "url": auth_url}
                                     ]},
