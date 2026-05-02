@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-05-02
+
 ### Changed
 
 - **配置文件全面迁移至 JSON**：`config.yaml` 迁移为 `config.json`，启动时自动迁移，保留所有字段（channels、auth、claude、codex、skill_nudge 等）
