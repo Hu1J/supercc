@@ -557,7 +557,7 @@ class MessageHandler:
                             "schema": "2.0",
                             "body": {
                                 "elements": [
-                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员前往飞书开放平台授权，授权完成后再重新发送消息。"},
+                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员前往飞书开放平台授权：\n{auth_url}\n\n授权完成后再重新发送消息。"},
                                 ]
                             }
                         }
