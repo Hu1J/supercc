@@ -297,6 +297,29 @@ class SessionWorker:
         """Worker 退出时清理"""
         pass  # ClaudeIntegration 无需显式清理
 
+    def update_chat_id(self, chat_id: str) -> None:
+        """复用时更新 chat_id 和工作目录，避免 approved_directory 残留"""
+        self.chat_id = chat_id
+
+        if self.handler.config.claude.session_mode == "isolated":
+            if self.handler.data_dir:
+                new_cwd = os.path.join(self.handler.data_dir, "sessions", chat_id)
+                os.makedirs(new_cwd, exist_ok=True)
+            else:
+                new_cwd = self.handler.approved_directory
+        else:
+            new_cwd = self.handler.approved_directory
+
+        self._cwd = new_cwd
+        self.claude.approved_directory = new_cwd
+        self.claude_memory.approved_directory = new_cwd
+        self.claude_skill.approved_directory = new_cwd
+
+        # 重置 options，下一次 query 会用新的 approved_directory 重建
+        self.claude.mark_system_prompt_stale()
+        self.claude_memory.mark_system_prompt_stale()
+        self.claude_skill.mark_system_prompt_stale()
+
     async def _process_message(self, message: IncomingMessage) -> None:
         """处理单条消息：鉴权 → 媒体预处理 → 引用检测 → 查询"""
         h = self.handler
@@ -1093,18 +1116,19 @@ class MessageHandler:
         """Get or create a SessionWorker for the given chat_id."""
         async with self._workers_lock:
             if chat_id not in self._session_workers:
-                # Check concurrency limit
                 active = [w for w in self._session_workers.values() if w._running]
                 if len(active) >= self._max_concurrent_workers:
-                    # 达到上限时复用最旧的 worker
-                    # 该 worker 的队列会包含多个 chat_id 的消息（跨 worker 复用）
-                    # worker 处理时按 message.chat_id 正确路由，无需担心
                     oldest = min(active, key=lambda w: w._idle_since or 0)
                     logger.warning(
                         f"[WORKER_LIMIT] chat_id={chat_id} 复用 worker={oldest.chat_id} "
                         f"(active={len(active)}, max={self._max_concurrent_workers})"
                     )
-                self._session_workers[chat_id] = SessionWorker(chat_id, self)
+                    # 复用最旧 worker，更新其 chat_id 和 approved_directory
+                    worker = oldest
+                    worker.update_chat_id(chat_id)
+                    self._session_workers[chat_id] = worker
+                else:
+                    self._session_workers[chat_id] = SessionWorker(chat_id, self)
 
             worker = self._session_workers[chat_id]
             if worker.task is None or worker.task.done():
