@@ -832,6 +832,12 @@ class FeishuClient:
         except Exception as e:
             logger.warning(f"[PERMISSION_CHECK] members error: {e}")
 
-        auth_url = f"https://open.feishu.cn/app/{self.app_id}/permission/overview"
+        # 构建含权限参数的授权 URL
+        required = []
+        if not history_ok:
+            required.append("im:message.group_msg")
+        if not members_ok:
+            required.append("im:chat.members:read")
+        auth_url = f"https://open.feishu.cn/app/{self.app_id}/auth?q={','.join(required)}" if required else f"https://open.feishu.cn/app/{self.app_id}/permission/overview"
 
         return {"history_ok": history_ok, "members_ok": members_ok, "auth_url": auth_url}
