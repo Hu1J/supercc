@@ -8,8 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- **配置文件全面迁移至 JSON**：`config.yaml` 迁移为 `config.json`，自动从 YAML 降级迁移，保留所有字段（channels、auth、claude、codex、skill_nudge 等）
+- **配置文件全面迁移至 JSON**：`config.yaml` 迁移为 `config.json`，启动时自动迁移，保留所有字段（channels、auth、claude、codex、skill_nudge 等）
 - **README 文档更新**：配置文件路径更新为 per-project `{project}/.supercc/` 格式，说明 JSON 迁移
+
+### Fixed
+
+- **启动时自动迁移 config.json**：修复 `detect_config()` 只检查 JSON 不检查 YAML，导致已配置项目错误触发 onboard 的问题
+- **启动时自动迁移 model.json**：在 `start_bridge()` 中调用 `get_all_models()` 触发 `~/.supercc/models.yaml` → `{project}/.supercc/model.json` 迁移，实现全量配置启动时自动迁移
 
 ## [0.1.22] - 2026-05-02
 
