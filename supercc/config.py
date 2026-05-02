@@ -1,11 +1,12 @@
 """Configuration loading and validation."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict
 
-import yaml
+import yaml  # 仅用于旧版 YAML 配置迁移
 
 # sessions.db 固定放在家目录下，不同项目通过 session.project_path 区分
 SESSIONS_DB_PATH = str(Path.home() / ".supercc" / "sessions.db")
@@ -129,19 +130,20 @@ class Config:
     bypass_accepted: bool = False
 
 
-def _upgrade_config(path: str) -> None:
-    """Auto-upgrade config.yaml: add proactive section if missing, remove stale server section."""
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
+def _migrate_yaml_to_json(yaml_path: str, json_path: str) -> dict:
+    """从旧版 YAML 配置迁移到 JSON 格式。返回迁移后的 raw dict。"""
+    if not Path(yaml_path).exists():
+        return {}
+    try:
+        with open(yaml_path) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("迁移旧配置失败: %s", e)
+        return {}
 
-    changed = False
-
-    # Remove stale server section (deprecated in v0.2.3)
-    if "server" in raw:
-        del raw["server"]
-        changed = True
-
-    # Migrate legacy model names
+    # 应用旧版迁移逻辑（去除废弃字段等）
+    raw.pop("server", None)
     codex = raw.get("codex") or {}
     model_migrations = {
         "gpt-5.5-codex": "gpt-5.5",
@@ -150,27 +152,43 @@ def _upgrade_config(path: str) -> None:
     if codex.get("model") in model_migrations:
         codex["model"] = model_migrations[codex["model"]]
         raw["codex"] = codex
-        changed = True
 
-    if changed:
-        with open(path, "w") as f:
-            yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-
-def load_config(path: str, data_dir: str = "") -> Config:
-    """Load and validate configuration from YAML file."""
-    _upgrade_config(path)
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
-
-    # Migrate old-format config (feishu at top level) to new channels: format
+    # 旧格式迁移（feishu 在顶层 → channels）
     if "channels" not in raw and "feishu" in raw:
         raw["channels"] = {
             "feishu": raw.pop("feishu"),
             "dingtalk": {"enabled": False},
         }
-        with open(path, "w") as f:
-            yaml.dump(raw, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    return raw
+
+
+def _load_json_config(path: str) -> dict:
+    """读取 config.json，无则尝试从旧 YAML 迁移。"""
+    if Path(path).exists() and Path(path).stat().st_size > 0:
+        try:
+            with open(path) as f:
+                return json.load(f) or {}
+        except json.JSONDecodeError:
+            pass  # 损坏则当不存在处理
+
+    # 尝试从旧 YAML 迁移
+    yaml_path = Path(path).with_suffix(".yaml")
+    if yaml_path.exists():
+        raw = _migrate_yaml_to_json(str(yaml_path), path)
+        if raw:
+            with open(path, "w") as f:
+                json.dump(raw, f, indent=2, ensure_ascii=False)
+            import logging
+            logging.getLogger(__name__).info("已从 %s 迁移配置到 %s", yaml_path, path)
+            return raw
+
+    return {}
+
+
+def load_config(path: str, data_dir: str = "") -> Config:
+    """Load and validate configuration from JSON file（自动从 YAML 迁移）。"""
+    raw = _load_json_config(path)
 
     # Deserialize groups: convert raw dicts to GroupConfigEntry objects
     # Filter out unknown fields to tolerate future config additions gracefully.
@@ -222,7 +240,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 storage_db_path: str = "",
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
-    """Save a complete config to a YAML file (legacy param-based signature)."""
+    """Save a complete config to a JSON file（legacy param-based signature）。"""
     # 如果文件已存在，保留 codex 配置
     existing_codex = None
     if Path(path).exists():
@@ -258,7 +276,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
 
 
 def _write_config_to_path(path: str, cfg: Config) -> None:
-    """内部函数：将 cfg 写入指定路径。保留 path 参数给跨场景使用。"""
+    """内部函数：将 cfg 写入 JSON 文件。保留 path 参数给跨场景使用。"""
     _known_group_keys = {"enabled", "require_mention", "allow_from"}
     feishu_groups_raw = {}
     for gid, entry in cfg.channels.feishu.groups.items():
@@ -313,7 +331,7 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
+        json.dump(raw, f, indent=2, ensure_ascii=False)
 
 
 def register_group_config(config_path: str, group_id: str, entry: GroupConfigEntry | None = None) -> bool:
@@ -347,7 +365,8 @@ This directory is created automatically by `supercc` and contains the config for
 
 ## Contents
 
-- `config.yaml` — Bot credentials and configuration
+- `config.json` — Bot credentials and configuration（2026-05-02 起从 YAML 迁移）
+- `model.json` — 模型配置（per-project 隔离）
 - `skills/` — Private skills for this project
 - `cron_jobs.json` — Cron job definitions
 
@@ -366,7 +385,7 @@ This directory is gitignored. It should never be committed.
 def resolve_config_path() -> tuple[str, str]:
     """Resolve config and data directories.
 
-    Config lives in project dir: {cwd}/.supercc/config.yaml
+    Config lives in project dir: {cwd}/.supercc/config.json（2026-05-02 起从 YAML 迁移）
     Data (sessions, logs, PID) also lives in {cwd}/.supercc/.
 
     Auto-creates both directories if not found.
@@ -379,7 +398,7 @@ def resolve_config_path() -> tuple[str, str]:
     cwd = os.getcwd()
     cfg_dir = Path(cwd).resolve() / ".supercc"
     cfg_dir.mkdir(exist_ok=True)
-    cfg_path = cfg_dir / "config.yaml"
+    cfg_path = cfg_dir / "config.json"
     cfg_path.touch(exist_ok=True)
     readme_path = cfg_dir / "README.md"
     readme_path.write_text(README_CONTENT, errors="replace")

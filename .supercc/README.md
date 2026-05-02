@@ -4,7 +4,8 @@ This directory is created automatically by `supercc` and contains the config for
 
 ## Contents
 
-- `config.yaml` — Bot credentials and configuration
+- `config.json` — Bot credentials and configuration（2026-05-02 起从 YAML 迁移）
+- `model.json` — 模型配置（per-project 隔离）
 - `skills/` — Private skills for this project
 - `cron_jobs.json` — Cron job definitions
 

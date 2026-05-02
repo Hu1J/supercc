@@ -181,10 +181,10 @@ codex login
 
 ## 配置文件
 
-- `~/.supercc/config.yaml` — 飞书应用配置
-- `~/.supercc/models.yaml` — 多模型 API 配置
-- `~/.supercc/memories.db` — 记忆数据库（SQLite + FTS5）
-- `~/.supercc/cron_jobs.json` — 定时任务配置
+- `{project}/.supercc/config.json` — 飞书/钉钉应用配置（2026-05-02 起从 YAML 迁移）
+- `{project}/.supercc/model.json` — 多模型 API 配置（per-project 隔离）
+- `~/.supercc/memories.db` — 记忆数据库（SQLite + FTS5，跨项目共享）
+- `{project}/.supercc/cron_jobs.json` — 定时任务配置（per-project）
 - `~/.claude/skills/` — 全局 Skills 目录
 
 ---
@@ -206,10 +206,11 @@ SuperCC/
 │   ├── bridge/              # 消息桥接层
 │   ├── skills/              # 内置 Skills
 │   └── storage/             # 持久化存储
-├── .supercc/                # 用户数据（~/.supercc/）
-│   ├── config.yaml
-│   ├── models.yaml
-│   └── memories.db
+├── .supercc/                # 用户数据（per-project，{project}/.supercc/）
+│   ├── config.json          # 主配置（飞书/钉钉）
+│   ├── model.json           # 模型配置
+│   └── cron_jobs.json      # 定时任务
+└── README.md
 └── README.md
 ```
 
@@ -218,7 +219,7 @@ SuperCC/
 ## 常见问题
 
 **Q: 飞书机器人收不到消息？**
-检查 `~/.supercc/config.yaml` 中的 `app_id`/`app_secret` 是否正确，机器人是否已启用。
+检查 `{project}/.supercc/config.json` 中的 `app_id`/`app_secret` 是否正确，机器人是否已启用。
 
 **Q: 群聊 @CC 时上下文消息注入不生效？**
 确认飞书应用已开通 `im:message.group_msg` 权限，否则 `get_chat_history()` 无法拉取群聊历史。
