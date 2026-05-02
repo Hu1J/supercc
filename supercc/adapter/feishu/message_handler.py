@@ -464,7 +464,7 @@ class SessionWorker:
                                 for m in members
                             ) if member_id
                         ], ensure_ascii=False)
-                        h.sessions.update_group_members(message.chat_id, members_json)
+                        h.sessions.update_group_members(session.session_id, members_json)
                     except Exception as e:
                         logger.debug(f"[GROUP_MEMBERS] failed to persist: {e}")
             except Exception as ex:

@@ -42,10 +42,10 @@ def _get_data_dir() -> str:
 def _get_chat_id() -> Optional[str]:
     from supercc.claude.session_manager import SessionManager
     from supercc.config import resolve_config_path, SESSIONS_DB_PATH
-    _, _ = resolve_config_path()
+    project_path, _ = resolve_config_path()
     db_path = SESSIONS_DB_PATH
     sm = SessionManager(db_path=db_path)
-    session = sm.get_active_session_by_chat_id()
+    session = sm.get_active_session_by_chat_id(project_path=project_path)
     return session.chat_id if session else None
 
 
@@ -142,7 +142,8 @@ async def cron_delete(args: dict) -> dict:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
 
     # Verify job belongs to current chat_id (group isolation)
-    if chat_id and job.get("chat_id") != chat_id:
+    job_chat_id = job.get("chat_id")
+    if job_chat_id is not None and job_chat_id != chat_id:
         return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     ok = delete_job(job_id, data_dir)
@@ -168,7 +169,8 @@ async def cron_pause(args: dict) -> dict:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
 
     # Verify job belongs to current chat_id (group isolation)
-    if chat_id and job.get("chat_id") != chat_id:
+    job_chat_id = job.get("chat_id")
+    if job_chat_id is not None and job_chat_id != chat_id:
         return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     updated = update_job(job_id, {"enabled": False, "state": "paused"}, data_dir)
@@ -194,7 +196,8 @@ async def cron_resume(args: dict) -> dict:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
 
     # Verify job belongs to current chat_id (group isolation)
-    if chat_id and job.get("chat_id") != chat_id:
+    job_chat_id = job.get("chat_id")
+    if job_chat_id is not None and job_chat_id != chat_id:
         return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     updated = update_job(job_id, {"enabled": True, "state": "scheduled"}, data_dir)
@@ -220,7 +223,8 @@ async def cron_trigger(args: dict) -> dict:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
 
     # Verify job belongs to current chat_id (group isolation)
-    if chat_id and job.get("chat_id") != chat_id:
+    job_chat_id = job.get("chat_id")
+    if job_chat_id is not None and job_chat_id != chat_id:
         return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     if not job.get("enabled"):
@@ -253,7 +257,8 @@ async def cron_logs(args: dict) -> dict:
     job = result["job"]
 
     # Verify job belongs to current chat_id (group isolation)
-    if chat_id and job.get("chat_id") != chat_id:
+    job_chat_id = job.get("chat_id")
+    if job_chat_id is not None and job_chat_id != chat_id:
         return {"content": [{"type": "text", "text": f"无权查看其他群聊的定时任务"}], "is_error": True}
 
     runs = result.get("runs", [])

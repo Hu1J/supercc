@@ -267,16 +267,26 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
 
-    def get_active_session_by_chat_id(self) -> Optional[Session]:
-        """Get the most recent session that has a chat_id set."""
+    def get_active_session_by_chat_id(self, project_path: str | None = None) -> Optional[Session]:
+        """Get the most recent session that has a chat_id set (optionally filtered by project_path)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                """SELECT * FROM sessions
-                   WHERE chat_id IS NOT NULL AND chat_id != ''
-                   ORDER BY last_used DESC
-                   LIMIT 1""",
-            ).fetchone()
+            if project_path:
+                row = conn.execute(
+                    """SELECT * FROM sessions
+                       WHERE chat_id IS NOT NULL AND chat_id != ''
+                       AND project_path = ?
+                       ORDER BY last_used DESC
+                       LIMIT 1""",
+                    (project_path,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT * FROM sessions
+                       WHERE chat_id IS NOT NULL AND chat_id != ''
+                       ORDER BY last_used DESC
+                       LIMIT 1""",
+                ).fetchone()
             if row:
                 return Session(
                     session_id=row["session_id"],
@@ -311,15 +321,12 @@ class SessionManager:
                 (chat_id, user_id),
             )
 
-    def update_group_members(self, chat_id: str, group_members: str) -> None:
+    def update_group_members(self, session_id: str, group_members: str) -> None:
         """Store group members JSON for a session (enables _is_group_chat detection)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                """UPDATE sessions
-                   SET group_members = ?
-                   WHERE chat_id = ? AND (group_members IS NULL OR group_members = '')
-                   LIMIT 1""",
-                (group_members, chat_id),
+                """UPDATE sessions SET group_members = ? WHERE session_id = ?""",
+                (group_members, session_id),
             )
 
     def get_all_users(self) -> list[Session]:
