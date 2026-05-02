@@ -245,11 +245,17 @@ async def cron_logs(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "job_id 是必填的"}], "is_error": True}
 
     data_dir = _get_data_dir()
+    chat_id = _get_chat_id()
     result = get_job_logs(job_id, data_dir)
     if not result or not result.get("job"):
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
 
     job = result["job"]
+
+    # Verify job belongs to current chat_id (group isolation)
+    if chat_id and job.get("chat_id") != chat_id:
+        return {"content": [{"type": "text", "text": f"无权查看其他群聊的定时任务"}], "is_error": True}
+
     runs = result.get("runs", [])
 
     if not runs:

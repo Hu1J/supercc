@@ -959,8 +959,11 @@ class CronScheduler:
                     logger.exception("[cron] poll_skill_changes_and_notify error")
 
         # Deliver any pending notifications that have reached their notify_at time
+        # Filter by scoped chat_id if set (per-chat-id isolation)
         pending_store = _PendingStore(self.data_dir)
         due_pending = pending_store.get_due()
+        if self.chat_id:
+            due_pending = [e for e in due_pending if e.get("chat_id") == self.chat_id]
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
             from supercc.adapter.feishu.client import FeishuClient
