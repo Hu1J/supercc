@@ -537,37 +537,46 @@ class MessageHandler:
 
         # 群聊时：获取成员列表，注入 @mention 指令到 system prompt
         if message.is_group_chat and message.chat_id:
-            # 首次被 @mention 时，检查两个必要权限是否具备
-            first_mention_key = f"_perm_checked_{message.chat_id}"
-            if not getattr(self, first_mention_key, False):
-                setattr(self, first_mention_key, True)
-                try:
-                    perm = await self.feishu.check_group_permissions(message.chat_id)
-                    auth_url = perm.get("auth_url", "")
-                    missing = []
-                    if not perm.get("history_ok"):
-                        missing.append("读取群聊历史（im:message.group_msg）")
-                    if not perm.get("members_ok"):
-                        missing.append("读取群成员信息（im:chat.members:read）")
-                    if missing:
+            # 每次消息都检查权限（在所有群聊接口调用之前执行）
+            already_sent_key = f"_perm_sent_{message.chat_id}"
+            try:
+                perm = await self.feishu.check_group_permissions(message.chat_id)
+                auth_url = perm.get("auth_url", "")
+                missing = []
+                if not perm.get("history_ok"):
+                    missing.append("读取群聊历史（im:message.group_msg）")
+                if not perm.get("members_ok"):
+                    missing.append("读取群成员信息（im:chat.members:read）")
+                if missing:
+                    logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
+                    # 首次权限不足：发送授权卡片，然后 return
+                    if not getattr(self, already_sent_key, False):
+                        setattr(self, already_sent_key, True)
                         missing_text = "\n".join(f"- {m}" for m in missing)
                         card = {
                             "schema": "2.0",
-                            "config": {"wide_screen_mode": True},
                             "body": {
                                 "elements": [
-                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员点击下方按钮前往授权，授权完成后再重新发送消息。"},
-                                    {"tag": "action", "actions": [
-                                        {"tag": "link", "text": "前往授权", "url": auth_url}
-                                    ]},
+                                    {"tag": "markdown", "content": f"## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n{missing_text}\n\n请管理员前往飞书开放平台授权，授权完成后再重新发送消息。"},
                                 ]
                             }
                         }
-                        await self.feishu.send_interactive_reply(message.chat_id, card, message.message_id)
-                        logger.warning(f"[GROUP_PERM] missing permissions in {message.chat_id}: {missing}")
-                        return  # 消息不处理，等用户重新发
-                except Exception as ex:
-                    logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
+                        try:
+                            await self.feishu.send_interactive(message.chat_id, card, message.message_id)
+                        except Exception as card_err:
+                            err_str = str(card_err)
+                            fallback = (
+                                f"⚠️ 授权卡片发送失败\n\n"
+                                f"Feishu 错误：{err_str}\n\n"
+                                f"缺少权限：\n{missing_text}\n\n"
+                                f"授权链接：{auth_url}"
+                            )
+                            await self._safe_send(message.chat_id, message.message_id, fallback)
+                            logger.warning(f"[GROUP_PERM] card send failed, fallback text sent: {card_err}")
+                        return  # 首次权限不足：return，等用户重新发
+                    # 已发过授权卡片：继续正常处理（功能受限但不阻塞）
+            except Exception as ex:
+                logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
             try:
                 members = await self.feishu.get_chat_members(message.chat_id)
                 self._current_group_members = members  # 供后续追加 mention 使用
@@ -583,7 +592,7 @@ class MessageHandler:
                             sender_name = m.get("name") or m.get("bot_name") or getattr(m, "name", None) or ""
                             break
                     lines = [
-                        f"【群聊规则】每次回复时，必须在最终回复里艾特相关用户（发送者{sender_name or message.user_open_id}及被提及者）。使用格式：<at user_id=\"open_id\">姓名</at>。不得遗漏。",
+                        f"【群聊规则】必须在最终回复里艾特@{sender_name or message.user_open_id} 以及相关人员。需要使用飞书特定的@格式如：{{消息内容}}<at user_id=\"open_id\">姓名</at>。不得遗漏。",
                     ]
                     for m in members:
                         if isinstance(m, dict):
@@ -1557,27 +1566,26 @@ class MessageHandler:
                         log_reply=False,
                     )
 
-            # 群聊时：检查最后一条回复是否包含 mention，无则追加提问者
-            # Send final text response as a Feishu card if no text was streamed.
-            # If text was streamed in real-time, it is already visible and not sent again.
-            def _has_mention(text: str) -> bool:
-                return bool(text and "<at user_id=" in text)
+            # 群聊时：检查回复是否已 mention 提问者本人，无则追加
+            def _mentions_user(text: str, user_id: str) -> bool:
+                return bool(text and f'<at user_id="{user_id}"' in text)
 
-            if not accumulator.sent_something:
-                if response:
-                    formatted = self.formatter.format_text(response)
+            if mention_tag:
+                sender_id = message.user_open_id
+                if not accumulator.sent_something and _last_response:
+                    # 非流式：检查 response 是否已 mention 提问者
+                    formatted = self.formatter.format_text(_last_response)
                     chunks = self.formatter.split_messages(formatted)
-                    last_has_mention = _has_mention(chunks[-1]) if chunks else False
-                    if chunks and mention_tag and not last_has_mention:
+                    if chunks and not _mentions_user(chunks[-1], sender_id):
                         chunks[-1] = chunks[-1].rstrip() + mention_tag
-                    for chunk in chunks:
-                        await self._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
-            elif mention_tag:
-                # 流式路径：检查已发送内容是否已有 mention，无则追加
-                async with accumulator._lock:
-                    buffered = accumulator._buffer
-                if not _has_mention(buffered):
-                    await self._safe_send(message.chat_id, message.message_id, mention_tag)
+                        for chunk in chunks:
+                            await self._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
+                else:
+                    # 流式：检查 _buffer 是否已 mention 提问者，无则追加
+                    async with accumulator._lock:
+                        buffered = accumulator._buffer
+                    if not _mentions_user(buffered, sender_id):
+                        await self._safe_send(message.chat_id, message.message_id, mention_tag)
 
         except asyncio.CancelledError:
             await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
