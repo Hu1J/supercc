@@ -570,6 +570,7 @@ class MessageHandler:
                     logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
             try:
                 members = await self.feishu.get_chat_members(message.chat_id)
+                self._current_group_members = members  # 供后续追加 mention 使用
                 if members:
                     lines = [
                         "【群聊 @mention 规则】每次回复时，必须在末尾 mention 所有相关用户（发送者及被提及者）。使用格式：<at user_id=\"open_id\">姓名</at>。不得遗漏。",
@@ -1287,6 +1288,20 @@ class MessageHandler:
             # 自动重试最多 3 次，每次用新的 accumulator 确保 stream 状态干净。
             last_cost = 0.0
             _stream_too_long = [False]
+            # 预计算 mention tag（群聊时）
+            mention_tag = ""
+            if message.is_group_chat and hasattr(self, "_current_group_members"):
+                members = self._current_group_members or []
+                for m in members:
+                    if isinstance(m, dict):
+                        member_id = m.get("member_id") or m.get("open_id") or ""
+                        name = m.get("name") or ""
+                    else:
+                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                        name = getattr(m, "name", None) or ""
+                    if member_id == message.user_open_id and name:
+                        mention_tag = f"\n<at user_id=\"{member_id}\">{name}</at>"
+                        break
             for retry_round in range(3):
                 accumulator = StreamAccumulator(message.chat_id, message.message_id, self._safe_send)
 
@@ -1532,14 +1547,27 @@ class MessageHandler:
                         log_reply=False,
                     )
 
+            # 群聊时：检查最后一条回复是否包含 mention，无则追加提问者
             # Send final text response as a Feishu card if no text was streamed.
             # If text was streamed in real-time, it is already visible and not sent again.
+            def _has_mention(text: str) -> bool:
+                return bool(text and "<at user_id=" in text)
+
             if not accumulator.sent_something:
                 if response:
                     formatted = self.formatter.format_text(response)
                     chunks = self.formatter.split_messages(formatted)
+                    last_has_mention = _has_mention(chunks[-1]) if chunks else False
+                    if chunks and mention_tag and not last_has_mention:
+                        chunks[-1] = chunks[-1].rstrip() + mention_tag
                     for chunk in chunks:
                         await self._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
+            elif mention_tag:
+                # 流式路径：检查已发送内容是否已有 mention，无则追加
+                async with accumulator._lock:
+                    buffered = accumulator._buffer
+                if not _has_mention(buffered):
+                    await self._safe_send(message.chat_id, message.message_id, mention_tag)
 
         except asyncio.CancelledError:
             await self._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
