@@ -51,6 +51,27 @@ def _get_active_chat_id(data_dir: str) -> str | None:
     except Exception:
         return None
 
+
+def _is_group_chat(data_dir: str, chat_id: str) -> bool:
+    """Check if a chat_id is a group chat (has members in DB)."""
+    db_path = SESSIONS_DB_PATH
+    if not os.path.exists(db_path):
+        return False
+    project_path = str(Path(data_dir).resolve().parent)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT group_members FROM sessions WHERE chat_id = ? AND project_path = ? LIMIT 1",
+                (chat_id, project_path),
+            ).fetchone()
+            if row:
+                members = row["group_members"]
+                return members is not None and members != ""
+            return False
+    except Exception:
+        return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -416,8 +437,11 @@ def get_job(job_id: str, data_dir: str) -> Optional[dict]:
     return None
 
 
-def list_jobs(data_dir: str) -> list:
-    return _CronStore(data_dir).load_jobs()
+def list_jobs(data_dir: str, chat_id: str | None = None) -> list:
+    jobs = _CronStore(data_dir).load_jobs()
+    if chat_id:
+        jobs = [j for j in jobs if j.get("chat_id") == chat_id]
+    return jobs
 
 
 def update_job(job_id: str, updates: dict, data_dir: str) -> Optional[dict]:
@@ -498,11 +522,13 @@ def mark_run(
         return
 
 
-def get_due_jobs(data_dir: str) -> list:
-    """Return all jobs that are due to run now."""
+def get_due_jobs(data_dir: str, chat_id: str | None = None) -> list:
+    """Return all jobs that are due to run now. If chat_id is set, only return jobs for that chat_id."""
     now = _utcnow()
     store = _CronStore(data_dir)
     jobs = store.load_jobs()
+    if chat_id:
+        jobs = [j for j in jobs if j.get("chat_id") == chat_id]
     due = []
 
     for job in jobs:
@@ -836,15 +862,23 @@ class CronScheduler:
     Background scheduler that checks for due cron jobs every 60 seconds.
 
     Usage:
-        scheduler = CronScheduler(config, data_dir)
+        scheduler = CronScheduler(config, data_dir, chat_id=None)
         scheduler.start()
         # ... bridge runs ...
         scheduler.stop()
+
+    Args:
+        config: SuperCC Config object
+        data_dir: SuperCC data directory path
+        chat_id: Optional chat_id for job filtering. If set, only jobs for this chat_id
+                 are processed, and P2P-only features (skill nudge) are also scoped.
+                 In group chats, skill nudge is disabled.
     """
 
-    def __init__(self, config: Config, data_dir: str):
+    def __init__(self, config: Config, data_dir: str, chat_id: str | None = None):
         self.config = config
         self.data_dir = data_dir
+        self.chat_id = chat_id  # scope jobs and features to this chat_id
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = asyncio.Event()
@@ -895,30 +929,34 @@ class CronScheduler:
 
     async def _tick(self):
         """Check for due jobs and run them. Awaits all jobs to ensure completion."""
-        # Poll skill changes on every tick (independent of job scheduling)
+        # Poll skill changes on every tick (P2P only — not group chats)
+        # Skill nudge is a P2P feature, should not fire in group chats.
+        # Only run if we have a scoped chat_id AND it's confirmed NOT a group chat.
         skills_dir = Path(self.data_dir) / "skills"
-        if skills_dir.exists():
-            from supercc.evolve.skill_nudge import poll_skill_changes_and_notify
-            from supercc.adapter.feishu.client import FeishuClient
-            feishu = FeishuClient(
-                app_id=self.config.channels.feishu.app_id,
-                app_secret=self.config.channels.feishu.app_secret,
-                bot_name=self.config.channels.feishu.bot_name,
-                data_dir=self.data_dir,
-            )
-
-            async def _skill_send(cid, text):
-                await feishu.send_post(cid, text)
-
-            try:
-                await poll_skill_changes_and_notify(
+        if skills_dir.exists() and self.chat_id:
+            is_group = _is_group_chat(self.data_dir, self.chat_id)
+            if not is_group:
+                from supercc.evolve.skill_nudge import poll_skill_changes_and_notify
+                from supercc.adapter.feishu.client import FeishuClient
+                feishu = FeishuClient(
+                    app_id=self.config.channels.feishu.app_id,
+                    app_secret=self.config.channels.feishu.app_secret,
+                    bot_name=self.config.channels.feishu.bot_name,
                     data_dir=self.data_dir,
-                    skills_dir=skills_dir,
-                    send_to_feishu=_skill_send,
-                    get_chat_id=lambda dd: _get_active_chat_id(dd),
                 )
-            except Exception:
-                logger.exception("[cron] poll_skill_changes_and_notify error")
+
+                async def _skill_send(cid, text):
+                    await feishu.send_post(cid, text)
+
+                try:
+                    await poll_skill_changes_and_notify(
+                        data_dir=self.data_dir,
+                        skills_dir=skills_dir,
+                        send_to_feishu=_skill_send,
+                        get_chat_id=lambda dd: self.chat_id,  # Use scoped chat_id
+                    )
+                except Exception:
+                    logger.exception("[cron] poll_skill_changes_and_notify error")
 
         # Deliver any pending notifications that have reached their notify_at time
         pending_store = _PendingStore(self.data_dir)
@@ -969,7 +1007,7 @@ class CronScheduler:
                 except Exception as e:
                     logger.warning(f"[cron] Pending notification delivery failed: {e}")
 
-        due = get_due_jobs(self.data_dir)
+        due = get_due_jobs(self.data_dir, chat_id=self.chat_id)
         # Filter out jobs that are already running (prevents overlap if job takes >60s)
         due = [j for j in due if j["id"] not in self._running_jobs]
         if not due:

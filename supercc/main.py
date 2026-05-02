@@ -100,7 +100,7 @@ from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.session_manager import SessionManager
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
-from supercc.cron_scheduler import CronScheduler
+from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
 from supercc.claude.cron_tools import set_cron_scheduler
 
 logger = logging.getLogger(__name__)
@@ -109,13 +109,20 @@ logger = logging.getLogger(__name__)
 def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     """Register a daily skill optimization scan job.
 
-    Creates a cron job that delivers results to the active user's chat.
+    Creates a cron job that delivers results to the active user's P2P chat.
+    Only registers if active chat is P2P (not group).
     """
     # Get chat_id from active session
     from supercc.cron_scheduler import list_jobs, create_job
+
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
         logger.info("[skill_optimize] no active chat_id, skipping")
+        return
+
+    # Only register in P2P chats, not group chats
+    if _is_group_chat(data_dir, chat_id):
+        logger.info("[skill_optimize] active chat is a group, skipping registration")
         return
 
     # Idempotency: skip if a "Skill 优化扫描" job already exists
@@ -165,23 +172,6 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
         logger.info("[skill_optimize] registered daily scan at 9am")
     except Exception as e:
         logger.warning(f"[skill_optimize] failed to register: {e}")
-
-
-def _get_active_chat_id(data_dir: str) -> str | None:
-    """Get the most recent active session's chat_id."""
-    db_path = SESSIONS_DB_PATH
-    if not os.path.exists(db_path):
-        return None
-    try:
-        import sqlite3
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
-            ).fetchone()
-            return row["chat_id"] if row else None
-    except Exception:
-        return None
 
 
 class _SafeStreamHandler(logging.StreamHandler):

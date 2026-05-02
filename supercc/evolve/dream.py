@@ -45,16 +45,20 @@ def get_dream_prompt() -> str:
 
 def register_dream_job(data_dir: str) -> bool:
     """
-    Register the dream cron job (idempotent).
+    Register the dream cron job (idempotent, P2P only).
 
-    Returns True if registered, False if skipped (already exists or no chat_id).
+    Returns True if registered, False if skipped (already exists, no chat_id, or group chat).
     """
-    from supercc.cron_scheduler import list_jobs, create_job
-    from supercc.main import _get_active_chat_id
+    from supercc.cron_scheduler import list_jobs, create_job, _get_active_chat_id, _is_group_chat
 
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
         logger.info("[dream] no active chat_id, skipping")
+        return False
+
+    # Check if active chat is a group — only register in P2P chats
+    if _is_group_chat(data_dir, chat_id):
+        logger.info("[dream] active chat is a group, skipping registration")
         return False
 
     existing = list_jobs(data_dir)

@@ -113,7 +113,9 @@ async def cron_create(args: dict) -> dict:
 )
 async def cron_list(args: dict) -> dict:
     data_dir = _get_data_dir()
-    jobs = list_jobs(data_dir)
+    chat_id = _get_chat_id()
+    # Filter to current chat_id's jobs for group chat isolation
+    jobs = list_jobs(data_dir, chat_id=chat_id)
     if not jobs:
         return {"content": [{"type": "text", "text": "📭 暂无定时任务。"}]}
     lines = [f"⏰ 定时任务（共 {len(jobs)} 个）\n"]
@@ -134,9 +136,14 @@ async def cron_delete(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "job_id 是必填的"}], "is_error": True}
 
     data_dir = _get_data_dir()
+    chat_id = _get_chat_id()
     job = get_job(job_id, data_dir)
     if not job:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
+
+    # Verify job belongs to current chat_id (group isolation)
+    if chat_id and job.get("chat_id") != chat_id:
+        return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     ok = delete_job(job_id, data_dir)
     if ok:
@@ -155,9 +162,14 @@ async def cron_pause(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "job_id 是必填的"}], "is_error": True}
 
     data_dir = _get_data_dir()
+    chat_id = _get_chat_id()
     job = get_job(job_id, data_dir)
     if not job:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
+
+    # Verify job belongs to current chat_id (group isolation)
+    if chat_id and job.get("chat_id") != chat_id:
+        return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     updated = update_job(job_id, {"enabled": False, "state": "paused"}, data_dir)
     if updated:
@@ -176,9 +188,14 @@ async def cron_resume(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "job_id 是必填的"}], "is_error": True}
 
     data_dir = _get_data_dir()
+    chat_id = _get_chat_id()
     job = get_job(job_id, data_dir)
     if not job:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
+
+    # Verify job belongs to current chat_id (group isolation)
+    if chat_id and job.get("chat_id") != chat_id:
+        return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     updated = update_job(job_id, {"enabled": True, "state": "scheduled"}, data_dir)
     if updated:
@@ -197,9 +214,14 @@ async def cron_trigger(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "job_id 是必填的"}], "is_error": True}
 
     data_dir = _get_data_dir()
+    chat_id = _get_chat_id()
     job = get_job(job_id, data_dir)
     if not job:
         return {"content": [{"type": "text", "text": f"未找到 job_id={job_id} 的任务"}], "is_error": True}
+
+    # Verify job belongs to current chat_id (group isolation)
+    if chat_id and job.get("chat_id") != chat_id:
+        return {"content": [{"type": "text", "text": f"无权操作其他群聊的定时任务"}], "is_error": True}
 
     if not job.get("enabled"):
         return {"content": [{"type": "text", "text": f"任务 `{job_id}` 已暂停，请先 resume"}], "is_error": True}
