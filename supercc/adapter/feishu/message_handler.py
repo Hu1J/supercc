@@ -572,8 +572,18 @@ class MessageHandler:
                 members = await self.feishu.get_chat_members(message.chat_id)
                 self._current_group_members = members  # 供后续追加 mention 使用
                 if members:
+                    # 查找发送者名称
+                    sender_name = None
+                    for m in members:
+                        if isinstance(m, dict):
+                            member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                        else:
+                            member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
+                        if member_id == message.user_open_id:
+                            sender_name = m.get("name") or m.get("bot_name") or getattr(m, "name", None) or ""
+                            break
                     lines = [
-                        "【群聊 @mention 规则】每次回复时，必须在末尾 mention 所有相关用户（发送者及被提及者）。使用格式：<at user_id=\"open_id\">姓名</at>。不得遗漏。",
+                        f"【群聊规则】每次回复时，必须在最终回复里艾特相关用户（发送者{sender_name or message.user_open_id}及被提及者）。使用格式：<at user_id=\"open_id\">姓名</at>。不得遗漏。",
                     ]
                     for m in members:
                         if isinstance(m, dict):
