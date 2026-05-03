@@ -113,7 +113,7 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     Only registers if active chat is P2P (not group).
     """
     # Get chat_id from active session
-    from supercc.cron_scheduler import list_jobs, create_job
+    from supercc.cron_scheduler import list_jobs, create_job, delete_job
 
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
@@ -125,11 +125,12 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
         logger.info("[skill_optimize] active chat is a group, skipping registration")
         return
 
-    # Idempotency: skip if a "Skill 优化扫描" job already exists
+    # Force overwrite: delete any existing "Skill 优化扫描" job first
     existing = list_jobs(data_dir)
-    if any(j.get("name") == "Skill 优化扫描" for j in existing):
-        logger.info("[skill_optimize] job already registered, skipping")
-        return
+    for j in existing:
+        if j.get("name") == "Skill 优化扫描":
+            delete_job(j["id"], data_dir)
+            logger.info("[skill_optimize] removed existing job, will recreate")
 
     prompt = """【Skill 优化扫描 — 直接动手，不要只给建议】
 

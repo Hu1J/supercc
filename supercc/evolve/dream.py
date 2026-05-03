@@ -61,10 +61,13 @@ def register_dream_job(data_dir: str) -> bool:
         logger.info("[dream] active chat is a group, skipping registration")
         return False
 
+    # Force overwrite: delete any existing "做梦" job first
     existing = list_jobs(data_dir)
-    if any(j.get("name") == "做梦" for j in existing):
-        logger.info("[dream] job already registered, skipping")
-        return False
+    for j in existing:
+        if j.get("name") == "做梦":
+            from supercc.cron_scheduler import delete_job
+            delete_job(j["id"], data_dir)
+            logger.info("[dream] removed existing job, will recreate")
 
     try:
         create_job(
