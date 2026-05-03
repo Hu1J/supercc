@@ -43,7 +43,7 @@ class ProjectModelEntry:
 # ── 全局单例 ─────────────────────────────────────────────────────────────────
 
 _model_env_instance: ModelEnv | None = None
-_model_json_path: str = ""
+_current_project_path: str = ""  # 当前项目路径
 
 
 def init_model_env(project_path: str) -> ModelEnv:
@@ -52,8 +52,8 @@ def init_model_env(project_path: str) -> ModelEnv:
     加载 ~/.supercc/model.json，并用 project_path 对应的 projects 映射
     初始化当前激活的 ModelEnv。之后所有地方用 get_model_env() 获取同一对象。
     """
-    global _model_env_instance, _model_json_path
-    _model_json_path = project_path
+    global _model_env_instance, _current_project_path
+    _current_project_path = project_path
     _model_env_instance = _load_and_resolve(project_path)
     return _model_env_instance
 
@@ -65,28 +65,107 @@ def get_model_env() -> ModelEnv:
     return _model_env_instance
 
 
-def _model_json_path() -> str:
-    return GLOBAL_MODEL_PATH
-
-
 # ── JSON 文件读写 ─────────────────────────────────────────────────────────────
 
 def _ensure_model_dir() -> None:
     Path(GLOBAL_MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _is_old_format(raw: dict) -> bool:
+    """检查是否为旧格式（active_model + models）。"""
+    return "active_model" in raw or "models" in raw
+
+
+def _migrate_from_old_format(raw: dict, project_path: str) -> dict:
+    """从旧格式迁移到新格式。"""
+    # 提取 active_model
+    active_id = raw.get("active_model", "")
+    old_models: dict = raw.get("models", {})
+
+    # 构建 providers
+    providers: dict[str, dict] = {}
+    for mid, mentry in old_models.items():
+        base_url = mentry.get("env", {}).get("ANTHROPIC_BASE_URL", "")
+        api_key = mentry.get("env", {}).get("ANTHROPIC_AUTH_TOKEN", "")
+
+        # 从 base_url 推导 provider_id
+        provider_id = None
+        for pid, provider in PROVIDERS.items():
+            if provider.base_url and base_url == provider.base_url:
+                provider_id = pid
+                break
+        if provider_id is None:
+            provider_id = mid  # fallback
+
+        providers[provider_id] = {
+            "api_key": api_key,
+            "models": [],  # 启动时会从预置同步
+        }
+
+    # 构建 projects
+    projects: dict[str, dict] = {}
+    if active_id and active_id in old_models:
+        active_entry = old_models[active_id]
+        base_url = active_entry.get("env", {}).get("ANTHROPIC_BASE_URL", "")
+        model_id = active_entry.get("env", {}).get("ANTHROPIC_MODEL", "")
+
+        # 推导 provider_id
+        provider_id = None
+        for pid, provider in PROVIDERS.items():
+            if provider.base_url and base_url == provider.base_url:
+                provider_id = pid
+                break
+        if provider_id is None:
+            provider_id = active_id
+
+        projects[project_path] = {
+            "provider_id": provider_id,
+            "model_id": model_id,
+        }
+
+    return {
+        "providers": providers,
+        "projects": projects,
+    }
+
+
 def _load_json() -> dict:
-    """读取全局 model.json，返回字典。无文件则创建默认配置。
+    """读取全局 model.json，返回字典。无文件则从旧项目配置迁移。
 
     每次读取时，同步预置供应商的 models 列表（保留 api_key，projects 不变）。
+    如果文件不存在，尝试从旧项目级 model.json 迁移。
     """
     if not os.path.exists(GLOBAL_MODEL_PATH):
+        # 尝试从旧项目级 model.json 迁移
+        project_path = _current_project_path
+        old_path = os.path.join(project_path, ".supercc", "model.json")
+        if os.path.exists(old_path):
+            try:
+                with open(old_path) as f:
+                    old_raw = json.load(f) or {}
+                if _is_old_format(old_raw):
+                    logger.info("从旧项目配置迁移: %s", old_path)
+                    raw = _migrate_from_old_format(old_raw, project_path)
+                    _save_json(raw)
+                    logger.info("迁移完成")
+                    return raw
+            except Exception as e:
+                logger.warning("迁移旧配置失败: %s", e)
+
         _create_default_config()
         with open(GLOBAL_MODEL_PATH) as f:
             return json.load(f) or {}
 
     with open(GLOBAL_MODEL_PATH) as f:
         raw = json.load(f) or {}
+
+    # 旧格式迁移（全局文件本身是旧格式）
+    if _is_old_format(raw):
+        logger.info("检测到旧格式 model.json，开始迁移到新格式")
+        raw = _migrate_from_old_format(raw, _current_project_path)
+        _save_json(raw)
+        logger.info("迁移完成")
+        return raw
 
     # 同步预置供应商的 models 列表（保留已有 api_key，projects 不变）
     changed = False
@@ -236,9 +315,9 @@ def update_provider_api_key(provider_id: str, api_key: str) -> tuple[bool, str]:
     # 如果当前项目的激活映射正好是这个 provider，刷新单例
     global _model_env_instance
     if _model_env_instance is not None:
-        current_pid, current_mid = get_active_model_for_project(_model_json_path)
+        current_pid, current_mid = get_active_model_for_project(_current_project_path)
         if current_pid == provider_id:
-            _model_env_instance = _resolve_active_env(_model_json_path)
+            _model_env_instance = _resolve_active_env(_current_project_path)
     return True, ""
 
 
@@ -294,7 +373,7 @@ def get_providers_for_display() -> list[tuple[str, str, str, list[str], bool]]:
     raw = _load_json()
     providers_raw: dict[str, dict] = raw.get("providers", {})
     projects: dict[str, dict] = raw.get("projects", {})
-    current_project = _model_json_path if _model_json_path else ""
+    current_project = _current_project_path if _current_project_path else ""
     current_entry = projects.get(current_project, {})
     current_pid = current_entry.get("provider_id", "")
 
