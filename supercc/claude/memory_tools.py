@@ -109,7 +109,7 @@ async def memory_list_user(args: dict) -> dict:
     if user_open_id:
         prefs = mm.get_preferences_by_user(user_open_id, platform=platform)
     else:
-        prefs = mm.get_all_preferences(platform=platform)
+        prefs = []
     if not prefs:
         return {"content": [{"type": "text", "text": "📭 暂无用户偏好记录。"}]}
     lines = [f"👤 用户偏好（共 {len(prefs)} 条）\n"]
@@ -127,6 +127,8 @@ async def memory_list_user(args: dict) -> dict:
 async def memory_search_user(args: dict) -> dict:
     query = args.get("query", "").strip()
     user_open_id = args.get("user_open_id", "").strip() or _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": f"未找到与「{query}」相关的用户偏好。"}]}
     if not query:
         return {"content": [{"type": "text", "text": "查询词不能为空"}], "is_error": True}
     mm = get_memory_manager()
@@ -176,7 +178,7 @@ async def memory_delete_proj(args: dict) -> dict:
     mm = get_memory_manager()
     platform = get_current_platform()
     chat_id = get_current_chat_id() or ""
-    deleted = mm.delete_project_memory(args["id"], platform=platform, chat_id=chat_id)
+    deleted = mm.delete_project_memory(args["id"], args.get("project_path", ""), platform=platform, chat_id=chat_id)
     if deleted:
         return {"content": [{"type": "text", "text": f"🗑️ 项目记忆 {deleted['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}
@@ -196,7 +198,7 @@ async def memory_update_proj(args: dict) -> dict:
     mm = get_memory_manager()
     platform = get_current_platform()
     chat_id = get_current_chat_id() or ""
-    ok = mm.update_project_memory(args["id"], title, content, keywords, platform=platform, chat_id=chat_id)
+    ok = mm.update_project_memory(args["id"], title, content, keywords, args.get("project_path", ""), platform=platform, chat_id=chat_id)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 项目记忆 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}

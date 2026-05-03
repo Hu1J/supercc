@@ -1664,7 +1664,7 @@ class MessageHandler:
         elif action == "del":
             if not raw_args:
                 return HandlerResult(success=True, response_text="用法: /memory proj del <id>")
-            ok = self.memory_manager.delete_project_memory(raw_args, platform=platform, chat_id=chat_id)
+            ok = self.memory_manager.delete_project_memory(raw_args, self.approved_directory, platform=platform, chat_id=chat_id)
             if ok:
                 return HandlerResult(success=True, response_text=f"🗑️ 项目记忆 {raw_args} 已删除")
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的项目记忆")
@@ -1682,7 +1682,7 @@ class MessageHandler:
                 keywords = parts[3].strip()
             if not mem_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
-            ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords, platform=platform, chat_id=chat_id)
+            ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords, self.approved_directory, platform=platform, chat_id=chat_id)
             if ok:
                 return HandlerResult(success=True, response_text=f"✅ 项目记忆 {mem_id} 已更新")
             return HandlerResult(success=True, response_text=f"未找到 id={mem_id} 的项目记忆")

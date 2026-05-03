@@ -668,24 +668,20 @@ class MemoryManager:
         title: str,
         content: str,
         keywords: str,
+        project_path: str,
         platform: str = "feishu",
         chat_id: str = "",
     ) -> bool:
         """更新一条项目记忆"""
         now = datetime.utcnow().isoformat()
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT project_path FROM project_memories WHERE id = ? AND platform = ? AND chat_id = ?",
-                (memory_id, platform, chat_id)
-            ).fetchone()
-            proj_path = row["project_path"] if row else ""
-
-            affected = conn.execute("""
-                UPDATE project_memories
-                SET title=?, content=?, keywords=?, updated_at=?
-                WHERE id=? AND platform=? AND chat_id=?
-            """, (title, content, keywords, now, memory_id, platform, chat_id)).rowcount
+            conn.execute(
+                "UPDATE project_memories "
+                "SET title=?, content=?, keywords=?, updated_at=? "
+                "WHERE id=? AND project_path=? AND platform=? AND chat_id=?",
+                (title, content, keywords, now, memory_id, project_path, platform, chat_id)
+            ).rowcount
+            affected = conn.total_changes
             if affected > 0:
                 conn.execute(
                     "DELETE FROM project_memories_fts WHERE id = ?", (memory_id,)
@@ -694,15 +690,15 @@ class MemoryManager:
                     "INSERT INTO project_memories_fts(id, title, content, keywords) VALUES (?, ?, ?, ?)",
                     (memory_id, title, f"{title} {content} {keywords}", keywords)
                 )
-        # Invalidate TF-IDF cache
-        if proj_path:
-            self._invalidate_tfidf_cache(proj_path, platform, chat_id)
+        if project_path:
+            self._invalidate_tfidf_cache(project_path, platform, chat_id)
         self._notify_system_prompt_stale()
         return affected > 0
 
     def delete_project_memory(
         self,
         memory_id: str,
+        project_path: str,
         platform: str = "feishu",
         chat_id: str = "",
     ) -> dict | None:
@@ -710,16 +706,16 @@ class MemoryManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT id, project_path, chat_id, title, content, keywords FROM project_memories WHERE id = ? AND platform = ? AND chat_id = ?",
-                (memory_id, platform, chat_id),
+                "SELECT id, project_path, chat_id, title, content, keywords FROM project_memories WHERE id = ? AND project_path = ? AND platform = ? AND chat_id = ?",
+                (memory_id, project_path, platform, chat_id),
             ).fetchone()
             if row is None:
                 return None
 
             deleted = dict(row)
             conn.execute(
-                "DELETE FROM project_memories WHERE id = ? AND platform = ? AND chat_id = ?",
-                (memory_id, platform, chat_id)
+                "DELETE FROM project_memories WHERE id = ? AND project_path = ? AND platform = ? AND chat_id = ?",
+                (memory_id, project_path, platform, chat_id)
             )
             conn.execute("DELETE FROM project_memories_fts WHERE id = ?", (memory_id,))
 

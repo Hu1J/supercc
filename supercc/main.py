@@ -767,7 +767,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory proj del <id>")
                 return
-            ok = mm.delete_project_memory(raw_args, platform="feishu", chat_id="")
+            ok = mm.delete_project_memory(raw_args, project_path, platform="feishu", chat_id="")
             if ok:
                 _print(f"🗑️ 项目记忆 {raw_args} 已删除。")
             else:
@@ -779,7 +779,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory proj update <id>|<title>|<content>|<keywords>")
                 return
             mem_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            ok = mm.update_project_memory(mem_id, title, content, keywords, platform="feishu", chat_id="")
+            ok = mm.update_project_memory(mem_id, title, content, keywords, project_path, platform="feishu", chat_id="")
             if ok:
                 _print(f"✅ 项目记忆 {mem_id} 已更新")
             else:
