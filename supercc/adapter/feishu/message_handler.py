@@ -14,6 +14,7 @@ from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
+from supercc.claude.message_context import set_current_context
 from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
 from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
 from supercc.claude.cron_tools import CRON_GUIDE
@@ -213,6 +214,10 @@ class SessionWorker:
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
         self._new_session_requested = False  # /new 标志，SessionWorker 私有
         self._seen_chat_ids: set = set()  # 记录该 Worker 已处理过的 chat_id，避免每次都创建新 session
+        # 当前消息上下文，供工具函数（_get_user_open_id 等）使用
+        self._current_user_open_id: str | None = None
+        self._current_chat_id: str | None = None
+        self._current_platform: str = "feishu"
 
     def _trigger_memory_review(self, message: IncomingMessage, response_text: str) -> None:
         """Worker 私有：使用自己的 claude_memory 实例触发记忆回顾"""
@@ -298,6 +303,12 @@ class SessionWorker:
     async def _process_message(self, message: IncomingMessage) -> None:
         """处理单条消息：鉴权 → 媒体预处理 → 引用检测 → 查询"""
         h = self.handler
+
+        # 设置当前消息上下文，供工具函数通过 message_context.py 获取
+        self._current_user_open_id = message.user_open_id
+        self._current_chat_id = message.chat_id
+        self._current_platform = "feishu"
+        set_current_context(message.user_open_id, message.chat_id, "feishu")
 
         # P2P: allowed_users whitelist applies. Group @mention: controlled by GroupConfigEntry.
         if not message.is_group_chat:

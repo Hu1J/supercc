@@ -199,38 +199,6 @@ class SessionManager:
                 platform=row["platform"],
             )
         return None
-        """Get the most recent session for a user in a specific chat (group or p2p).
-
-        This enables session isolation per chat — group chat sessions are separate
-        from p2p sessions even for the same user.
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                """SELECT * FROM sessions
-                   WHERE user_id = ? AND chat_id = ?
-                   ORDER BY last_used DESC
-                   LIMIT 1""",
-                (user_id, chat_id),
-            ).fetchone()
-        if row:
-            return Session(
-                session_id=row["session_id"],
-                sdk_session_id=row["sdk_session_id"],
-                user_id=row["user_id"],
-                chat_id=row["chat_id"],
-                project_path=row["project_path"],
-                created_at=datetime.fromisoformat(row["created_at"]),
-                last_used=datetime.fromisoformat(row["last_used"]),
-                total_cost=row["total_cost"],
-                message_count=row["message_count"],
-                last_message_at=datetime.fromisoformat(row["last_message_at"]) if row["last_message_at"] else None,
-                proactive_today_count=row["proactive_today_count"],
-                proactive_today_date=row["proactive_today_date"],
-                last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
-                group_members=row["group_members"],
-            )
-        return None
 
     def get_active_session(self, user_id: str) -> Optional[Session]:
         """Get the most recent session for a user."""

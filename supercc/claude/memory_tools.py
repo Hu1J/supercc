@@ -5,6 +5,7 @@ from pathlib import Path
 
 from claude_agent_sdk import tool
 from supercc.claude.memory_manager import get_memory_manager
+from supercc.claude.message_context import get_current_user_open_id
 
 
 def _fmt_pref(p) -> str:
@@ -28,14 +29,8 @@ def _fmt_proj(m) -> str:
 
 
 def _get_user_open_id() -> str | None:
-    """从当前活跃会话获取 user_open_id。"""
-    from supercc.claude.session_manager import SessionManager
-    from supercc.config import get_config, SESSIONS_DB_PATH
-
-    project_path = get_config().claude.approved_directory
-    sm = SessionManager(db_path=SESSIONS_DB_PATH)
-    session = sm.get_active_session_by_chat_id(project_path=project_path)
-    return session.user_id if session else None
+    """从当前消息上下文获取 user_open_id（通过 contextvar）。"""
+    return get_current_user_open_id()
 
 
 # ── user tools ─────────────────────────────────────────────────────────────────

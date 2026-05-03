@@ -20,14 +20,9 @@ from supercc.claude.model_providers import PROVIDERS
 
 
 def _get_user_open_id() -> str | None:
-    """从当前活跃会话获取 user_open_id。"""
-    from supercc.claude.session_manager import SessionManager
-    from supercc.config import get_config, SESSIONS_DB_PATH
-
-    project_path = get_config().claude.approved_directory
-    sm = SessionManager(db_path=SESSIONS_DB_PATH)
-    session = sm.get_active_session_by_chat_id(project_path=project_path)
-    return session.user_id if session else None
+    """从当前消息上下文获取 user_open_id（通过 contextvar）。"""
+    from supercc.claude.message_context import get_current_user_open_id
+    return get_current_user_open_id()
 
 
 def _is_owner() -> bool:
