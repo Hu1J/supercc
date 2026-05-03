@@ -189,13 +189,7 @@ class SessionWorker:
         self.task: asyncio.Task | None = None
         self.handler = handler
 
-        # per-chat-id session 隔离：每个 chat_id 独立 session directory
-        if handler.data_dir:
-            self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
-            os.makedirs(self._cwd, exist_ok=True)
-        else:
-            logger.warning(f"[PER-CHAT] data_dir 为空，回退到 approved_directory")
-            self._cwd = handler.approved_directory
+        self._cwd = handler.approved_directory
 
         self.claude = ClaudeIntegration(
             cli_path=handler.config.claude.cli_path,
@@ -291,19 +285,9 @@ class SessionWorker:
         pass  # ClaudeIntegration 无需显式清理
 
     def update_chat_id(self, chat_id: str) -> None:
-        """复用时更新 chat_id 和工作目录，避免 approved_directory 残留"""
+        """复用时更新 chat_id"""
         self.chat_id = chat_id
-
-        if self.handler.data_dir:
-            new_cwd = os.path.join(self.handler.data_dir, "sessions", chat_id)
-            os.makedirs(new_cwd, exist_ok=True)
-        else:
-            new_cwd = self.handler.approved_directory
-
-        self._cwd = new_cwd
-        self.claude.approved_directory = new_cwd
-        self.claude_memory.approved_directory = new_cwd
-        self.claude_skill.approved_directory = new_cwd
+        # 共享 approved_directory，session 隔离由数据库层 + SDK continue_conversation 控制
 
         # 重置 options，下一次 query 会用新的 approved_directory 重建
         self.claude.mark_system_prompt_stale()
