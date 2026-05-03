@@ -1885,6 +1885,13 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
+                if target_model not in provider.models:
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ 模型 ID `{target_model}` 不在供应商 `{provider.id}` 的可用模型列表中。\n可用模型：\n{' / '.join(f'`{m}`' for m in provider.models)}",
+                    )
+                    return HandlerResult(success=True)
+
                 ok, err = set_project_model(self.data_dir, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
@@ -1937,8 +1944,8 @@ class MessageHandler:
         # 当前激活的条目放最前面
         configured.sort(key=lambda x: 0 if x[5] else 1)
 
-        table_header = "| 状态 | Provider | 当前模型 | API Key | 所有可用模型 |"
-        table_sep = "|------|----------|---------|---------|------------|"
+        table_header = "| 状态 | Provider | API Key | 所有可用模型 |"
+        table_sep = "|------|----------|---------|------------|"
 
         active_name = "未设置"
         if current_pid:
@@ -1949,10 +1956,10 @@ class MessageHandler:
         for pid, pname, api_key, model, all_models, is_active in configured:
             mark = "✅" if is_active else "✴️"
             avail = fmt_models(all_models, model)
-            table_lines.append(f"| {mark} | `{pid}` | `{model}` | `{mask_api_key(api_key)}` | {avail} |")
+            table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail} |")
         for pid, pname, all_models in unconfigured:
             avail = " / ".join(f"`{m}`" for m in all_models)
-            table_lines.append(f"| 📛 | `{pid}` | — | — | {avail} |")
+            table_lines.append(f"| 📛 | `{pid}` | — | {avail} |")
         table_content = "\n".join(table_lines)
 
         elements = [

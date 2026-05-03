@@ -163,14 +163,15 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     try:
         create_job(
             prompt=prompt,
-            schedule="0 9 * * *",  # 每天早上9点执行
+            schedule="0 4 * * *",  # 每天凌晨4点执行
             chat_id=chat_id,
             name="Skill 优化扫描",
             repeat=None,
             data_dir=data_dir,
-            verbose=True,  # 流式推送 tool calls 到飞书
+            verbose=False,  # 不推送中间过程，只在 notify_at 发最终结果
+            notify_at="0 8 * * *",  # 早上8点通知结果
         )
-        logger.info("[skill_optimize] registered daily scan at 9am")
+        logger.info("[skill_optimize] registered daily scan at 4am, notify at 8am")
     except Exception as e:
         logger.warning(f"[skill_optimize] failed to register: {e}")
 
