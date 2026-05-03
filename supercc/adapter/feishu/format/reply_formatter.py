@@ -272,6 +272,8 @@ class ReplyFormatter:
         tool_input: str,
         memory_manager=None,
         default_project_path: str = "",
+        platform: str = "feishu",
+        chat_id: str = "",
     ) -> _MemoryCardMarker | str:
         """格式化记忆 MCP 工具调用为卡片标记。
 
@@ -316,11 +318,11 @@ class ReplyFormatter:
                 try:
                     if scope == "proj":
                         if card_type == "list":
-                            mems = memory_manager.get_project_memories(project_path)
+                            mems = memory_manager.get_project_memories(project_path, platform=platform, chat_id=chat_id)
                             entries = [{"id": m.id, "title": m.title,
                                         "content": m.content, "keywords": m.keywords} for m in mems]
                         elif card_type == "search" and query:
-                            results = memory_manager.search_project_memories(query, project_path)
+                            results = memory_manager.search_project_memories(query, project_path, platform=platform, chat_id=chat_id)
                             entries = [{"id": r.memory.id, "title": r.memory.title,
                                         "content": r.memory.content,
                                         "keywords": r.memory.keywords} for r in results]
@@ -329,11 +331,11 @@ class ReplyFormatter:
                     else:
                         # user scope — mirror memory_tools.py fallback: empty user_open_id → get all
                         if user_open_id:
-                            prefs = memory_manager.get_preferences_by_user(user_open_id)
+                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform)
                             if card_type == "search" and query:
-                                prefs = memory_manager.search_preferences(query, user_open_id)
+                                prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform)
                         else:
-                            prefs = memory_manager.get_all_preferences()
+                            prefs = memory_manager.get_all_preferences(platform=platform)
                         entries = [{"id": p.id, "title": p.title,
                                     "content": p.content, "keywords": p.keywords} for p in prefs]
                 except Exception:

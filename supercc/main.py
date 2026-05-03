@@ -693,14 +693,14 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
-            p = mm.add_preference(title, content, keywords)
+            p = mm.add_preference("cli-owner", title, content, keywords)
             _print(f"✅ 用户偏好已保存 (id={p.id})")
 
         elif action == "del":
             if not raw_args.strip():
                 _print("用法: supercc memory user del <id>")
                 return
-            ok = mm.delete_preference(raw_args)
+            ok = mm.delete_preference(raw_args, user_open_id="cli-owner")
             if ok:
                 _print(f"🗑️ 用户偏好 {raw_args} 已删除。")
             else:
@@ -712,7 +712,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user update <id>|<title>|<content>|<keywords>")
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            ok = mm.update_preference(pref_id, title, content, keywords)
+            ok = mm.update_preference(pref_id, title, content, keywords, user_open_id="cli-owner")
             if ok:
                 _print(f"✅ 用户偏好 {pref_id} 已更新")
             else:

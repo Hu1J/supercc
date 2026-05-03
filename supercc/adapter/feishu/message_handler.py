@@ -246,6 +246,8 @@ class SessionWorker:
                         claude_msg.tool_name, claude_msg.tool_input,
                         memory_manager=h.memory_manager,
                         default_project_path=getattr(h, "_current_project_path", ""),
+                        platform=get_current_platform(),
+                        chat_id=message.chat_id or "",
                     )
                     if isinstance(result, _MemoryCardMarker):
                         card = h._render_memory_card(result)
@@ -680,6 +682,8 @@ class SessionWorker:
                         if claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
                             kwargs["memory_manager"] = h.memory_manager
                             kwargs["default_project_path"] = getattr(h, "_current_project_path", "")
+                            kwargs["platform"] = get_current_platform()
+                            kwargs["chat_id"] = message.chat_id or ""
                         result = h.formatter.format_tool_call(
                             claude_msg.tool_name,
                             claude_msg.tool_input,
@@ -1027,6 +1031,8 @@ class MessageHandler:
                         claude_msg.tool_name, claude_msg.tool_input,
                         memory_manager=self.memory_manager,
                         default_project_path=getattr(self, "_current_project_path", ""),
+                        platform=get_current_platform(),
+                        chat_id=message.chat_id or "",
                     )
                     if isinstance(result, _MemoryCardMarker):
                         card = self._render_memory_card(result)
@@ -1432,7 +1438,7 @@ class MessageHandler:
 
         # /memory proj ...
         if scope == "proj":
-            return await self._handle_memory_proj(action, raw_args)
+            return await self._handle_memory_proj(message, action, raw_args)
 
         return HandlerResult(success=True,
                              response_text=f"未知 scope: {scope}\n"
@@ -1585,7 +1591,8 @@ class MessageHandler:
         elif action == "del":
             if not raw_args:
                 return HandlerResult(success=True, response_text="用法: /memory user del <id>")
-            ok = self.memory_manager.delete_preference(raw_args)
+            platform = get_current_platform()
+            ok = self.memory_manager.delete_preference(raw_args, user_open_id=user_open_id, platform=platform)
             if ok:
                 return HandlerResult(success=True, response_text=f"🗑️ 用户偏好 {raw_args} 已删除")
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的用户偏好")
@@ -1603,13 +1610,15 @@ class MessageHandler:
                 keywords = parts[3].strip()
             if not pref_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
-            ok = self.memory_manager.update_preference(pref_id, title, content, keywords)
+            platform = get_current_platform()
+            ok = self.memory_manager.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id, platform=platform)
             if ok:
                 return HandlerResult(success=True, response_text=f"✅ 用户偏好 {pref_id} 已更新")
             return HandlerResult(success=True, response_text=f"未找到 id={pref_id} 的用户偏好")
 
         elif action == "list":
-            prefs = self.memory_manager.get_all_preferences()
+            platform = get_current_platform()
+            prefs = self.memory_manager.get_preferences_by_user(user_open_id, platform=platform)
             if not prefs:
                 return HandlerResult(success=True, response_text="📭 暂无用户偏好记录")
             return HandlerResult(success=True,
@@ -1618,7 +1627,8 @@ class MessageHandler:
         elif action == "search":
             if not raw_args:
                 return HandlerResult(success=True, response_text="用法: /memory user search <关键词>")
-            results = self.memory_manager.search_preferences(raw_args)
+            platform = get_current_platform()
+            results = self.memory_manager.search_preferences(raw_args, user_open_id=user_open_id, platform=platform)
             if not results:
                 return HandlerResult(success=True,
                                      response_text=f"未找到与「{raw_args}」相关的用户偏好")
@@ -1630,8 +1640,10 @@ class MessageHandler:
                                  response_text=f"未知 user action: {action}\n"
                                                "用法: /memory user [add|del|update|list|search]")
 
-    async def _handle_memory_proj(self, action: str, raw_args: str) -> HandlerResult:
+    async def _handle_memory_proj(self, message: IncomingMessage, action: str, raw_args: str) -> HandlerResult:
         """Handle /memory proj <action>."""
+        platform = get_current_platform()
+        chat_id = message.chat_id or ""
         if action == "add":
             parts = raw_args.split("|")
             if len(parts) < 3:
@@ -1643,7 +1655,7 @@ class MessageHandler:
             if not title or not content or not keywords:
                 return HandlerResult(success=True, response_text="title、content、keywords 三样必填")
             m = self.memory_manager.add_project_memory(
-                self.approved_directory, title, content, keywords
+                self.approved_directory, title, content, keywords, platform=platform, chat_id=chat_id
             )
             return HandlerResult(success=True,
                                  response_text=f"✅ 项目记忆已保存（ID: {m.id}）")
@@ -1651,7 +1663,7 @@ class MessageHandler:
         elif action == "del":
             if not raw_args:
                 return HandlerResult(success=True, response_text="用法: /memory proj del <id>")
-            ok = self.memory_manager.delete_project_memory(raw_args)
+            ok = self.memory_manager.delete_project_memory(raw_args, platform=platform, chat_id=chat_id)
             if ok:
                 return HandlerResult(success=True, response_text=f"🗑️ 项目记忆 {raw_args} 已删除")
             return HandlerResult(success=True, response_text=f"未找到 id={raw_args} 的项目记忆")
@@ -1669,13 +1681,13 @@ class MessageHandler:
                 keywords = parts[3].strip()
             if not mem_id or not title or not content:
                 return HandlerResult(success=True, response_text="id、title、content 三样必填")
-            ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords)
+            ok = self.memory_manager.update_project_memory(mem_id, title, content, keywords, platform=platform, chat_id=chat_id)
             if ok:
                 return HandlerResult(success=True, response_text=f"✅ 项目记忆 {mem_id} 已更新")
             return HandlerResult(success=True, response_text=f"未找到 id={mem_id} 的项目记忆")
 
         elif action == "list":
-            mems = self.memory_manager.get_project_memories(self.approved_directory)
+            mems = self.memory_manager.get_project_memories(self.approved_directory, platform=platform, chat_id=chat_id)
             if not mems:
                 return HandlerResult(success=True, response_text="📭 暂无项目记忆记录")
             return HandlerResult(success=True,
@@ -1685,7 +1697,7 @@ class MessageHandler:
             if not raw_args:
                 return HandlerResult(success=True, response_text="用法: /memory proj search <关键词>")
             results = self.memory_manager.search_project_memories(
-                raw_args, self.approved_directory
+                raw_args, self.approved_directory, platform=platform, chat_id=chat_id
             )
             if not results:
                 return HandlerResult(success=True,
