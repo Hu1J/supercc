@@ -929,35 +929,11 @@ class CronScheduler:
 
     async def _tick(self):
         """Check for due jobs and run them. Awaits all jobs to ensure completion."""
-        # Poll skill changes on every tick (P2P only — not group chats)
-        # Skill nudge is a P2P feature, should not fire in group chats.
-        # Only run if we have a scoped chat_id AND it's confirmed NOT a group chat.
+        # Ensure skill symlinks are in sync on every tick (idempotent)
         skills_dir = Path(self.data_dir) / "skills"
-        if skills_dir.exists() and self.chat_id:
-            is_group = _is_group_chat(self.data_dir, self.chat_id)
-            if not is_group:
-                from supercc.evolve.skill_nudge import poll_skill_changes_and_notify
-                from supercc.adapter.feishu.client import FeishuClient
-                feishu = FeishuClient(
-                    app_id=self.config.channels.feishu.app_id,
-                    app_secret=self.config.channels.feishu.app_secret,
-                    bot_name=self.config.channels.feishu.bot_name,
-                    data_dir=self.data_dir,
-                )
-
-                async def _skill_send(cid, text):
-                    await feishu.send_post(cid, text)
-
-                try:
-                    await poll_skill_changes_and_notify(
-                        data_dir=self.data_dir,
-                        skills_dir=skills_dir,
-                        send_to_feishu=_skill_send,
-                        get_chat_id=lambda dd: self.chat_id,  # Use scoped chat_id
-                    )
-                except Exception:
-                    logger.exception("[cron] poll_skill_changes_and_notify error")
-
+        if skills_dir.exists():
+            from supercc.evolve.skill_nudge import _ensure_symlinks
+            _ensure_symlinks(skills_dir)
         # Deliver any pending notifications that have reached their notify_at time
         # Filter by scoped chat_id if set (per-chat-id isolation)
         pending_store = _PendingStore(self.data_dir)
