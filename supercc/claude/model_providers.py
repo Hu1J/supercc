@@ -12,8 +12,7 @@ from typing import Optional
 @dataclass
 class Provider:
     """单个模型供应商"""
-    id: str               # 唯一标识，如 "minimax"
-    name: str             # 显示名称，如 "MiniMax 海螺AI"
+    id: str               # 唯一标识，同时也是显示名称，如 "minimax"
     base_url: str         # Anthropic Messages API 兼容端点
     auth_type: str        # "bearer" | "api_key" | "azure"
     models: list[str]     # 可用模型 ID 列表
@@ -32,7 +31,6 @@ PROVIDERS: dict[str, Provider] = {
     # ── 用户自定义 ────────────────────────────────────────────────────────────
     "custom": Provider(
         id="custom",
-        name="自定义模型",
         base_url="",
         auth_type="bearer",
         models=[],
@@ -43,19 +41,17 @@ PROVIDERS: dict[str, Provider] = {
 
     "minimax": Provider(
         id="minimax",
-        name="MiniMax 海螺AI",
         base_url="https://api.minimaxi.com/anthropic",
         auth_type="bearer",
         models=[
             "MiniMax-M2.7",
             "MiniMax-M2.7-highspeed",
         ],
-        description="MiniMax 海螺AI（M2.7 系列，高性价比）",
+        description="MiniMax（M2.7 系列，高性价比）",
     ),
 
     "volcano": Provider(
         id="volcano",
-        name="火山引擎 ARK",
         base_url="https://ark.cn-beijing.volces.com/api/coding",
         auth_type="bearer",
         models=[
@@ -76,7 +72,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "qwen": Provider(
         id="qwen",
-        name="阿里云通义千问",
         base_url="https://dashscope.aliyuncs.com/apps/anthropic",
         auth_type="bearer",
         models=[
@@ -95,7 +90,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "zhipu": Provider(
         id="zhipu",
-        name="智谱 GLM",
         base_url="https://open.bigmodel.cn/api/anthropic",
         auth_type="bearer",
         models=[
@@ -107,7 +101,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "deepseek": Provider(
         id="deepseek",
-        name="DeepSeek",
         base_url="https://api.deepseek.com/anthropic",
         auth_type="bearer",
         models=[
@@ -121,7 +114,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "kimi": Provider(
         id="kimi",
-        name="Kimi 月之暗面",
         base_url="https://api.kimi.com/coding",
         auth_type="bearer",
         models=[
@@ -131,14 +123,13 @@ PROVIDERS: dict[str, Provider] = {
             "kimi-k2-thinking-turbo",
             "kimi-k2-turbo",
         ],
-        description="Kimi 月之暗面（K2 系列）",
+        description="Kimi（K2 系列）",
     ),
 
     # ── 海外 ──────────────────────────────────────────────────────────────────
 
     "anthropic": Provider(
         id="anthropic",
-        name="Anthropic",
         base_url="https://api.anthropic.com",
         auth_type="bearer",
         models=[
@@ -156,7 +147,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "openrouter": Provider(
         id="openrouter",
-        name="OpenRouter",
         base_url="https://openrouter.ai/api/v1",
         auth_type="bearer",
         models=[
@@ -170,7 +160,6 @@ PROVIDERS: dict[str, Provider] = {
 
     "ollama": Provider(
         id="ollama",
-        name="Ollama（本地）",
         base_url="http://localhost:11434/v1",
         auth_type="bearer",
         models=[
@@ -205,7 +194,7 @@ def format_provider_help() -> str:
         models_str = ", ".join(f"`{m}`" for m in p.models[:6])
         if len(p.models) > 6:
             models_str += f" ... (+{len(p.models) - 6})"
-        lines.append(f"`{p.id}` — **{p.name}**  ({auth})")
+        lines.append(f"`{p.id}`  ({auth})")
         lines.append(f"  {p.description}")
         lines.append(f"  模型: {models_str}")
         lines.append("")
