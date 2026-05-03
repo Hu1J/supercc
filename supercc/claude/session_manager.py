@@ -28,6 +28,7 @@ class Session:
     proactive_today_date: str | None = None   # YYYY-MM-DD 格式
     last_proactive_at: datetime | None = None  # 发完主动推送后，记录时间戳，用于冷却期判断
     group_members: str | None = None  # 群成员 JSON 字符串，用于 _is_group_chat 判断
+    platform: str = "feishu"  # 平台：feishu/wecom/qq/wechat/...
 
 
 class SessionManager:
@@ -91,9 +92,18 @@ class SessionManager:
                 conn.execute("ALTER TABLE sessions ADD COLUMN group_members TEXT")
             except sqlite3.OperationalError:
                 pass
+            # Migrate: add platform column for multi-platform support
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN platform TEXT DEFAULT 'feishu'")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_user_last
                 ON sessions(user_id, last_used DESC)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_platform_chat
+                ON sessions(platform, chat_id)
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -123,12 +133,9 @@ class SessionManager:
         sdk_session_id: str | None = None,
         chat_id: str | None = None,
         thread_id: str | None = None,
+        platform: str = "feishu",
     ) -> Session:
-        """Create a new session for a user.
-
-        For group chat, pass chat_id (and optionally thread_id) to enable
-        session isolation per chat. Session key is: user_id + chat_id (+ thread_id).
-        """
+        """Create a new session for a user."""
         now = datetime.utcnow()
         session = Session(
             session_id=f"session_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}",
@@ -140,12 +147,13 @@ class SessionManager:
             total_cost=0.0,
             message_count=0,
             chat_id=chat_id or "",
+            platform=platform,
         )
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO sessions
-                   (session_id, sdk_session_id, user_id, chat_id, project_path, created_at, last_used, total_cost, message_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (session_id, sdk_session_id, user_id, chat_id, project_path, created_at, last_used, total_cost, message_count, platform)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.session_id,
                     session.sdk_session_id,
@@ -156,11 +164,41 @@ class SessionManager:
                     session.last_used.isoformat(),
                     session.total_cost,
                     session.message_count,
+                    session.platform,
                 ),
             )
         return session
 
-    def get_active_session_for_chat(self, user_id: str, chat_id: str) -> Optional[Session]:
+    def get_active_session_for_chat(self, user_id: str, chat_id: str, platform: str = "feishu") -> Optional[Session]:
+        """Get the most recent session for a user in a specific chat and platform."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT * FROM sessions
+                   WHERE user_id = ? AND chat_id = ? AND platform = ?
+                   ORDER BY last_used DESC
+                   LIMIT 1""",
+                (user_id, chat_id, platform),
+            ).fetchone()
+        if row:
+            return Session(
+                session_id=row["session_id"],
+                sdk_session_id=row["sdk_session_id"],
+                user_id=row["user_id"],
+                chat_id=row["chat_id"],
+                project_path=row["project_path"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                last_used=datetime.fromisoformat(row["last_used"]),
+                total_cost=row["total_cost"],
+                message_count=row["message_count"],
+                last_message_at=datetime.fromisoformat(row["last_message_at"]) if row["last_message_at"] else None,
+                proactive_today_count=row["proactive_today_count"],
+                proactive_today_date=row["proactive_today_date"],
+                last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
+                platform=row["platform"],
+            )
+        return None
         """Get the most recent session for a user in a specific chat (group or p2p).
 
         This enables session isolation per chat — group chat sessions are separate

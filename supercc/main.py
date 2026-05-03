@@ -321,7 +321,7 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
     # Store raw message for memory enhancement
     session = None
     if message.user_open_id:
-        session = handler.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+        session = handler.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
         if session:
             handler.sessions.update_session(session.session_id, update_last_message=True)
             handler.sessions.store_message(

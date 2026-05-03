@@ -317,25 +317,27 @@ class SessionWorker:
         # For group chat, use chat-specific session lookup to isolate group sessions
         # from p2p sessions. For p2p, use the standard user-level session.
         if message.is_group_chat:
-            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
             if session is None:
                 # First message in this group chat — create a new session
                 session = h.sessions.create_session(
                     message.user_open_id,
                     h.approved_directory,
                     chat_id=message.chat_id,
+                    platform="feishu",
                 )
             elif session.chat_id != message.chat_id:
                 # Same user in a different group — update session to point to new chat
                 h.sessions.update_chat_id(message.user_open_id, message.chat_id)
         else:
             # P2P: use chat-specific session lookup to avoid cross-contamination with group sessions
-            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+            session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
             if session is None:
                 session = h.sessions.create_session(
                     message.user_open_id,
                     h.approved_directory,
                     chat_id=message.chat_id,
+                    platform="feishu",
                 )
 
         project_path = session.project_path if session else h.approved_directory
@@ -815,6 +817,7 @@ class SessionWorker:
                     h.approved_directory,
                     sdk_session_id=sdk_session_id_from_query,
                     chat_id=message.chat_id,
+                    platform="feishu",
                 )
             else:
                 h.sessions.update_session(session.session_id, cost=last_cost, message_increment=1, update_last_message=True)
@@ -1153,6 +1156,7 @@ class MessageHandler:
                 message.user_open_id,
                 self.approved_directory,
                 chat_id=message.chat_id if message.is_group_chat else None,
+                platform="feishu",
             )
             # /new 需要设置到对应 chat_id 的 Worker 的 ClaudeIntegration
             # 如果 Worker 不存在，先创建
@@ -1174,7 +1178,7 @@ class MessageHandler:
                     return [int(x) for x in re.findall(r'\d+', v)]
                 return nums(latest) > nums(current)
 
-            session = self.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id)
+            session = self.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
             if not session:
                 await self._safe_send(message.chat_id, message.message_id, "暂无活跃会话")
                 return HandlerResult(success=True)
