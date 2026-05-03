@@ -74,7 +74,7 @@ async def list_models(args: dict) -> dict:
         avail = " / ".join(f"`{m}`" for m in provider.models[:5])
         if len(provider.models) > 5:
             avail += f" ... (+{len(provider.models) - 5})"
-        lines.append(f"| {mark} | **{provider.name}** | `{masked}` | {avail} |")
+        lines.append(f"| {mark} | **{provider.id}** | `{masked}` | {avail} |")
 
     if current_pid:
         active_provider = PROVIDERS.get(current_pid)
@@ -158,7 +158,7 @@ async def set_model_tool(args: dict) -> dict:
         if provider.models and model_id not in provider.models:
             models_str = ", ".join(f"`{m}`" for m in provider.models)
             return {
-                "content": [{"type": "text", "text": f"模型 `{model_id}` 不在供应商 `{provider.name}` 的可用模型中。\n可用: {models_str}"}],
+                "content": [{"type": "text", "text": f"模型 `{model_id}` 不在供应商 `{provider.id}` 的可用模型中。\n可用: {models_str}"}],
                 "is_error": True,
             }
 
@@ -174,7 +174,7 @@ async def set_model_tool(args: dict) -> dict:
         current_pid, current_mid = get_active_model_for_project(project_path)
         if not current_pid:
             return {
-                "content": [{"type": "text", "text": f"✅ API Key 已更新\n\n供应商：`{provider.name}`\n\n提示：尚未为当前项目设置激活模型，请同时提供 model 参数切换模型。"}],
+                "content": [{"type": "text", "text": f"✅ API Key 已更新\n\n供应商：`{provider.id}`\n\n提示：尚未为当前项目设置激活模型，请同时提供 model 参数切换模型。"}],
                 "is_error": False,
             }
 
@@ -182,6 +182,6 @@ async def set_model_tool(args: dict) -> dict:
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.name}`\n模型：`{model_id or '未切换'}`\n已激活。"
+            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.id}`\n模型：`{model_id or '未切换'}`\n已激活。"
         }]
     }

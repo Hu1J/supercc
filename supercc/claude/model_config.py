@@ -382,7 +382,7 @@ def get_providers_for_display() -> list[tuple[str, str, str, list[str], bool]]:
         pdata = providers_raw.get(pid, {})
         masked_key = _mask_api_key(pdata.get("api_key", ""))
         is_active = pid == current_pid
-        result.append((pid, provider.name, masked_key, provider.models, is_active))
+        result.append((pid, provider.id, masked_key, provider.models, is_active))
     return result
 
 

@@ -93,7 +93,7 @@ def run_onboard_flow() -> bool:
     pid, mid = get_active_model_for_project(project_path)
     if pid:
         provider = PROVIDERS.get(pid)
-        print(f"模型: {provider.name if provider else pid} @ `{mid}`")
+        print(f"模型: {provider.id if provider else pid} @ `{mid}`")
     else:
         print("模型: 未配置")
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
@@ -146,7 +146,7 @@ def _do_model_config_step() -> None:
     # Step 1: 选择供应商
     provider_choices = [
         questionary.Choice(
-            f"{p.name}  ({p.base_url or '用户填入'})",
+            f"{p.id}  ({p.base_url or '用户填入'})",
             value=pid,
         )
         for pid, p in PROVIDERS.items()
@@ -271,7 +271,7 @@ def _do_model_config_step() -> None:
         for m in provider.models
     ]
     selected_model = questionary.select(
-        f"请选择模型（{provider.name}）",
+        f"请选择模型（{provider.id}）",
         choices=model_choices,
         style=questionary.Style([
             ("selected", "fg:#00AA00 bold"),
@@ -318,6 +318,6 @@ def _do_model_config_step() -> None:
     init_model_env(project_path)  # 刷新全局单例
 
     print(f"\n✅ 模型配置已保存")
-    print(f"   供应商: {provider.name}")
+    print(f"   供应商: {provider.id}")
     print(f"   模型: `{selected_model}`")
     print(f"   端点: {provider.base_url}\n")

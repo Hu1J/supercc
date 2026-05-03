@@ -847,7 +847,7 @@ def _run_config_interactive() -> None:
             # 1. 选供应商
             provider_choices = [
                 questionary.Choice(
-                    f"{p.name}  ({p.base_url or '用户填入'})",
+                    f"{p.id}  ({p.base_url or '用户填入'})",
                     value=pid,
                 )
                 for pid, p in PROVIDERS.items()
@@ -927,7 +927,7 @@ def _run_config_interactive() -> None:
                 for m in provider.models
             ]
             selected_model = questionary.select(
-                f"请选择模型（{provider.name}）",
+                f"请选择模型（{provider.id}）",
                 choices=model_choices,
                 style=questionary.Style([
                     ("selected", "fg:#00AA00 bold"),
@@ -952,13 +952,13 @@ def _run_config_interactive() -> None:
 
             # 4. 保存
             model_id = provider_id
-            name = f"{provider.name} ({selected_model})"
+            name = f"{provider.id} ({selected_model})"
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=token,
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=selected_model,
             )
-            added = add_model(model_id, name, f"供应商: {provider.name}", env, provider_name=provider.name)
+            added = add_model(model_id, name, f"供应商: {provider.id}", env, provider_name=provider.id)
             if not added:
                 print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换：`supercc config switch {model_id}`")
                 continue
@@ -1068,7 +1068,7 @@ def _run_config_interactive() -> None:
                 models_preview = ", ".join(p.models[:3])
                 if len(p.models) > 3:
                     models_preview += f" ... (+{len(p.models) - 3})"
-                lines.append(f"  `{pid}` — {p.name}")
+                lines.append(f"  `{pid}`")
                 lines.append(f"    端点: {p.base_url or '(用户填入)'}")
                 lines.append(f"    认证: {auth}")
                 lines.append(f"    模型: {models_preview}")
@@ -1175,7 +1175,7 @@ def _run_config_command(args) -> None:
             pos_args = raw_args.split() if raw_args else []
             if len(pos_args) < 2:
                 print(f"用法: supercc config add --provider {provider_id} <api_key> <model> [model_id] [name]")
-                print(f"\n{provider.name} 可用模型:")
+                print(f"\n{provider.id} 可用模型:")
                 for m in provider.models:
                     print(f"  `{m}`")
                 return
@@ -1184,19 +1184,19 @@ def _run_config_command(args) -> None:
             token, model = pos_args[0], pos_args[1]
             # 默认用 md5(provider_id + model) 生成唯一 ID，可指定第3参数覆盖
             model_id = pos_args[2] if len(pos_args) > 2 else hashlib.md5(f"{provider_id}{model}".encode()).hexdigest()[:8]
-            name = pos_args[3] if len(pos_args) > 3 else provider.name
+            name = pos_args[3] if len(pos_args) > 3 else provider.id
 
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=token,
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=model,
             )
-            ok = add_model(model_id, name, f"供应商: {provider.name}", env)
+            ok = add_model(model_id, name, f"供应商: {provider.id}", env)
             if not ok:
                 print(f"❌ 模型 ID `{model_id}` 已存在，请使用其他 ID")
                 return
             print(f"✅ 模型 **{name}** (`{model_id}`) 已添加")
-            print(f"   供应商: {provider.name}")
+            print(f"   供应商: {provider.id}")
             print(f"   模型: `{model}`")
             print(f"   端点: `{provider.base_url}`")
             print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
@@ -1208,7 +1208,7 @@ def _run_config_command(args) -> None:
             print("\n可用供应商:")
             from supercc.claude.model_providers import PROVIDERS
             for pid, p in PROVIDERS.items():
-                print(f"  `{pid}` — {p.name}")
+                print(f"  `{pid}`")
             return
 
         parts = _parse_args(raw_args)
@@ -1270,7 +1270,7 @@ def _run_config_command(args) -> None:
             models_preview = ", ".join(p.models[:4])
             if len(p.models) > 4:
                 models_preview += f" ... (+{len(p.models) - 4})"
-            print(f"  `{pid}` — {p.name}")
+            print(f"  `{pid}`")
             print(f"    端点: {p.base_url or '(用户填入)'}")
             print(f"    认证: {auth}")
             print(f"    模型: {models_preview}")

@@ -1232,16 +1232,15 @@ class MessageHandler:
                 await self._safe_send(message.chat_id, message.message_id, "暂无活跃会话")
                 return HandlerResult(success=True)
 
-            # 获取当前模型信息
+            # 获取当前模型信息（使用 ModelEnv 单例）
             try:
-                from supercc.claude.model_config import get_active_model_for_project, get_all_providers
+                from supercc.claude.model_config import get_model_env
                 from supercc.claude.model_providers import PROVIDERS
-                project_path = self.data_dir
-                pid, mid = get_active_model_for_project(project_path)
-                providers = get_all_providers()
-                pcfg = providers.get(pid)
-                provider_name = PROVIDERS.get(pid, type('', (), {'name': pid})()).name if pid else "未设置"
-                model_provider = provider_name
+                env = get_model_env()
+                pid = env.provider_id
+                mid = env.ANTHROPIC_MODEL
+                provider = PROVIDERS.get(pid)
+                model_provider = provider.id if provider else (pid or "未设置")
                 model_id = mid or "未设置"
             except Exception:
                 model_provider = "未知"
@@ -1896,7 +1895,7 @@ class MessageHandler:
 
                 await self._safe_send(
                     message.chat_id, message.message_id,
-                    f"✅ 已切换为 `{provider.name}`（模型：`{target_model}`）",
+                    f"✅ 已切换为 `{provider.id}`（模型：`{target_model}`）",
                 )
                 return HandlerResult(success=True)
 
@@ -1915,9 +1914,9 @@ class MessageHandler:
             pcfg = providers_cfg.get(pid)
             api_key = pcfg.api_key if pcfg else ""
             if api_key:
-                configured.append((pid, provider.name, api_key, current_mid or "—", provider.models, pid == current_pid))
+                configured.append((pid, provider.id, api_key, current_mid or "—", provider.models, pid == current_pid))
             else:
-                unconfigured.append((pid, provider.name, provider.models))
+                unconfigured.append((pid, provider.id, provider.models))
 
         def mask_api_key(key: str) -> str:
             if not key:
@@ -1944,7 +1943,7 @@ class MessageHandler:
         active_name = "未设置"
         if current_pid:
             p = PROVIDERS.get(current_pid)
-            active_name = p.name if p else current_pid
+            active_name = p.id if p else current_pid
 
         table_lines = [table_header, table_sep]
         for pid, pname, api_key, model, all_models, is_active in configured:
@@ -1964,7 +1963,7 @@ class MessageHandler:
                     f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
                     f"共 **{len(configured)}** 个已配置，**{len(unconfigured)}** 个未配置。\n\n"
                     + table_content
-                    + "\n\n---\n💡 切换模型：`/model switch <provider_id> <model_id>`"
+                    + "\n\n---\n💡 切换模型：`/model switch <provider_id> <model_id>`\n或直接对我说：帮我切换到&lt;供应商&gt;的&lt;模型id&gt;模型"
                 ),
             },
         ]
@@ -1985,7 +1984,7 @@ class MessageHandler:
             for pid, pname, all_models in unconfigured:
                 avail = ", ".join(all_models[:4])
                 text.append(f"📛 {pname}: {avail}...")
-            text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 切换：`/model switch <provider_id> <model_id>`")
+            text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 切换：`/model switch <provider_id> <model_id>`\n或直接对我说：帮我切换到<供应商>的<模型id>模型")
             await self._safe_send(message.chat_id, message.message_id, "\n".join(text))
 
         return HandlerResult(success=True)
