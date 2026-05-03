@@ -21,6 +21,7 @@ GLOBAL_MODEL_PATH = str(Path.home() / ".supercc" / "model.json")
 @dataclass
 class ModelEnv:
     """单个模型的 API 配置"""
+    provider_id: str = ""                    # 当前激活的 provider_id
     ANTHROPIC_AUTH_TOKEN: str = ""
     ANTHROPIC_BASE_URL: str = "https://api.anthropic.com"
     ANTHROPIC_MODEL: str = "claude-opus-4-5"
@@ -249,6 +250,7 @@ def _resolve_active_env(project_path: str) -> ModelEnv:
     base_url = provider.base_url if provider else ""
 
     return ModelEnv(
+        provider_id=provider_id,
         ANTHROPIC_AUTH_TOKEN=pcfg.get("api_key", ""),
         ANTHROPIC_BASE_URL=base_url,
         ANTHROPIC_MODEL=model_id,
@@ -312,12 +314,9 @@ def update_provider_api_key(provider_id: str, api_key: str) -> tuple[bool, str]:
     raw["providers"] = providers
     _save_json(raw)
 
-    # 如果当前项目的激活映射正好是这个 provider，刷新单例
+    # 无条件刷新单例（所有更新路径统一通过单例）
     global _model_env_instance
-    if _model_env_instance is not None:
-        current_pid, current_mid = get_active_model_for_project(_current_project_path)
-        if current_pid == provider_id:
-            _model_env_instance = _resolve_active_env(_current_project_path)
+    _model_env_instance = _resolve_active_env(_current_project_path)
     return True, ""
 
 
@@ -357,10 +356,9 @@ def set_project_model(project_path: str, provider_id: str, model_id: str) -> tup
     raw["projects"] = projects
     _save_json(raw)
 
-    # 刷新单例
+    # 无条件刷新单例（所有更新路径统一通过单例）
     global _model_env_instance
-    if _model_env_instance is not None:
-        _model_env_instance = _resolve_active_env(project_path)
+    _model_env_instance = _resolve_active_env(project_path)
     return True, ""
 
 

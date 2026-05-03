@@ -9,6 +9,7 @@ import questionary
 
 from supercc.claude.model_config import (
     ModelEnv,
+    init_model_env,
     update_provider_api_key,
     set_project_model,
     validate_model_env,
@@ -88,7 +89,7 @@ def run_onboard_flow() -> bool:
     print(f"{'━' * 60}\n")
 
     from supercc.claude.model_config import get_active_model_for_project
-    project_path = data_dir
+    project_path = str(Path(data_dir).resolve().parent)  # 项目根路径
     pid, mid = get_active_model_for_project(project_path)
     if pid:
         provider = PROVIDERS.get(pid)
@@ -134,7 +135,13 @@ def run_onboard_flow() -> bool:
 
 def _do_model_config_step() -> None:
     """Handle the model configuration step with provider selection (TUI)."""
-    project_path = os.getcwd()
+    # resolve_config_path() 返回 (cfg_path, data_dir)，cfg_path = {project}/.supercc/config.json
+    # set_project_model 需要项目根路径，所以要取 cfg_path 的 parent.parent
+    try:
+        cfg_path, _ = resolve_config_path()
+        project_path = str(Path(cfg_path).resolve().parent.parent)
+    except Exception:
+        project_path = os.getcwd()
 
     # Step 1: 选择供应商
     provider_choices = [
@@ -236,6 +243,7 @@ def _do_model_config_step() -> None:
 
         # 设置项目激活映射
         set_project_model(project_path, custom_key, selected_model)
+        init_model_env(project_path)  # 刷新全局单例
 
         print(f"\n✅ 自定义模型配置已保存")
         print(f"   供应商: {provider_name}")
@@ -307,6 +315,7 @@ def _do_model_config_step() -> None:
     # 保存配置：更新供应商 API Key + 设置项目激活映射
     update_provider_api_key(provider_id, token)
     set_project_model(project_path, provider_id, selected_model)
+    init_model_env(project_path)  # 刷新全局单例
 
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.name}")

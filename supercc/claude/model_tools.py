@@ -34,7 +34,7 @@ def _is_owner() -> bool:
 def _get_project_path() -> str:
     """获取当前项目路径。"""
     from supercc.config import get_config
-    return get_config().data_dir
+    return get_config().claude.approved_directory  # 项目根路径
 
 
 def _mask_api_key(key: str) -> str:

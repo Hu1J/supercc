@@ -1847,12 +1847,12 @@ class MessageHandler:
         """
         from supercc.claude.model_config import (
             get_all_providers,
-            get_active_model_for_project,
+            get_model_env,
             set_project_model,
         )
         from supercc.claude.model_providers import PROVIDERS
 
-        project_path = self.data_dir
+        env = get_model_env()  # 直接从单例拿，不用查 model.json
 
         # 处理子命令
         if subcmd:
@@ -1886,7 +1886,7 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
-                ok, err = set_project_model(project_path, target_pid, target_model)
+                ok, err = set_project_model(self.data_dir, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
                         message.chat_id, message.message_id,
@@ -1901,8 +1901,9 @@ class MessageHandler:
                 return HandlerResult(success=True)
 
         # 默认：显示卡片表格
-        providers_cfg = get_all_providers()
-        current_pid, current_mid = get_active_model_for_project(project_path)
+        # 直接从单例获取当前激活的模型，不用查 model.json
+        current_mid = env.ANTHROPIC_MODEL
+        current_pid = env.provider_id  # ModelEnv 直接包含 provider_id
 
         configured = []
         unconfigured = []
