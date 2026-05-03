@@ -1904,6 +1904,7 @@ class MessageHandler:
         # 直接从单例获取当前激活的模型，不用查 model.json
         current_mid = env.ANTHROPIC_MODEL
         current_pid = env.provider_id  # ModelEnv 直接包含 provider_id
+        providers_cfg = get_all_providers()  # 从 model.json 拿供应商 API Key 配置
 
         configured = []
         unconfigured = []
