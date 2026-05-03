@@ -329,15 +329,16 @@ class ReplyFormatter:
                         else:
                             entries = []
                     else:
-                        # user scope — mirror memory_tools.py fallback: empty user_open_id → get all
+                        # user scope — 必须提供 user_open_id，否则无法确定归属
                         if user_open_id:
                             prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform)
                             if card_type == "search" and query:
                                 prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform)
+                            entries = [{"id": p.id, "title": p.title,
+                                        "content": p.content, "keywords": p.keywords} for p in prefs]
                         else:
-                            prefs = memory_manager.get_all_preferences(platform=platform)
-                        entries = [{"id": p.id, "title": p.title,
-                                    "content": p.content, "keywords": p.keywords} for p in prefs]
+                            # user_open_id 为空时不能返回所有用户偏好（隐私泄漏），返回空列表
+                            entries = []
                 except Exception:
                     entries = []
 

@@ -1584,7 +1584,8 @@ class MessageHandler:
             keywords = parts[2].strip()
             if not title or not content or not keywords:
                 return HandlerResult(success=True, response_text="title、content、keywords 三样必填")
-            p = self.memory_manager.add_preference(user_open_id, title, content, keywords)
+            platform = get_current_platform()
+            p = self.memory_manager.add_preference(user_open_id, title, content, keywords, platform=platform)
             return HandlerResult(success=True,
                                  response_text=f"✅ 用户偏好已保存（ID: {p.id}）")
 

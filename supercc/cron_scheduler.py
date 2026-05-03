@@ -686,6 +686,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                 result = formatter.format_tool_call(
                     claude_msg.tool_name, claude_msg.tool_input,
                     memory_manager=memory_manager,
+                    platform="feishu", chat_id=chat_id or "",
                 )
 
                 if stream_to_feishu:

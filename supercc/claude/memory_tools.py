@@ -66,7 +66,10 @@ async def memory_add_user(args: dict) -> dict:
 async def memory_delete_user(args: dict) -> dict:
     mm = get_memory_manager()
     platform = get_current_platform()
-    ok = mm.delete_preference(args["id"], platform=platform)
+    user_open_id = _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
+    ok = mm.delete_preference(args["id"], user_open_id=user_open_id, platform=platform)
     if ok:
         return {"content": [{"type": "text", "text": f"🗑️ 用户偏好 {args['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -85,7 +88,10 @@ async def memory_update_user(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "title、content、keywords 三样必填"}], "is_error": True}
     mm = get_memory_manager()
     platform = get_current_platform()
-    ok = mm.update_preference(args["id"], title, content, keywords, platform=platform)
+    user_open_id = _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
+    ok = mm.update_preference(args["id"], title, content, keywords, user_open_id=user_open_id, platform=platform)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 用户偏好 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -103,7 +109,7 @@ async def memory_list_user(args: dict) -> dict:
     if user_open_id:
         prefs = mm.get_preferences_by_user(user_open_id, platform=platform)
     else:
-        prefs = mm.get_all_preferences()
+        prefs = mm.get_all_preferences(platform=platform)
     if not prefs:
         return {"content": [{"type": "text", "text": "📭 暂无用户偏好记录。"}]}
     lines = [f"👤 用户偏好（共 {len(prefs)} 条）\n"]
