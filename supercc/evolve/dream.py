@@ -20,7 +20,7 @@ DREAM_PROMPT = """【做梦 — 每日凌晨精炼】
 
 1. **获取所有用户偏好**：调用 `mcp__SuperCC__MemoryListUser`（不需要参数），获取当前用户的所有偏好
 
-2. **获取所有项目记忆**：调用 `mcp__SuperCC__MemoryListProj`，project_path 不需要传，获取当前项目的所有记忆
+2. **获取所有项目记忆**：调用 `mcp__SuperCC__MemoryListProj`，传入当前项目的绝对路径作为 project_path，获取当前项目的所有记忆
 
 3. **检查放错位置的记忆**：
    - 用户偏好中，如果某条内容涉及：文件路径、代码规范、bug、架构决策、git、项目工具使用方式等**项目特有**的信息，说明它放错位置了

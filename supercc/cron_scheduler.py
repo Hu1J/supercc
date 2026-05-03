@@ -635,8 +635,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     _log("FEISHU_CLIENT_CREATED")
 
     # Memory manager for formatting memory tool calls
-    from supercc.claude.memory_manager import MemoryManager
-    memory_manager = MemoryManager()
+    from supercc.claude.memory_manager import get_memory_manager
+    memory_manager = get_memory_manager()
     _log("MEMORY_MANAGER_CREATED")
 
     # Create independent Claude instance (avoids concurrent conflicts)
@@ -687,6 +687,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                     claude_msg.tool_name, claude_msg.tool_input,
                     memory_manager=memory_manager,
                     platform="feishu", chat_id=chat_id or "",
+                    default_project_path=config.claude.approved_directory,
                 )
 
                 if stream_to_feishu:

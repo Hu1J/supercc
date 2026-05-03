@@ -722,7 +722,8 @@ def _run_memory_command(args) -> None:
                 _print(f"未找到 id={pref_id} 的用户偏好")
 
         elif action == "list":
-            prefs = mm.get_all_preferences()
+            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            prefs = mm.get_preferences_by_user(user_open_id, platform="feishu")
             if not prefs:
                 _print("📭 暂无用户偏好记录")
                 return
@@ -737,7 +738,8 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user search <关键词>")
                 return
-            results = mm.search_preferences(raw_args)
+            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu")
             if not results:
                 _print(f"未找到与「{raw_args}」相关的用户偏好")
                 return
