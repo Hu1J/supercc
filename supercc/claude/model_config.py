@@ -210,12 +210,25 @@ def get_provider_api_key(provider_id: str) -> str:
     return providers.get(provider_id, ProviderConfig()).api_key
 
 
-def update_provider_api_key(provider_id: str, api_key: str) -> bool:
-    """更新指定供应商的 API Key。"""
+def update_provider_api_key(provider_id: str, api_key: str) -> tuple[bool, str]:
+    """更新指定供应商的 API Key。返回 (success, error_message)。"""
     raw = _load_json()
     providers: dict[str, dict] = raw.get("providers", {})
     if provider_id not in providers:
-        return False
+        return False, f"未知供应商: {provider_id}"
+
+    # 验证新 API Key 是否有效
+    provider = get_provider(provider_id)
+    if provider:
+        test_env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=api_key,
+            ANTHROPIC_BASE_URL=provider.base_url,
+            ANTHROPIC_MODEL=provider.models[0] if provider.models else "",
+        )
+        valid, err = validate_model_env(test_env)
+        if not valid:
+            return False, f"API Key 验证失败: {err}"
+
     providers[provider_id]["api_key"] = api_key
     raw["providers"] = providers
     _save_json(raw)
@@ -226,15 +239,36 @@ def update_provider_api_key(provider_id: str, api_key: str) -> bool:
         current_pid, current_mid = get_active_model_for_project(_model_json_path)
         if current_pid == provider_id:
             _model_env_instance = _resolve_active_env(_model_json_path)
-    return True
+    return True, ""
 
 
-def set_project_model(project_path: str, provider_id: str, model_id: str) -> bool:
-    """为指定项目设置激活的 (provider_id, model_id)。"""
+def set_project_model(project_path: str, provider_id: str, model_id: str) -> tuple[bool, str]:
+    """为指定项目设置激活的 (provider_id, model_id)。
+
+    在保存前会验证配置是否有效。返回 (success, error_message)。
+    """
     raw = _load_json()
     providers: dict[str, dict] = raw.get("providers", {})
     if provider_id not in providers:
-        return False
+        return False, f"未知供应商: {provider_id}"
+
+    pcfg = providers[provider_id]
+    api_key = pcfg.get("api_key", "")
+    if not api_key:
+        return False, f"供应商 {provider_id} 尚未配置 API Key"
+
+    provider = get_provider(provider_id)
+    base_url = provider.base_url if provider else ""
+
+    # 验证配置是否有效
+    test_env = ModelEnv(
+        ANTHROPIC_AUTH_TOKEN=api_key,
+        ANTHROPIC_BASE_URL=base_url,
+        ANTHROPIC_MODEL=model_id,
+    )
+    valid, err = validate_model_env(test_env)
+    if not valid:
+        return False, f"配置无效: {err}"
 
     projects: dict[str, dict] = raw.get("projects", {})
     projects[project_path] = {
@@ -248,7 +282,7 @@ def set_project_model(project_path: str, provider_id: str, model_id: str) -> boo
     global _model_env_instance
     if _model_env_instance is not None:
         _model_env_instance = _resolve_active_env(project_path)
-    return True
+    return True, ""
 
 
 def get_providers_for_display() -> list[tuple[str, str, str, list[str], bool]]:

@@ -1844,16 +1844,6 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
-                # 检查 API Key 是否已配置
-                providers_cfg = get_all_providers()
-                pcfg = providers_cfg.get(target_pid)
-                if not pcfg or not pcfg.api_key:
-                    await self._safe_send(
-                        message.chat_id, message.message_id,
-                        f"❌ provider `{provider.name}` 尚未配置 API Key。\n请先使用 SetModel 工具配置 API Key。",
-                    )
-                    return HandlerResult(success=True)
-
                 if not target_model:
                     await self._safe_send(
                         message.chat_id, message.message_id,
@@ -1861,19 +1851,11 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
-                if target_model not in provider.models:
-                    avail = " / ".join(f"`{m}`" for m in provider.models)
-                    await self._safe_send(
-                        message.chat_id, message.message_id,
-                        f"❌ 模型 `{target_model}` 不在 `{provider.name}` 的可用模型中。\n可用：\n{avail}",
-                    )
-                    return HandlerResult(success=True)
-
-                ok = set_project_model(project_path, target_pid, target_model)
+                ok, err = set_project_model(project_path, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 切换失败：provider `{target_pid}` 未找到",
+                        f"❌ 切换失败：{err}",
                     )
                     return HandlerResult(success=True)
 

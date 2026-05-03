@@ -142,19 +142,18 @@ async def set_model_tool(args: dict) -> dict:
     project_path = _get_project_path()
     changed = []
 
-    # 如果提供了 api_key，先更新供应商配置
+    # 如果提供了 api_key，更新供应商配置（带验证）
     if api_key:
-        from supercc.claude.model_config import get_all_providers, _load_json, _save_json, _model_json_path
-        raw = _load_json()
-        providers_raw: dict = raw.get("providers", {})
-        if provider_id not in providers_raw:
-            providers_raw[provider_id] = {"api_key": "", "models": provider.models}
-        providers_raw[provider_id]["api_key"] = api_key
-        raw["providers"] = providers_raw
-        _save_json(raw)
+        from supercc.claude.model_config import update_provider_api_key
+        ok, err = update_provider_api_key(provider_id, api_key)
+        if not ok:
+            return {
+                "content": [{"type": "text", "text": f"❌ API Key 更新失败：{err}"}],
+                "is_error": True,
+            }
         changed.append("API Key")
 
-    # 校验并激活模型
+    # 切换模型（带验证）
     if model_id:
         if provider.models and model_id not in provider.models:
             models_str = ", ".join(f"`{m}`" for m in provider.models)
@@ -163,22 +162,12 @@ async def set_model_tool(args: dict) -> dict:
                 "is_error": True,
             }
 
-        # 验证 credentials
-        from supercc.claude.model_config import get_provider_api_key
-        token = get_provider_api_key(provider_id)
-        env = get_model_env()
-        env.ANTHROPIC_AUTH_TOKEN = token
-        env.ANTHROPIC_BASE_URL = provider.base_url
-        env.ANTHROPIC_MODEL = model_id
-
-        valid, err_msg = validate_model_env(env)
-        if not valid:
+        ok, err = set_project_model(project_path, provider_id, model_id)
+        if not ok:
             return {
-                "content": [{"type": "text", "text": f"❌ 配置无效：{err_msg}"}],
+                "content": [{"type": "text", "text": f"❌ 切换失败：{err}"}],
                 "is_error": True,
             }
-
-        set_project_model(project_path, provider_id, model_id)
         changed.append(f"模型 → `{model_id}`")
     elif api_key:
         # 只更新了 api_key，没切模型，检查当前项目是否已有激活映射
