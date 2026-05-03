@@ -94,7 +94,7 @@ class ClaudeConfig:
     cli_path: str = "claude"
     max_turns: int = 50
     approved_directory: str = str(Path.home())
-    session_mode: str = "share"  # "share" | "isolated"
+    session_mode: str = "per-chat"  # per-chat: 每个 chat_id 独立 session（默认），share/isolated 已废弃
 
 
 @dataclass

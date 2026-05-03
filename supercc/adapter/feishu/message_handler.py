@@ -189,19 +189,12 @@ class SessionWorker:
         self.task: asyncio.Task | None = None
         self.handler = handler
 
-        # 根据 session_mode 决定工作目录
-        if handler.config.claude.session_mode == "isolated":
-            # 每个 chat_id 独立目录，直接用 chat_id 作为目录名
-            # 确保 data_dir 有效（fallback 到 approved_directory）
-            if handler.data_dir:
-                self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
-                os.makedirs(self._cwd, exist_ok=True)
-            else:
-                # data_dir 为空时，回退到项目目录
-                logger.warning(f"[ISOLATED] data_dir 为空，回退到 approved_directory")
-                self._cwd = handler.approved_directory
+        # per-chat-id session 隔离：每个 chat_id 独立 session directory
+        if handler.data_dir:
+            self._cwd = os.path.join(handler.data_dir, "sessions", chat_id)
+            os.makedirs(self._cwd, exist_ok=True)
         else:
-            # 共享项目目录
+            logger.warning(f"[PER-CHAT] data_dir 为空，回退到 approved_directory")
             self._cwd = handler.approved_directory
 
         self.claude = ClaudeIntegration(
@@ -301,12 +294,9 @@ class SessionWorker:
         """复用时更新 chat_id 和工作目录，避免 approved_directory 残留"""
         self.chat_id = chat_id
 
-        if self.handler.config.claude.session_mode == "isolated":
-            if self.handler.data_dir:
-                new_cwd = os.path.join(self.handler.data_dir, "sessions", chat_id)
-                os.makedirs(new_cwd, exist_ok=True)
-            else:
-                new_cwd = self.handler.approved_directory
+        if self.handler.data_dir:
+            new_cwd = os.path.join(self.handler.data_dir, "sessions", chat_id)
+            os.makedirs(new_cwd, exist_ok=True)
         else:
             new_cwd = self.handler.approved_directory
 

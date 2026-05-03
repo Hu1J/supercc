@@ -1299,10 +1299,6 @@ def main(args=None):
 
     # start (default)
     start_parser = subparsers.add_parser("start", help="Start SuperCC (default)")
-    start_parser.add_argument("--isolated", action="store_true",
-                              help="Isolated mode: each chat_id uses an independent session directory")
-    start_parser.add_argument("--share", action="store_true",
-                              help="Shared mode: all chat_ids share the Claude Code session (default)")
 
     # list
     list_parser = subparsers.add_parser("list", help="List all running instances")
@@ -1601,34 +1597,7 @@ def main(args=None):
 
     init_config(cfg_path)
 
-    # Handle session mode CLI args
-    args_isolated = getattr(args, "isolated", False)
-    args_share = getattr(args, "share", False)
-    if args_isolated and args_share:
-        print("错误: 不能同时指定 --isolated 和 --share")
-        sys.exit(1)
-
     config = get_config()
-    if args_isolated and config.claude.session_mode != "isolated":
-        config.claude.session_mode = "isolated"
-        from supercc.config import write_config
-        write_config(config)
-        logger.info("Session mode set to isolated")
-    elif args_share and config.claude.session_mode != "share":
-        config.claude.session_mode = "share"
-        from supercc.config import write_config
-        write_config(config)
-        logger.info("Session mode set to share")
-
-    # Print isolated mode banner
-    if config.claude.session_mode == "isolated":
-        print("\n" + "=" * 60)
-        print("WARNING: ISOLATED MODE - each chat_id has independent session directory")
-        print("=" * 60)
-        print("Use case: multi-group customer service / fully isolated environments")
-        print(f"Session directory: {data_dir}/sessions/<chat_id>/")
-        print("Resource usage is higher, please monitor")
-        print("=" * 60 + "\n")
 
     # Risk warning must be acknowledged before starting (skip if already accepted in config)
     if config.bypass_accepted:
