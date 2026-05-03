@@ -1844,6 +1844,16 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
+                # 检查 API Key 是否已配置
+                providers_cfg = get_all_providers()
+                pcfg = providers_cfg.get(target_pid)
+                if not pcfg or not pcfg.api_key:
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ provider `{provider.name}` 尚未配置 API Key。\n请先使用 SetModel 工具配置 API Key。",
+                    )
+                    return HandlerResult(success=True)
+
                 if not target_model:
                     await self._safe_send(
                         message.chat_id, message.message_id,
