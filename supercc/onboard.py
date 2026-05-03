@@ -9,11 +9,10 @@ import questionary
 
 from supercc.claude.model_config import (
     ModelEnv,
-    ModelEntry,
-    get_current_claude_settings,
-    get_all_models,
-    add_model,
-    switch_model,
+    update_provider_api_key,
+    set_project_model,
+    validate_model_env,
+    get_all_providers,
 )
 from supercc.claude.model_providers import PROVIDERS
 
@@ -57,47 +56,7 @@ def run_onboard_flow() -> bool:
     _print_step(1, TOTAL_STEPS, "配置模型")
     print("请选择您的模型供应商，并提供 API Key\n")
 
-    existing_settings = get_current_claude_settings()
-    env_cfg = existing_settings.get("env", {})
-    detected_token = env_cfg.get("ANTHROPIC_AUTH_TOKEN", "")
-
-    if detected_token:
-        print(f"📋 检测到现有 Claude Code 配置")
-        print(f"   模型: `{env_cfg.get('ANTHROPIC_MODEL', '未设置')}`")
-        print(f"   端点: `{env_cfg.get('ANTHROPIC_BASE_URL', '未设置')}`\n")
-
-        import_to_current = questionary.confirm(
-            "是否导入现有配置？",
-            default=True,
-            style=questionary.Style([
-                ("selected", "fg:#00AA00 bold"),
-            ]),
-        ).ask()
-
-        if import_to_current:
-            base_url = env_cfg.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-            matched_id = None
-            for pid, p in PROVIDERS.items():
-                if p.base_url == base_url:
-                    matched_id = pid
-                    break
-            if matched_id is None:
-                matched_id = "imported"
-            model_id = matched_id
-            name = matched_id
-            description = "从现有 Claude Code 配置导入"
-            env = ModelEnv(
-                ANTHROPIC_AUTH_TOKEN=detected_token,
-                ANTHROPIC_BASE_URL=base_url,
-                ANTHROPIC_MODEL=env_cfg.get("ANTHROPIC_MODEL", "claude-opus-4-5"),
-            )
-            add_model(model_id, name, description, env, provider_name=PROVIDERS.get(matched_id, PROVIDERS["custom"]).name if matched_id != "imported" else "custom")
-            switch_model(model_id)
-            print("✅ 现有配置已导入为默认模型\n")
-        else:
-            _do_model_config_step()
-    else:
-        _do_model_config_step()
+    _do_model_config_step()
 
     # ── Step 2: Feishu config ─────────────────────────────────────────────────
     _print_step(2, TOTAL_STEPS, "配置飞书")
@@ -128,12 +87,14 @@ def run_onboard_flow() -> bool:
     print(" 确认配置")
     print(f"{'━' * 60}\n")
 
-    from supercc.claude.model_config import get_all_models, get_active_model
-    models = get_all_models()
-    active = get_active_model()
-    if active:
-        print(f"模型: {active.name} @ {active.env.ANTHROPIC_BASE_URL}")
-        print(f"     模型 ID: `{active.env.ANTHROPIC_MODEL}`")
+    from supercc.claude.model_config import get_active_model_for_project
+    project_path = data_dir
+    pid, mid = get_active_model_for_project(project_path)
+    if pid:
+        provider = PROVIDERS.get(pid)
+        print(f"模型: {provider.name if provider else pid} @ `{mid}`")
+    else:
+        print("模型: 未配置")
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
 
     print()
@@ -151,7 +112,7 @@ def run_onboard_flow() -> bool:
         return False
 
     # ── Save bypass accepted ──────────────────────────────────────────────────
-    from supercc.config import init_config, get_config, write_config, accept_bypass_warning
+    from supercc.config import init_config, accept_bypass_warning
     try:
         cfg_path, _ = resolve_config_path()
         init_config(cfg_path)
@@ -173,7 +134,7 @@ def run_onboard_flow() -> bool:
 
 def _do_model_config_step() -> None:
     """Handle the model configuration step with provider selection (TUI)."""
-    from supercc.claude.model_providers import PROVIDERS
+    project_path = os.getcwd()
 
     # Step 1: 选择供应商
     provider_choices = [
@@ -196,7 +157,7 @@ def _do_model_config_step() -> None:
     ).ask()
 
     if not provider_id or provider_id == "__skip__":
-        print("\n⚠️  跳过模型配置（后续可使用 `supercc config add` 添加）\n")
+        print("\n⚠️  跳过模型配置（后续可使用 `supercc config` 添加）\n")
         return
 
     provider = PROVIDERS[provider_id]
@@ -243,7 +204,6 @@ def _do_model_config_step() -> None:
             ANTHROPIC_MODEL=selected_model,
         )
 
-        from supercc.claude.model_config import validate_model_env, add_model, switch_model
         while True:
             valid, err_msg = validate_model_env(env)
             if valid:
@@ -259,16 +219,30 @@ def _do_model_config_step() -> None:
                 return
             env.ANTHROPIC_AUTH_TOKEN = token
 
-        added = add_model(model_id, selected_model, f"自定义供应商: {provider_name}", env, provider_name=provider_name)
-        switch_model(model_id)
-        if not added:
-            print(f"\n⚠️  模型 ID `{model_id}` 已存在，已切换到该模型\n")
-        else:
-            print(f"\n✅ 自定义模型配置已保存")
+        # custom 模型存到 providers["custom"]（特殊处理）
+        from supercc.claude.model_config import _load_json, _save_json
+        raw = _load_json()
+        providers_raw = raw.get("providers", {})
+        # custom 用 base_url 作为 key
+        custom_key = f"custom_{hashlib.md5(base_url.encode()).hexdigest()[:8]}"
+        providers_raw[custom_key] = {
+            "api_key": token,
+            "models": [selected_model],
+            "base_url": base_url,
+            "provider_name": provider_name,
+        }
+        raw["providers"] = providers_raw
+        _save_json(raw)
+
+        # 设置项目激活映射
+        set_project_model(project_path, custom_key, selected_model)
+
+        print(f"\n✅ 自定义模型配置已保存")
         print(f"   供应商: {provider_name}")
         print(f"   Base URL: {base_url}")
         print(f"   模型: `{selected_model}`\n")
         return
+
     # ── 预置供应商模式 ───────────────────────────────────────────────────────
 
     auth_display = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}.get(provider.auth_type, provider.auth_type)
@@ -309,7 +283,6 @@ def _do_model_config_step() -> None:
         ANTHROPIC_MODEL=selected_model,
     )
 
-    from supercc.claude.model_config import validate_model_env
     while True:
         valid, err_msg = validate_model_env(env)
         if valid:
@@ -320,7 +293,7 @@ def _do_model_config_step() -> None:
             default=True,
         ).ask()
         if not retry:
-            print("\n⚠️  跳过模型配置（后续可使用 `supercc config add` 添加）\n")
+            print("\n⚠️  跳过模型配置（后续可使用 `supercc config` 添加）\n")
             return
         token = questionary.password(
             f"API Key（{auth_display}）",
@@ -331,14 +304,10 @@ def _do_model_config_step() -> None:
             return
         env.ANTHROPIC_AUTH_TOKEN = token
 
-    # 保存配置
-    model_id = provider_id
-    name = f"{provider.name} ({selected_model})"
-    description = f"供应商: {provider.name}"
+    # 保存配置：更新供应商 API Key + 设置项目激活映射
+    update_provider_api_key(provider_id, token)
+    set_project_model(project_path, provider_id, selected_model)
 
-    from supercc.claude.model_config import add_model, switch_model
-    add_model(model_id, name, description, env, provider_name=provider.name)
-    switch_model(model_id)  # 设置为激活模型，同步写入 Claude 内部配置
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.name}")
     print(f"   模型: `{selected_model}`")

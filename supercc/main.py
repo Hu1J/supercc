@@ -408,9 +408,9 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     config = init_config(config_path)
 
-    # Startup: ensure model config is migrated (幂等，重复调用无影响)
-    from supercc.claude.model_config import get_all_models
-    get_all_models()  # 触发 YAML→JSON 迁移（如果需要）
+    # Startup: initialize model env singleton with global ~/.supercc/model.json
+    from supercc.claude.model_config import init_model_env
+    init_model_env(data_dir)
 
     # Startup: ensure Claude Code onboarding is complete (幂等，重复调用无影响)
     _ensure_codex_mcp(config)

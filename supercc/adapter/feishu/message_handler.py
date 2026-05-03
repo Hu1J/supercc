@@ -1199,10 +1199,15 @@ class MessageHandler:
 
             # 获取当前模型信息
             try:
-                from supercc.claude.model_config import get_active_model
-                model_entry = get_active_model()
-                model_provider = model_entry.name if model_entry else "未知"
-                model_id = model_entry.env.ANTHROPIC_MODEL if model_entry else "未知"
+                from supercc.claude.model_config import get_active_model_for_project, get_all_providers
+                from supercc.claude.model_providers import PROVIDERS
+                project_path = self.data_dir
+                pid, mid = get_active_model_for_project(project_path)
+                providers = get_all_providers()
+                pcfg = providers.get(pid)
+                provider_name = PROVIDERS.get(pid, type('', (), {'name': pid})()).name if pid else "未设置"
+                model_provider = provider_name
+                model_id = mid or "未设置"
             except Exception:
                 model_provider = "未知"
                 model_id = "未知"
@@ -1803,111 +1808,87 @@ class MessageHandler:
         """处理 /model 命令：显示所有供应商的模型配置（飞书卡片表格）。
 
         子命令：
-        - /model switch <provider_id> — 切换到已配置的供应商
+        - /model switch <provider_id> <model_id> — 切换到指定供应商的模型
         """
-        from supercc.claude.model_config import get_all_models, get_active_model, ModelEntry, switch_model
+        from supercc.claude.model_config import (
+            get_all_providers,
+            get_active_model_for_project,
+            set_project_model,
+        )
         from supercc.claude.model_providers import PROVIDERS
+
+        project_path = self.data_dir
 
         # 处理子命令
         if subcmd:
-            parts = subcmd.strip().split(maxsplit=1)
+            parts = subcmd.strip().split(maxsplit=2)
             action = parts[0].lower()
-            target = parts[1] if len(parts) > 1 else ""
+            target_pid = parts[1] if len(parts) > 1 else ""
+            target_model = parts[2] if len(parts) > 2 else ""
 
             if action == "switch":
-                models = get_all_models()
-
-                # 建立 base_url -> model_id 反查表
-                url_to_mid: dict[str, str] = {}
-                for mid, mentry in models.items():
-                    if mentry.env.ANTHROPIC_BASE_URL:
-                        url_to_mid[mentry.env.ANTHROPIC_BASE_URL] = mid
-
-                # 尝试把 target（provider ID）解析为 model_id
-                model_id_to_switch: str | None = None
-                if target in models:
-                    # 直接是 models.yaml 的 key（如 "volcano"）
-                    model_id_to_switch = target
-                elif target in PROVIDERS:
-                    # 是 PROVIDER ID（如 "minimax"），通过 base_url 找
-                    provider = PROVIDERS[target]
-                    if provider.base_url in url_to_mid:
-                        model_id_to_switch = url_to_mid[provider.base_url]
-
-                def fmt_name(mid: str) -> str:
-                    return f"`{mid}`"
-
-                if not target:
-                    available = " / ".join(fmt_name(mid) for mid in models)
+                if not target_pid:
+                    available = " / ".join(f"`{p.id}`" for p in PROVIDERS.values() if p.id != "custom")
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 请指定要切换的 provider ID。\n当前已配置的 provider：\n{available}",
+                        f"❌ 请指定要切换的 provider ID。\n可用：\n{available}",
                     )
                     return HandlerResult(success=True)
 
-                if model_id_to_switch is None:
-                    available = " / ".join(fmt_name(mid) for mid in models)
+                provider = PROVIDERS.get(target_pid)
+                if not provider:
+                    available = " / ".join(f"`{p.id}`" for p in PROVIDERS.values() if p.id != "custom")
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 未找到已配置的 provider `{target}`。\n当前已配置的 provider：\n{available}",
+                        f"❌ 未知 provider `{target_pid}`。\n可用：\n{available}",
                     )
                     return HandlerResult(success=True)
 
-                # 执行切换
-                ok = switch_model(model_id_to_switch)
+                if not target_model:
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ 请指定模型 ID。\n可用模型：\n{' / '.join(f'`{m}`' for m in provider.models)}",
+                    )
+                    return HandlerResult(success=True)
+
+                if target_model not in provider.models:
+                    avail = " / ".join(f"`{m}`" for m in provider.models)
+                    await self._safe_send(
+                        message.chat_id, message.message_id,
+                        f"❌ 模型 `{target_model}` 不在 `{provider.name}` 的可用模型中。\n可用：\n{avail}",
+                    )
+                    return HandlerResult(success=True)
+
+                ok = set_project_model(project_path, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
                         message.chat_id, message.message_id,
-                        f"❌ 切换失败：未找到模型 `{model_id_to_switch}`",
+                        f"❌ 切换失败：provider `{target_pid}` 未找到",
                     )
                     return HandlerResult(success=True)
-                model = models[model_id_to_switch].env.ANTHROPIC_MODEL or "—"
+
                 await self._safe_send(
                     message.chat_id, message.message_id,
-                    f"✅ 已切换为 `{model_id_to_switch}`（模型：`{model}`）",
+                    f"✅ 已切换为 `{provider.name}`（模型：`{target_model}`）",
                 )
                 return HandlerResult(success=True)
 
         # 默认：显示卡片表格
-
-        models = get_all_models()
-
-        # 建立 base_url -> (model_id, ModelEntry) 反查表
-        url_to_model: dict[str, tuple[str, ModelEntry]] = {}
-        for mid, mentry in models.items():
-            if mentry.env.ANTHROPIC_AUTH_TOKEN and mentry.env.ANTHROPIC_BASE_URL:
-                url_to_model[mentry.env.ANTHROPIC_BASE_URL] = (mid, mentry)
+        providers_cfg = get_all_providers()
+        current_pid, current_mid = get_active_model_for_project(project_path)
 
         configured = []
         unconfigured = []
 
-        active_entry = get_active_model()
-        active_base_url = active_entry.env.ANTHROPIC_BASE_URL if active_entry else ""
-        active_id = next((mid for mid, m in models.items()
-                         if m.env.ANTHROPIC_BASE_URL == active_base_url), "")
-
-        for p in PROVIDERS.values():
-            matched = None
-            if p.base_url and p.base_url in url_to_model:
-                matched = url_to_model[p.base_url]
-            if not matched:
-                for url, (mid, mentry) in url_to_model.items():
-                    if p.base_url and url.startswith(p.base_url.rstrip("/") + "/"):
-                        matched = (mid, mentry)
-                        break
-
-            if matched:
-                mid, mentry = matched
-                configured.append((
-                    p.id,
-                    p.name,
-                    mentry.env.ANTHROPIC_AUTH_TOKEN or "",
-                    mentry.env.ANTHROPIC_MODEL or "—",
-                    p.models,
-                    mentry.env.ANTHROPIC_BASE_URL == active_base_url,
-                ))
+        for pid, provider in PROVIDERS.items():
+            if pid == "custom":
+                continue
+            pcfg = providers_cfg.get(pid)
+            api_key = pcfg.api_key if pcfg else ""
+            if api_key:
+                configured.append((pid, provider.name, api_key, current_mid or "—", provider.models, pid == current_pid))
             else:
-                unconfigured.append((p.id, p.name, p.models))
+                unconfigured.append((pid, provider.name, provider.models))
 
         def mask_api_key(key: str) -> str:
             if not key:
@@ -1917,7 +1898,6 @@ class MessageHandler:
             return key[:6] + "***" + key[-4:]
 
         def fmt_models(models: list[str], current: str) -> str:
-            """渲染可用模型列表，当前使用的模型加粗。"""
             parts = []
             for m in models:
                 if m == current:
@@ -1926,32 +1906,17 @@ class MessageHandler:
                     parts.append(f"`{m}`")
             return " / ".join(parts)
 
-        # 当前激活的条目放最前面（通过 base_url 匹配，而非 active_id 字符串比较）
-        def _is_active_row(row) -> bool:
-            _, _, _, _, _, row_active = row
-            return row_active
+        # 当前激活的条目放最前面
+        configured.sort(key=lambda x: 0 if x[5] else 1)
 
-        configured.sort(key=lambda x: 0 if _is_active_row(x) else 1)
-
-        # 构建表格头部（第一行）
         table_header = "| 状态 | Provider | 当前模型 | API Key | 所有可用模型 |"
-        # 构建表格分隔符（第二行）
         table_sep = "|------|----------|---------|---------|------------|"
 
-        # 标题中的 active_name：优先用 PROVIDERS 里的名称，active_id 无效时从 base_url 推导
-        active_name = active_id or "未设置"
-        active_model = "—"
-        if active_id and active_id in models:
-            active_entry = models[active_id]
-            active_model = active_entry.env.ANTHROPIC_MODEL or "—"
-        # active_id 不在 PROVIDERS 中时（如旧版 "default"），从 base_url 反查 provider 名
-        if active_id and active_id not in PROVIDERS and active_base_url:
-            for pid, p in PROVIDERS.items():
-                if p.base_url == active_base_url:
-                    active_name = p.name
-                    break
+        active_name = "未设置"
+        if current_pid:
+            p = PROVIDERS.get(current_pid)
+            active_name = p.name if p else current_pid
 
-        # 构建表格内容（整张表格放一个 markdown element）
         table_lines = [table_header, table_sep]
         for pid, pname, api_key, model, all_models, is_active in configured:
             mark = "✅" if is_active else "✴️"
@@ -1962,16 +1927,15 @@ class MessageHandler:
             table_lines.append(f"| 📛 | `{pid}` | — | — | {avail} |")
         table_content = "\n".join(table_lines)
 
-        # 构建卡片 elements
         elements = [
             {
                 "tag": "markdown",
                 "content": (
                     "## 🤖 模型配置\n"
-                    f"当前使用：**{active_name}**（`{active_model}`）\n\n"
+                    f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
                     f"共 **{len(configured)}** 个已配置，**{len(unconfigured)}** 个未配置。\n\n"
                     + table_content
-                    + "\n\n---\n💡 如需切换模型或更新配置，直接跟我说即可。"
+                    + "\n\n---\n💡 切换模型：`/model switch <provider_id> <model_id>`"
                 ),
             },
         ]
@@ -1992,7 +1956,7 @@ class MessageHandler:
             for pid, pname, all_models in unconfigured:
                 avail = ", ".join(all_models[:4])
                 text.append(f"📛 {pname}: {avail}...")
-            text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 如需切换模型或更新配置，直接跟我说即可。")
+            text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 切换：`/model switch <provider_id> <model_id>`")
             await self._safe_send(message.chat_id, message.message_id, "\n".join(text))
 
         return HandlerResult(success=True)

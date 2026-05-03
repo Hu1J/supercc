@@ -96,9 +96,9 @@ class ClaudeIntegration:
         """
         # 检测 model 是否已切换，如已切换则强制重建
         try:
-            from supercc.claude.model_config import get_active_model
-            active = get_active_model()
-            current_model_id = active.env.ANTHROPIC_BASE_URL if active else None
+            from supercc.claude.model_config import get_model_env
+            env = get_model_env()
+            current_model_id = env.ANTHROPIC_BASE_URL if env else None
             if current_model_id != self._options_model_id:
                 self._options = None
         except Exception:
@@ -146,18 +146,18 @@ class ClaudeIntegration:
             "NotebookEdit", "TaskStart", "TaskComplete",
         ]
 
-        # 从项目级 model.json 获取当前激活模型的 env
+        # 从全局 model.json 获取当前项目的激活模型 env
         model_env: dict[str, str] = {}
         model_id: str | None = None
         try:
-            from supercc.claude.model_config import get_active_model
-            active = get_active_model()
-            if active and active.env.ANTHROPIC_AUTH_TOKEN:
+            from supercc.claude.model_config import get_model_env
+            env = get_model_env()
+            if env and env.ANTHROPIC_AUTH_TOKEN:
                 model_env = {
-                    "ANTHROPIC_API_KEY": active.env.ANTHROPIC_AUTH_TOKEN,
-                    "ANTHROPIC_BASE_URL": active.env.ANTHROPIC_BASE_URL,
+                    "ANTHROPIC_API_KEY": env.ANTHROPIC_AUTH_TOKEN,
+                    "ANTHROPIC_BASE_URL": env.ANTHROPIC_BASE_URL,
                 }
-                model_id = active.env.ANTHROPIC_MODEL or None
+                model_id = env.ANTHROPIC_MODEL or None
         except Exception:
             pass  # 非关键路径失败不影响主流程
 
@@ -186,7 +186,7 @@ class ClaudeIntegration:
 
         self._options = options
         # 记录本次构建使用的 model ID（下一次 _init_options 会对比是否变更）
-        self._options_model_id = active.env.ANTHROPIC_BASE_URL if active else None
+        self._options_model_id = env.ANTHROPIC_BASE_URL if env else None
         self._system_prompt_append = system_prompt_append
 
     # -------------------------------------------------------------------------
