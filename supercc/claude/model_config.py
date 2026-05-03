@@ -76,11 +76,33 @@ def _ensure_model_dir() -> None:
 
 
 def _load_json() -> dict:
-    """读取全局 model.json，返回字典。无文件则创建默认配置。"""
+    """读取全局 model.json，返回字典。无文件则创建默认配置。
+
+    每次读取时，同步预置供应商的 models 列表（保留 api_key，projects 不变）。
+    """
     if not os.path.exists(GLOBAL_MODEL_PATH):
         _create_default_config()
+        with open(GLOBAL_MODEL_PATH) as f:
+            return json.load(f) or {}
+
     with open(GLOBAL_MODEL_PATH) as f:
-        return json.load(f) or {}
+        raw = json.load(f) or {}
+
+    # 同步预置供应商的 models 列表（保留已有 api_key，projects 不变）
+    changed = False
+    for pid, provider in PROVIDERS.items():
+        if pid == "custom":
+            continue
+        if pid in raw.get("providers", {}):
+            if raw["providers"][pid]["models"] != provider.models:
+                raw["providers"][pid]["models"] = provider.models.copy()
+                changed = True
+
+    # 如果有同步变更，保存回去
+    if changed:
+        _save_json(raw)
+
+    return raw
 
 
 def _save_json(raw: dict) -> None:
