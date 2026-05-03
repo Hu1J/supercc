@@ -223,7 +223,7 @@ def load_config(path: str, data_dir: str = "") -> Config:
     return Config(
         channels=channels_cfg,
         auth=AuthConfig(**raw.get("auth", {})),
-        claude=ClaudeConfig(**raw.get("claude", {})),
+        claude=ClaudeConfig(**{k: v for k, v in raw.get("claude", {}).items() if k in {"cli_path", "max_turns", "approved_directory"}}),
         codex=codex_cfg,
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
         data_dir=data_dir,
