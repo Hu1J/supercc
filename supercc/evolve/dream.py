@@ -20,7 +20,7 @@ DREAM_PROMPT = """【做梦 — 每日凌晨精炼】
 
 1. **获取所有用户偏好**：调用 `mcp__SuperCC__MemoryListUser`（不需要参数），获取当前用户的所有偏好
 
-2. **获取所有项目记忆**：调用 `mcp__SuperCC__MemoryListProj`，传入当前项目的绝对路径作为 project_path，获取当前项目的所有记忆
+2. **获取所有项目记忆**：对 project_path 下的每一种 platform × chat_id 组合，调用 `mcp__SuperCC__MemoryListProj`（project_path 参数必传），获取该组合下的所有项目记忆。platform 包括 feishu 等，chat_id 为各飞书会话 ID，遍历所有组合确保不遗漏。
 
 3. **检查放错位置的记忆**：
    - 用户偏好中，如果某条内容涉及：文件路径、代码规范、bug、架构决策、git、项目工具使用方式等**项目特有**的信息，说明它放错位置了
