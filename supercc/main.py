@@ -338,6 +338,12 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
         await handler.handle(message)
     except Exception as e:
         logger.exception(f"Error handling message: {e}")
+        # 直接发送飞书错误通知，不依赖 logging handler
+        err_msg = f"❌ 处理消息时出错：{e}"
+        try:
+            await handler._safe_send(message.chat_id, message.message_id, err_msg)
+        except Exception:
+            pass
 
 
 def write_pid(pid_file: str) -> None:
