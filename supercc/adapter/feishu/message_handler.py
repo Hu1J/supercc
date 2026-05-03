@@ -14,7 +14,7 @@ from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
-from supercc.claude.message_context import set_current_context
+from supercc.claude.message_context import get_current_platform, set_current_context
 from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
 from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
 from supercc.claude.cron_tools import CRON_GUIDE
@@ -376,6 +376,8 @@ class SessionWorker:
             + h.memory_manager.inject_context(
                 user_open_id=message.user_open_id,
                 project_path=project_path,
+                platform=get_current_platform(),
+                chat_id=message.chat_id,
             )
         )
 
