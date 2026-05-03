@@ -212,6 +212,7 @@ class SessionWorker:
         self.IDLE_TIMEOUT = 300  # 5分钟
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
         self._new_session_requested = False  # /new 标志，SessionWorker 私有
+        self._seen_chat_ids: set = set()  # 记录该 Worker 已处理过的 chat_id，避免每次都创建新 session
 
     def _trigger_memory_review(self, message: IncomingMessage, response_text: str) -> None:
         """Worker 私有：使用自己的 claude_memory 实例触发记忆回顾"""
@@ -438,13 +439,17 @@ class SessionWorker:
                     system_prompt_append += "\n".join(lines) + "\n"
                     # 持久化 group_members 到 session（供 _is_group_chat 判断用）
                     try:
-                        members_json = json.dumps([
-                            {"id": member_id, "name": name} for name, member_id in (
-                                (m.get("name") or m.get("bot_name", ""),
-                                 m.get("member_id") or m.get("open_id") or m.get("bot_id", ""))
-                                for m in members
-                            ) if member_id
-                        ], ensure_ascii=False)
+                        def _member_to_dict(m):
+                            if isinstance(m, dict):
+                                return {
+                                    "id": m.get("member_id") or m.get("open_id") or m.get("bot_id", ""),
+                                    "name": m.get("name") or m.get("bot_name", ""),
+                                }
+                            return {
+                                "id": getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", ""),
+                                "name": getattr(m, "name", None) or "",
+                            }
+                        members_json = json.dumps([d for d in (_member_to_dict(m) for m in members) if d["id"]], ensure_ascii=False)
                         h.sessions.update_group_members(session.session_id, members_json)
                     except Exception as e:
                         logger.debug(f"[GROUP_MEMBERS] failed to persist: {e}")
@@ -463,8 +468,6 @@ class SessionWorker:
         _init_chat_id: str | None = None,
     ) -> None:
         """初始化/更新持久化 options"""
-        if not hasattr(self, "_seen_chat_ids"):
-            self._seen_chat_ids: set = set()
         # /new 设置了 _new_session_requested，下次 query 用 continue_conversation=False
         if self._new_session_requested:
             self._new_session_requested = False
