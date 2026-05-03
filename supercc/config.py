@@ -94,7 +94,6 @@ class ClaudeConfig:
     cli_path: str = "claude"
     max_turns: int = 50
     approved_directory: str = str(Path.home())
-    session_mode: str = "per-chat"  # per-chat: 每个 chat_id 独立 session（默认），share/isolated 已废弃
 
 
 @dataclass
@@ -311,7 +310,6 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
             "cli_path": cfg.claude.cli_path,
             "max_turns": cfg.claude.max_turns,
             "approved_directory": cfg.claude.approved_directory,
-            "session_mode": cfg.claude.session_mode,
         },
         "codex": {
             "enabled": cfg.codex.enabled,
