@@ -1984,7 +1984,7 @@ class MessageHandler:
         try:
             await self.feishu.send_card(message.chat_id, card)
         except Exception:
-            text = [f"🤖 **模型配置**（当前：{active_name}）\n"]
+            text = [f"🤖 **模型配置**\n"]
             for pid, pname, api_key, model, all_models, is_active in configured:
                 m = "✅" if is_active else "✴️"
                 text.append(f"{m} {pname}: {model} | {mask_api_key(api_key)}")

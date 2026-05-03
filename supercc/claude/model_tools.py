@@ -50,7 +50,7 @@ def _mask_api_key(key: str) -> str:
 
 @tool(
     "ListModels",
-    "列出所有预置供应商及其配置状态，包括供应商名称、当前模型、API Key、所有可用模型。",
+    "列出所有预置供应商及其配置状态，包括供应商名称、API Key、所有可用模型。",
     {},
 )
 async def list_models(args: dict) -> dict:
