@@ -6,6 +6,7 @@ import re
 
 from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.claude.message_context import get_current_user_open_id
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card
@@ -312,7 +313,7 @@ class ReplyFormatter:
             # list/search — 查询实际条目（project_path 缺失时使用 default_project_path）
             query = args.get("query", "")
             project_path = args.get("project_path", "") or default_project_path
-            user_open_id = args.get("user_open_id", "")
+            user_open_id = args.get("user_open_id", "") or get_current_user_open_id() or ""
 
             if memory_manager is not None:
                 try:

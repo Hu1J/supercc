@@ -304,29 +304,17 @@ class MemoryManager:
         title: str,
         content: str,
         keywords: str,
-        user_open_id: str | None = None,
+        user_open_id: str,
         platform: str = "feishu",
     ) -> bool:
-        """更新一条用户偏好（user_open_id 为 None 时不校验归属，可跨用户更新）"""
+        """更新一条用户偏好（必须提供 user_open_id，防止跨用户更新）"""
         now = datetime.utcnow().isoformat()
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            # 先查现有记录，拿到 user_open_id 用于缓存清理
-            row = conn.execute(
-                "SELECT user_open_id FROM user_preferences WHERE id = ? AND platform = ?", (pref_id, platform)
-            ).fetchone()
-            uid = row["user_open_id"] if row else None
-
-            # WHERE 必须包含 user_open_id，防止跨用户修改
-            if user_open_id is not None:
-                where_clause = "WHERE id=? AND platform=? AND user_open_id=?"
-                where_args = (pref_id, platform, user_open_id)
-            else:
-                where_clause = "WHERE id=? AND platform=?"
-                where_args = (pref_id, platform)
             affected = conn.execute(
-                f"UPDATE user_preferences SET title=?, content=?, keywords=?, updated_at=? {where_clause}",
-                (title, content, keywords, now) + where_args
+                "UPDATE user_preferences "
+                "SET title=?, content=?, keywords=?, updated_at=? "
+                "WHERE id=? AND platform=? AND user_open_id=?",
+                (title, content, keywords, now, pref_id, platform, user_open_id)
             ).rowcount
             if affected > 0:
                 conn.execute(
@@ -337,12 +325,11 @@ class MemoryManager:
                     (pref_id, title, f"{title} {content} {keywords}", keywords)
                 )
         # Invalidate user preference cache (keyed by db_path + user_open_id + platform)
-        if uid:
+        if user_open_id:
             with self._prefs_cache_lock:
-                # 清除该用户所有 platform 的缓存（简单处理）
                 self._prefs_cache = {
                     k: v for k, v in self._prefs_cache.items()
-                    if not (k[0] == self.db_path and k[1] == uid)
+                    if not (k[0] == self.db_path and k[1] == user_open_id)
                 }
         self._notify_system_prompt_stale()
         return affected > 0
@@ -350,34 +337,22 @@ class MemoryManager:
     def delete_preference(
         self,
         pref_id: str,
-        user_open_id: str | None = None,
+        user_open_id: str,
         platform: str = "feishu",
     ) -> bool:
-        """删除一条用户偏好（user_open_id 为 None 时不校验归属）"""
+        """删除一条用户偏好（必须提供 user_open_id，防止跨用户删除）"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT user_open_id FROM user_preferences WHERE id = ? AND platform = ?", (pref_id, platform)
-            ).fetchone()
-            uid = row["user_open_id"] if row else None
-
-            # WHERE 必须包含 user_open_id，防止跨用户删除
-            if user_open_id is not None:
-                where_clause = "WHERE id=? AND platform=? AND user_open_id=?"
-                where_args = (pref_id, platform, user_open_id)
-            else:
-                where_clause = "WHERE id=? AND platform=?"
-                where_args = (pref_id, platform)
             affected = conn.execute(
-                f"DELETE FROM user_preferences {where_clause}", where_args
+                "DELETE FROM user_preferences WHERE id=? AND platform=? AND user_open_id=?",
+                (pref_id, platform, user_open_id)
             ).rowcount
             conn.execute("DELETE FROM user_preferences_fts WHERE id = ?", (pref_id,))
         # Invalidate user preference cache
-        if uid:
+        if user_open_id:
             with self._prefs_cache_lock:
                 self._prefs_cache = {
                     k: v for k, v in self._prefs_cache.items()
-                    if not (k[0] == self.db_path and k[1] == uid)
+                    if not (k[0] == self.db_path and k[1] == user_open_id)
                 }
         self._notify_system_prompt_stale()
         return affected > 0

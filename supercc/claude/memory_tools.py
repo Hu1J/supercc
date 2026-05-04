@@ -175,10 +175,13 @@ async def memory_add_proj(args: dict) -> dict:
     {"id": str, "project_path": str},
 )
 async def memory_delete_proj(args: dict) -> dict:
+    project_path = args.get("project_path", "").strip()
+    if not project_path:
+        return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
     platform = get_current_platform()
     chat_id = get_current_chat_id() or ""
-    deleted = mm.delete_project_memory(args["id"], args.get("project_path", ""), platform=platform, chat_id=chat_id)
+    deleted = mm.delete_project_memory(args["id"], project_path, platform=platform, chat_id=chat_id)
     if deleted:
         return {"content": [{"type": "text", "text": f"🗑️ 项目记忆 {deleted['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}
@@ -193,12 +196,15 @@ async def memory_update_proj(args: dict) -> dict:
     title = args.get("title", "").strip()
     content = args.get("content", "").strip()
     keywords = args.get("keywords", "").strip()
+    project_path = args.get("project_path", "").strip()
     if not title or not content or not keywords:
         return {"content": [{"type": "text", "text": "title、content、keywords 三样必填"}], "is_error": True}
+    if not project_path:
+        return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
     platform = get_current_platform()
     chat_id = get_current_chat_id() or ""
-    ok = mm.update_project_memory(args["id"], title, content, keywords, args.get("project_path", ""), platform=platform, chat_id=chat_id)
+    ok = mm.update_project_memory(args["id"], title, content, keywords, project_path, platform=platform, chat_id=chat_id)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 项目记忆 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}
