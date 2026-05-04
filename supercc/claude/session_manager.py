@@ -274,7 +274,9 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
 
-    def get_active_session_by_chat_id(self, project_path: str | None = None) -> Optional[Session]:
+    def get_active_session_by_chat_id(
+        self, project_path: str | None = None, platform: str = "feishu"
+    ) -> Optional[Session]:
         """Get the most recent session that has a chat_id set (optionally filtered by project_path)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -283,16 +285,19 @@ class SessionManager:
                     """SELECT * FROM sessions
                        WHERE chat_id IS NOT NULL AND chat_id != ''
                        AND project_path = ?
+                       AND platform = ?
                        ORDER BY last_used DESC
                        LIMIT 1""",
-                    (project_path,),
+                    (project_path, platform),
                 ).fetchone()
             else:
                 row = conn.execute(
                     """SELECT * FROM sessions
                        WHERE chat_id IS NOT NULL AND chat_id != ''
+                       AND platform = ?
                        ORDER BY last_used DESC
                        LIMIT 1""",
+                    (platform,),
                 ).fetchone()
             if row:
                 return Session(
@@ -310,22 +315,23 @@ class SessionManager:
                     proactive_today_date=row["proactive_today_date"],
                     last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
                     group_members=row["group_members"],
+                    platform=row["platform"],
                 )
             return None
 
-    def update_chat_id(self, user_id: str, chat_id: str) -> None:
-        """Update the chat_id for the most recent session of a user."""
+    def update_chat_id(self, user_id: str, chat_id: str, platform: str = "feishu") -> None:
+        """Update the chat_id for the most recent session of a user (must specify platform)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """UPDATE sessions
                    SET chat_id = ?
                    WHERE session_id = (
                        SELECT session_id FROM sessions
-                       WHERE user_id = ?
+                       WHERE user_id = ? AND platform = ?
                        ORDER BY last_used DESC
                        LIMIT 1
                    )""",
-                (chat_id, user_id),
+                (chat_id, user_id, platform),
             )
 
     def update_group_members(self, session_id: str, group_members: str) -> None:

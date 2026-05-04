@@ -566,7 +566,7 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     from supercc.claude.session_manager import SessionManager
     sm = SessionManager(db_path=db_path)
     project_path = config.claude.approved_directory
-    session = sm.get_active_session_by_chat_id(project_path=project_path)
+    session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
     if not session or not session.chat_id:
         print("Error: no active chat session found. Make sure SuperCC has been used.")
         return
@@ -668,7 +668,7 @@ def _run_memory_command(args) -> None:
         )
         sm = SessionManager(db_path=SESSIONS_DB_PATH)
         project_path = config.claude.approved_directory
-        session = sm.get_active_session_by_chat_id(project_path=project_path)
+        session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
         feishu_chat_id = session.chat_id if session and session.chat_id else None
     except Exception:
         pass  # Not in a SuperCC session, skip Feishu push
@@ -1529,7 +1529,7 @@ def main(args=None):
             )
             sm = SessionManager(db_path=db_path)
             project_path = config.claude.approved_directory
-            session = sm.get_active_session_by_chat_id(project_path=project_path)
+            session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
             chat_id = session.chat_id if session and session.chat_id else None
         except Exception:
             pass  # Feishu not available, proceed without notifications

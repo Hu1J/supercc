@@ -350,7 +350,7 @@ class SessionWorker:
                 )
             elif session.chat_id != message.chat_id:
                 # Same user in a different group — update session to point to new chat
-                h.sessions.update_chat_id(message.user_open_id, message.chat_id)
+                h.sessions.update_chat_id(message.user_open_id, message.chat_id, platform="feishu")
         else:
             # P2P: use chat-specific session lookup to avoid cross-contamination with group sessions
             session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
