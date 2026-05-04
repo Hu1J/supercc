@@ -227,6 +227,7 @@ class SessionManager:
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
                 group_members=row["group_members"],
+                platform=row["platform"],
             )
         return None
 
