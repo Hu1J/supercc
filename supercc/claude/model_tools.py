@@ -28,7 +28,7 @@ def _is_owner() -> bool:
     if not user_id:
         return False
     cfg = get_config()
-    return user_id in cfg.auth.allowed_users
+    return user_id in cfg.channels.feishu.allowed_users
 
 
 def _get_project_path() -> str:

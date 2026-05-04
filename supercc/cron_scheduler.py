@@ -365,6 +365,7 @@ def create_job(
     data_dir: str = "",
     verbose: bool = False,
     notify_at: Optional[str] = None,
+    platform: str = "feishu",
 ) -> dict:
     """
     Create a new cron job.
@@ -411,6 +412,7 @@ def create_job(
         "enabled": True,
         "state": "scheduled",
         "chat_id": chat_id,
+        "platform": platform,
         "verbose": verbose,
         "notify_at": notify_schedule,
         "notify_at_display": notify_schedule.get("display") if notify_schedule else None,
@@ -625,6 +627,15 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     _log("JOB_TRIGGERED", f"name={job_name}, schedule={job.get('schedule_display')}")
 
+    # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
+    from supercc.claude.message_context import set_current_context
+    set_current_context(
+        user_open_id=config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "",
+        chat_id=chat_id,
+        platform=job.get("platform", "feishu"),
+    )
+    _log("CONTEXT_SET")
+
     # Create Feishu client for delivery
     feishu = FeishuClient(
         app_id=config.channels.feishu.app_id,
@@ -686,7 +697,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                 result = formatter.format_tool_call(
                     claude_msg.tool_name, claude_msg.tool_input,
                     memory_manager=memory_manager,
-                    platform="feishu", chat_id=chat_id or "",
+                    platform=job.get("platform", "feishu"), chat_id=chat_id or "",
                     default_project_path=config.claude.approved_directory,
                 )
 

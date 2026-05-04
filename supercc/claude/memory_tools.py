@@ -103,7 +103,7 @@ async def memory_update_user(args: dict) -> dict:
     {},
 )
 async def memory_list_user(args: dict) -> dict:
-    user_open_id = args.get("user_open_id", "").strip() or _get_user_open_id()
+    user_open_id = _get_user_open_id()
     mm = get_memory_manager()
     platform = get_current_platform()
     if user_open_id:

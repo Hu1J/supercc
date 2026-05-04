@@ -233,6 +233,8 @@ class ReplyFormatter:
                 tool_name, tool_input,
                 memory_manager=kwargs.get("memory_manager"),
                 default_project_path=kwargs.get("default_project_path", ""),
+                platform=kwargs.get("platform", "feishu"),
+                chat_id=kwargs.get("chat_id", ""),
             )
 
         # Cron MCP tools → ⏰ 时钟图标

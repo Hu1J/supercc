@@ -59,7 +59,7 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
     cfg.channels.feishu.bot_name = "Claude"
     cfg.channels.feishu.bot_open_id = ""  # auto-probed at startup
     cfg.channels.feishu.domain = result.domain
-    cfg.auth.allowed_users = [result.user_open_id]
+    cfg.channels.feishu.allowed_users = [result.user_open_id]
     cfg.claude.cli_path = "claude"
     cfg.claude.max_turns = 50
     cfg.claude.approved_directory = str(Path(config_path).resolve().parent.parent)

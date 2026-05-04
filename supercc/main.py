@@ -284,7 +284,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
         data_dir=data_dir,
     )
     setup_error_notifier(feishu)
-    authenticator = Authenticator(allowed_users=config.auth.allowed_users)
+    authenticator = Authenticator(allowed_users=config.channels.feishu.allowed_users)
     validator = SecurityValidator(approved_directory=config.claude.approved_directory)
     claude = ClaudeIntegration(
         cli_path=config.claude.cli_path,
@@ -693,7 +693,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
-            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
             p = mm.add_preference(user_open_id, title, content, keywords)
             _print(f"✅ 用户偏好已保存 (id={p.id})")
 
@@ -701,7 +701,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user del <id>")
                 return
-            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
             ok = mm.delete_preference(raw_args, user_open_id=user_open_id)
             if ok:
                 _print(f"🗑️ 用户偏好 {raw_args} 已删除。")
@@ -714,7 +714,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user update <id>|<title>|<content>|<keywords>")
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
             ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id)
             if ok:
                 _print(f"✅ 用户偏好 {pref_id} 已更新")
@@ -722,7 +722,7 @@ def _run_memory_command(args) -> None:
                 _print(f"未找到 id={pref_id} 的用户偏好")
 
         elif action == "list":
-            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
             prefs = mm.get_preferences_by_user(user_open_id, platform="feishu")
             if not prefs:
                 _print("📭 暂无用户偏好记录")
@@ -738,7 +738,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user search <关键词>")
                 return
-            user_open_id = config.auth.allowed_users[0] if config.auth.allowed_users else "cli-owner"
+            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
             results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu")
             if not results:
                 _print(f"未找到与「{raw_args}」相关的用户偏好")
