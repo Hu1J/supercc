@@ -39,64 +39,43 @@ class SessionManager:
         self._init_db()
         self._init_memories_db()
 
+    def _migrate_add_column(self, conn, table: str, column: str, dtype: str):
+        """Add a column if it doesn't exist (safe for fresh installs and old DBs)."""
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {dtype}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
-                    sdk_session_id TEXT,
                     user_id TEXT NOT NULL,
-                    chat_id TEXT,
                     project_path TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     last_used TIMESTAMP NOT NULL,
                     total_cost REAL DEFAULT 0,
-                    message_count INTEGER DEFAULT 0,
-                    last_message_at TIMESTAMP,
-                    proactive_today_count INTEGER DEFAULT 0,
-                    proactive_today_date TEXT
+                    message_count INTEGER DEFAULT 0
                 )
             """)
-            # Migrate: add sdk_session_id column if it doesn't exist (existing installs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add chat_id column if it doesn't exist (existing installs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN chat_id TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add last_message_at column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN last_message_at TIMESTAMP")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add proactive_today_count column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN proactive_today_count INTEGER DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add proactive_today_date column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN proactive_today_date TEXT")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add last_proactive_at column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN last_proactive_at TIMESTAMP")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add group_members column if it doesn't exist (for _is_group_chat)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN group_members TEXT")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add platform column for multi-platform support
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN platform TEXT DEFAULT 'feishu'")
-            except sqlite3.OperationalError:
-                pass
+            # Migrate: add columns that don't exist in old installations
+            self._migrate_add_column(
+                conn, "sessions", "sdk_session_id", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "chat_id", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "last_message_at", "TIMESTAMP")
+            self._migrate_add_column(
+                conn, "sessions", "proactive_today_count", "INTEGER DEFAULT 0")
+            self._migrate_add_column(
+                conn, "sessions", "proactive_today_date", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "last_proactive_at", "TIMESTAMP")
+            self._migrate_add_column(
+                conn, "sessions", "group_members", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "platform", "TEXT DEFAULT 'feishu'")
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_user_last
                 ON sessions(user_id, last_used DESC)
