@@ -36,9 +36,10 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
                     bot_open_id="",
                     domain=result.domain,
                     groups={},
+                    allowed_users=[result.user_open_id],
                 ),
             ),
-            auth=AuthConfig(allowed_users=[result.user_open_id]),
+            auth=AuthConfig(),
             claude=ClaudeConfig(
                 cli_path="claude",
                 max_turns=50,

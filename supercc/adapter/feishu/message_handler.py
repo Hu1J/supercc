@@ -301,9 +301,11 @@ class SessionWorker:
         pass  # ClaudeIntegration 无需显式清理
 
     def update_chat_id(self, chat_id: str) -> None:
-        """复用时更新 chat_id"""
+        """复用时更新 chat_id，清理所有状态确保 Worker 互不影响"""
         self.chat_id = chat_id
-        # 共享 approved_directory，session 隔离由数据库层 + SDK continue_conversation 控制
+        self._seen_chat_ids = set()
+        self._new_session_requested = False
+        self._current_group_members = None
 
         # 重置 options，下一次 query 会用新的 approved_directory 重建
         self.claude.mark_system_prompt_stale()
@@ -1205,11 +1207,10 @@ class MessageHandler:
 
         if cmd == "/new":
             # 重置 options，continue_conversation=False 启动全新 session
-            # 群聊时传入 chat_id，确保群聊 session 与 p2p session 隔离
             session = self.sessions.create_session(
                 message.user_open_id,
                 self.approved_directory,
-                chat_id=message.chat_id if message.is_group_chat else None,
+                chat_id=message.chat_id,
                 platform="feishu",
             )
             # /new 需要设置到对应 chat_id 的 Worker 的 ClaudeIntegration
