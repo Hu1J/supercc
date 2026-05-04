@@ -348,9 +348,6 @@ class SessionWorker:
                     chat_id=message.chat_id,
                     platform="feishu",
                 )
-            elif session.chat_id != message.chat_id:
-                # Same user in a different group — update session to point to new chat
-                h.sessions.update_chat_id(message.user_open_id, message.chat_id, platform="feishu")
         else:
             # P2P: use chat-specific session lookup to avoid cross-contamination with group sessions
             session = h.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
@@ -1183,7 +1180,9 @@ class MessageHandler:
                         f"[WORKER_LIMIT] chat_id={chat_id} 复用 worker={oldest.chat_id} "
                         f"(active={len(active)}, max={self._max_concurrent_workers})"
                     )
-                    # 复用最旧 worker，更新其 chat_id 和 approved_directory
+                    # 取消旧 task，确保 worker 完全空闲后再复用到新 chat_id
+                    if oldest.task and not oldest.task.done():
+                        oldest.task.cancel()
                     worker = oldest
                     worker.update_chat_id(chat_id)
                     self._session_workers[chat_id] = worker
