@@ -4,7 +4,37 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.2.0] - 2026-05-05
+
+### Added
+
+- **首次 Session 建立提示**：`/new` 或首次建立 SDK session 时，发送明确提示，区分切换与新建场景
+- **群聊历史显示用户名和时间戳**：每次对话注入群聊历史上下文时，展示发送者名称和消息时间
+- **定时任务 chat_id 隔离**：禁止跨群聊操作，Cron 任务和 pending 通知严格按 chat_id 隔离
+- **Skill 优化扫描改为凌晨 4 点**：原 3:00 调整，避免与 dream 任务重叠
+
+### Changed
+
+- **日志系统优化**：时间戳格式简化为 `HH:MM:SS.mmm`，按模块配色（supercc/蓝色、evolve/绿色、feishu/青色等）
+- **定时任务强制覆盖**：启动时强制覆盖"做梦"和"Skill 优化扫描"两个定时任务，不再幂等跳过
+- **model.json 全局单例**：模型配置迁移至 `~/.supercc/model.json`，全局单例模式，`providers.yaml` → `model.json` 自动迁移
+- **Worker 永久绑定 chat_id**：取消 Worker 复用机制，Worker 永久绑定 chat_id，满载时淘汰旧 Worker 再创建新的
+
+### Fixed
+
+- **Worker 复用导致跨 chat_id 串话**：Worker 复用时 `_continue_conversation` 未重置，新 chat_id 消息被追加到旧 session
+- **记忆系统 4 个 CRITICAL 安全漏洞**：session 查询和更新缺少 platform 隔离，`_get_user_open_id()` 跨用户串门
+- **流式 mention 后置校验逻辑**：先检查完整响应再检查 buffer，避免误判
+- **provider.name 残留**：所有 `provider.name` 替换为 `provider.id`，统一用 id 指代名称
+- **第三轮审查 23 个问题**：Worker 状态清理、Feishu API 重试/超时、session_manager 迁移逻辑等全部修复
+
+### Refactored
+
+- **移除 session_mode 概念**：删除 `share/isolated mode`，统一为 per-chat-id session 隔离
+- **per-chat-id 并行处理架构**：完整重构消息处理架构，`sessions` 和 `memory_manager` 表加 `platform` 显式字段
+- **ModelEnv 单例管理改进**：消重查 model.json，路径 key 一致性修复
+- **CronScheduler 重构**：删除 skill poll 轮询，改为只保持 symlink 同步
+- **settings JSON 传递 model 配置**：改用 `settings.json` 传递 model 配置给 CLI，不再依赖 `--model` CLI 参数
 
 ## [0.1.26] - 2026-05-02
 
