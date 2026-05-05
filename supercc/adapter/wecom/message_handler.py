@@ -27,6 +27,7 @@ from supercc.claude.codex_mcp import (
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.message_context import get_current_platform, set_current_context
 from supercc.claude.memory_manager import get_memory_manager, MEMORY_SYSTEM_GUIDE
+from supercc.claude.wecom_file_tools import WECOM_FILE_GUIDE
 from supercc.claude.session_manager import SessionManager
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
@@ -132,37 +133,6 @@ class SessionWorker:
         self._current_platform: str = "wecom"
         self._sdk_session_id: str | None = None
 
-    def _trigger_memory_review(self, message: WeComIncomingMessage, response_text: str) -> None:
-        logger.info("[_trigger_memory_review] starting background review")
-        h = self.handler
-        prompt = (
-            "根据之前的对话，判断是否有值得记住的信息。需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，不需要问我任何问题。\n"
-        )
-        async def do_review():
-            if self.claude_memory._options is None:
-                self.claude_memory._init_options()
-            async def stream_callback(claude_msg):
-                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
-                    result = h.formatter.format_tool_call(
-                        claude_msg.tool_name, claude_msg.tool_input,
-                        memory_manager=h.memory_manager,
-                        default_project_path=getattr(h, "_current_project_path", ""),
-                        platform=get_current_platform(),
-                        chat_id=message.chat_id or "",
-                    )
-                    if isinstance(result, _MemoryCardMarker):
-                        await h._safe_send(message.chat_id, message.message_id, result.render())
-                    else:
-                        await h._safe_send(message.chat_id, message.message_id, result)
-                    logger.info(f"[memory_review] tool: {claude_msg.tool_name}")
-            try:
-                await self.claude_memory.query(prompt=prompt, on_stream=stream_callback)
-            except Exception as e:
-                logger.warning(f"[_trigger_memory_review] failed: {e}")
-            finally:
-                logger.info("[_trigger_memory_review] done.")
-        asyncio.create_task(do_review())
-
     async def _run_loop(self) -> None:
         import time
         self._running = True
@@ -239,6 +209,7 @@ class SessionWorker:
             (agents_md_content + "\n\n") if agents_md_content else ""
         ) + (
             MEMORY_SYSTEM_GUIDE
+            + WECOM_FILE_GUIDE
             + get_codex_mcp_guide(h.config.codex, codex_status)
             + h.memory_manager.inject_context(
                 user_open_id=message.user_open_id,
@@ -463,7 +434,7 @@ class SessionWorker:
             logger.exception(f"Error in _run_query: {e}")
             await h._safe_send(message.chat_id, message.message_id, f"⚠️ 内部错误：{e}")
         finally:
-            self._trigger_memory_review(message, _last_response)
+            self.handler._trigger_memory_review(message, _last_response)
 
 
 class MessageHandler:
