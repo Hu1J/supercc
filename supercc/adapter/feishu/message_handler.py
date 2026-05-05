@@ -308,6 +308,11 @@ class SessionWorker:
         self._current_group_members = None
         self._current_user_open_id = None
 
+        # 重置 _continue_conversation，强制 SDK 为新 chat_id 创建全新会话
+        self.claude._continue_conversation = False
+        self.claude_memory._continue_conversation = False
+        self.claude_skill._continue_conversation = False
+
         # 重置 options，下一次 query 会用新的 approved_directory 重建
         self.claude.mark_system_prompt_stale()
         self.claude_memory.mark_system_prompt_stale()
