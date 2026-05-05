@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 import aiohttp
@@ -12,24 +11,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class WeComIncomingMessage:
-    """Parsed incoming message from WeCom."""
-    message_id: str
-    chat_id: str
-    user_open_id: str
-    content: str
-    message_type: str
-    create_time: str = ""
-    parent_id: str = ""
-    thread_id: str = ""
-    raw_content: str = ""
-    is_group_chat: bool = False
-    chat_type: str = "single"
-    mention_bot: bool = False
-    mention_ids: list[str] = field(default_factory=list)
-    group_name: str = ""
-
+from supercc.adapter.wecom.client import WeComIncomingMessage
 
 MessageCallback = Callable[[WeComIncomingMessage], Awaitable[None]]
 

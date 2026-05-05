@@ -118,19 +118,23 @@ class WeComClient:
             logger.warning(f"Failed to send WeCom message: {e}")
 
     async def get_message(self, message_id: str) -> dict | None:
-        """Fetch a message by ID. WeCom API may not support this; return None."""
+        """Fetch a message by ID. WeCom WS API does not support message retrieval; returns None."""
+        logger.warning("WeCom get_message is not implemented — WeCom WS API does not support message fetch")
         return None
 
     async def download_media(self, message_id: str, file_key: str, msg_type: str = "image") -> bytes:
-        """Download media. WeCom API may require specific implementation."""
+        """Download media. WeCom WS API does not support media download; returns empty bytes."""
+        logger.warning("WeCom download_media is not implemented — WeCom WS API does not support media download")
         return b""
 
     async def get_chat_history(self, chat_id: str, limit: int = 20) -> list:
-        """Fetch recent messages. WeCom may not support this."""
+        """Fetch recent messages. WeCom does not support this."""
+        logger.warning("WeCom get_chat_history is not implemented")
         return []
 
     async def get_chat_members(self, chat_id: str) -> list:
-        """Fetch chat members. WeCom may not support this."""
+        """Fetch chat members. WeCom does not support this."""
+        logger.warning("WeCom get_chat_members is not implemented")
         return []
 
     async def get_user_name(self, user_id: str) -> str:
