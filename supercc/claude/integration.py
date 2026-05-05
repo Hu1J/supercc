@@ -46,7 +46,8 @@ class ClaudeIntegration:
         self.approved_directory = approved_directory
         self.memory_only = memory_only
         self._options: Any = None  # 持久化的 ClaudeAgentOptions
-        self._options_model_id: str | None = None  # _options 对应的 model_id，用于检测切换后是否需要重建
+        # _options 对应的 model 配置，用于检测切换后是否需要重建（auth_token, base_url, model 三元组）
+        self._options_model_config: tuple[str, str, str] | None = None
         self._system_prompt_append: str | None = None
         self._continue_conversation: bool = True  # 持久化
         self._new_session_requested: bool = False  # /new 一次性标志，下一次 query 消耗
@@ -57,7 +58,7 @@ class ClaudeIntegration:
     def mark_system_prompt_stale(self) -> None:
         """标记 system prompt 已过期，下次 query 时重新初始化。"""
         self._options = None
-        self._options_model_id = None
+        self._options_model_config = None
 
     def _ensure_claude_onboarding(self) -> None:
         """强制写入 ~/.claude.json，确保 hasCompletedOnboarding: true（幂等）"""
@@ -98,12 +99,16 @@ class ClaudeIntegration:
         session_id: 首次调用时传入 UUID，创建新会话
         resume: 后续调用时传入 UUID，继续该会话
         """
-        # 检测 model 是否已切换，如已切换则强制重建
+        # 检测 model 配置是否已切换（auth_token、base_url、model 任一变化都需重建）
         try:
             from supercc.claude.model_config import get_model_env
             env = get_model_env()
-            current_model_id = env.ANTHROPIC_BASE_URL if env else None
-            if current_model_id != self._options_model_id:
+            current_config = (
+                env.ANTHROPIC_AUTH_TOKEN if env else "",
+                env.ANTHROPIC_BASE_URL if env else "",
+                env.ANTHROPIC_MODEL if env else "",
+            )
+            if current_config != self._options_model_config:
                 self._options = None
         except Exception:
             pass
@@ -151,17 +156,25 @@ class ClaudeIntegration:
         ]
 
         # 从全局 model.json 获取当前项目的激活模型 env
-        model_env: dict[str, str] = {}
-        model_id: str | None = None
+        # 通过 settings JSON 传递给 CLI（匹配 ~/.claude/settings.json 的结构）
+        model_settings_json: str | None = None
+        model_config: tuple[str, str, str] | None = None  # (auth_token, base_url, model)
         try:
             from supercc.claude.model_config import get_model_env
             env = get_model_env()
             if env and env.ANTHROPIC_AUTH_TOKEN:
-                model_env = {
-                    "ANTHROPIC_API_KEY": env.ANTHROPIC_AUTH_TOKEN,
-                    "ANTHROPIC_BASE_URL": env.ANTHROPIC_BASE_URL,
+                auth_token = env.ANTHROPIC_AUTH_TOKEN
+                base_url = env.ANTHROPIC_BASE_URL
+                model_name = env.ANTHROPIC_MODEL or ""
+                model_config = (auth_token, base_url, model_name)
+                settings_obj = {
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": auth_token,
+                        "ANTHROPIC_BASE_URL": base_url,
+                        "ANTHROPIC_MODEL": model_name,
+                    }
                 }
-                model_id = env.ANTHROPIC_MODEL or None
+                model_settings_json = json.dumps(settings_obj)
         except Exception as e:
             logger.error(f"Get Model Env Fail: {e}")
             pass  # 非关键路径失败不影响主流程
@@ -178,8 +191,7 @@ class ClaudeIntegration:
             continue_conversation=self._continue_conversation,
             mcp_servers=mcp_servers,
             disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
-            env=model_env,
-            model=model_id,
+            settings=model_settings_json,
             session_id=session_id,
             resume=resume,
         )
@@ -192,8 +204,8 @@ class ClaudeIntegration:
             }
 
         self._options = options
-        # 记录本次构建使用的 model ID（下一次 _init_options 会对比是否变更）
-        self._options_model_id = env.ANTHROPIC_BASE_URL if env else None
+        # 记录本次构建使用的 model 配置（下一次 _init_options 会对比是否变更）
+        self._options_model_config = model_config
         self._system_prompt_append = system_prompt_append
 
     # -------------------------------------------------------------------------
