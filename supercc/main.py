@@ -1634,7 +1634,7 @@ def main(args=None):
             return
     log_file = os.path.join(data_dir, "supercc.log")
     Path(data_dir).mkdir(exist_ok=True)
-    fh = logging.FileHandler(log_file)
+    fh = logging.FileHandler(log_file, mode="w")
     fh.setFormatter(PlainFormatter())
     logging.getLogger().addHandler(fh)
     write_log_banner(log_file, _version)

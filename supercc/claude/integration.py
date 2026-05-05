@@ -87,12 +87,16 @@ class ClaudeIntegration:
 
     def _init_options(self, system_prompt_append: str | None = None,
                       continue_conversation: bool | None = None,
-                      channel: str = "feishu") -> None:
+                      channel: str = "feishu",
+                      session_id: str | None = None,
+                      resume: str | None = None) -> None:
         """
         构建持久化 ClaudeAgentOptions，供整个 worker 生命周期复用。
         system prompt 更新只需重新调用此方法。
         _new_session_requested 标志由 /new 设置，只对下一次 query 生效，之后自动清除。
         channel: 当前聊天频道（feishu/dingtalk/wechat 等），用于决定注册哪些 MCP 工具。
+        session_id: 首次调用时传入 UUID，创建新会话
+        resume: 后续调用时传入 UUID，继续该会话
         """
         # 检测 model 是否已切换，如已切换则强制重建
         try:
@@ -158,7 +162,8 @@ class ClaudeIntegration:
                     "ANTHROPIC_BASE_URL": env.ANTHROPIC_BASE_URL,
                 }
                 model_id = env.ANTHROPIC_MODEL or None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Get Model Env Fail: {e}")
             pass  # 非关键路径失败不影响主流程
 
         # 确保 hasCompletedOnboarding=true（首次构建时调用一次，之后幂等）
@@ -175,6 +180,8 @@ class ClaudeIntegration:
             disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
             env=model_env,
             model=model_id,
+            session_id=session_id,
+            resume=resume,
         )
 
         if system_prompt_append:

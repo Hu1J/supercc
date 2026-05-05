@@ -218,13 +218,15 @@ class SessionWorker:
         )
         self._running = False
         self._idle_since: float | None = None
-        self.IDLE_TIMEOUT = 300  # 5分钟
+        self.IDLE_TIMEOUT = 604800  # 7天
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
-        self._new_session_requested = False  # /new 标志，SessionWorker 私有
+        self._is_first_session: bool = True  # 首次会话/新建会话标志，/new 和 Worker 首次共用
         # 当前消息上下文，供工具函数（_get_user_open_id 等）使用
         self._current_user_open_id: str | None = None
         self._current_chat_id: str | None = None
         self._current_platform: str = "feishu"
+        # SDK session 隔离键：首次 query 后存储，后续 query 用 resume= 继续
+        self._sdk_session_id: str | None = None
 
     def _trigger_memory_review(self, message: IncomingMessage, response_text: str) -> None:
         """Worker 私有：使用自己的 claude_memory 实例触发记忆回顾"""
@@ -431,7 +433,10 @@ class SessionWorker:
                         else:
                             member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or ""
                         if member_id == message.user_open_id:
-                            sender_name = m.get("name") or m.get("bot_name") or getattr(m, "name", None) or ""
+                            if isinstance(m, dict):
+                                sender_name = m.get("name") or m.get("bot_name") or ""
+                            else:
+                                sender_name = getattr(m, "name", None) or ""
                             break
                     lines = [
                         f"【群聊规则】必须在最终回复里艾特@{sender_name or message.user_open_id} 以及相关人员。需要使用飞书特定的@格式如：{{消息内容}}<at user_id=\"open_id\">姓名</at>。不得遗漏。",
@@ -475,16 +480,30 @@ class SessionWorker:
         system_prompt_append: str | None = None,
         continue_conversation: bool = True,
     ) -> None:
-        """初始化/更新持久化 options"""
-        # /new 设置了 _new_session_requested，下次 query 用 continue_conversation=False
-        if self._new_session_requested:
-            self._new_session_requested = False
-            continue_conversation = False
-        # 全新 Worker 的首次消息需要新建会话
-        elif self.claude._options is None:
-            continue_conversation = False
-        # Worker 永久绑定 chat_id，后续消息保持连续对话
-        self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
+        """初始化/更新持久化 options
+
+        会话隔离策略：
+        - 首次对话（_sdk_session_id=None）：不传 resume，SDK 创建全新 session
+        - 后续对话（_sdk_session_id 有值）：传 resume=上次的 sdk_session_id，SDK 恢复该 session
+        - continue_conversation 始终硬编码为 False（不传 --continue flag，由 resume 接管）
+        """
+        # /new 或 Worker 首次会话：强制新建 SDK 会话
+        if self._is_first_session:
+            self._is_first_session = False
+            self._sdk_session_id = None  # 清空，确保首次
+
+        # resume 参数：首次不传（None），后续传上次的 sdk_session_id
+        resume_id = self._sdk_session_id if self._sdk_session_id else None
+
+        # continue_conversation 硬编码为 False，不传 --continue flag
+        # 会话恢复完全由 resume 参数控制
+        self.claude._init_options(
+            system_prompt_append,
+            continue_conversation=False,
+            channel="feishu",
+            session_id=None,
+            resume=resume_id,
+        )
 
     async def _run_query(
         self,
@@ -861,8 +880,11 @@ class SessionWorker:
                 h.sessions.update_session(session.session_id, cost=last_cost, message_increment=1, update_last_message=True)
 
             # 存储 sdk_session_id（首次建立或变化时都更新；空值不覆盖有效值）
+            # 同时更新 Worker 的 _sdk_session_id，确保后续 resume 使用正确的 ID
             new_sid = (sdk_session_id_from_query or "").strip()
             old_sid = (session.sdk_session_id or "").strip()
+            if new_sid:
+                self._sdk_session_id = new_sid
             if new_sid and new_sid != old_sid:
                 logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
                 h.sessions.update_sdk_session_id(session.session_id, new_sid)
@@ -987,7 +1009,7 @@ class MessageHandler:
         # Per-chat-id worker pool
         self._session_workers: dict[str, SessionWorker] = {}
         self._workers_lock = asyncio.Lock()
-        self._max_concurrent_workers = 10  # 最大并发 Worker 数
+        self._max_concurrent_workers = 50  # 最大并发 Worker 数
         self._current_message_id: str = ""
 
     def _noop_mark_stale(self) -> None:
@@ -1211,7 +1233,8 @@ class MessageHandler:
             # /new 需要设置到对应 chat_id 的 Worker 的 ClaudeIntegration
             # 如果 Worker 不存在，先创建
             worker = await self._get_or_create_worker(message.chat_id)
-            worker._new_session_requested = True
+            worker._is_first_session = True  # 重置为首次会话，强制新建 SDK session
+            worker._sdk_session_id = None  # 清空，后续 query 会自动用 continue_conversation=False 新建
             return HandlerResult(
                 success=True,
                 response_text=f"✅ 新会话已创建\n会话ID: {session.session_id}\n工作目录: {session.project_path}",
