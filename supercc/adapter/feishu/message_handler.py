@@ -306,6 +306,7 @@ class SessionWorker:
         self._seen_chat_ids = set()
         self._new_session_requested = False
         self._current_group_members = None
+        self._current_user_open_id = None
 
         # 重置 options，下一次 query 会用新的 approved_directory 重建
         self.claude.mark_system_prompt_stale()
@@ -1177,7 +1178,13 @@ class MessageHandler:
             if chat_id not in self._session_workers:
                 active = [w for w in self._session_workers.values() if w._running]
                 if len(active) >= self._max_concurrent_workers:
-                    oldest = min(active, key=lambda w: w._idle_since or 0)
+                    # 优先选择真正空闲的_worker（idle_since 非 None），避免选中正在处理消息的
+                    idle_workers = [w for w in active if w._idle_since is not None]
+                    if idle_workers:
+                        oldest = min(idle_workers, key=lambda w: w._idle_since)
+                    else:
+                        # 所有 worker 都在忙碌，随机选一个（不再用 or 0 误标记为最老）
+                        oldest = active[0]
                     logger.warning(
                         f"[WORKER_LIMIT] chat_id={chat_id} 复用 worker={oldest.chat_id} "
                         f"(active={len(active)}, max={self._max_concurrent_workers})"

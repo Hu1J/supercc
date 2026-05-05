@@ -591,11 +591,10 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
         """Send a single file. Raises on error so gather() can collect it."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
-        size = os.path.getsize(file_path)
-        if size > MAX_FILE_SIZE:
-            raise ValueError(f"{file_path} exceeds 30MB limit")
-
         with open(file_path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            if size > MAX_FILE_SIZE:
+                raise ValueError(f"{file_path} exceeds 30MB limit")
             data = f.read()
 
         ext = os.path.splitext(file_path)[1].lower()
@@ -657,6 +656,7 @@ def _run_memory_command(args) -> None:
     # Try to send results to Feishu if we're in a SuperCC session
     feishu_client = None
     feishu_chat_id = None
+    config = None
     try:
         _, data_dir = resolve_config_path()
         config = get_config()
@@ -670,8 +670,13 @@ def _run_memory_command(args) -> None:
         project_path = config.claude.approved_directory
         session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
         feishu_chat_id = session.chat_id if session and session.chat_id else None
-    except Exception:
-        pass  # Not in a SuperCC session, skip Feishu push
+    except Exception as e:
+        logger.debug(f"Feishu push skipped (not in SuperCC session): {e}")
+
+    def _get_user_open_id() -> str:
+        if config and config.channels.feishu.allowed_users:
+            return config.channels.feishu.allowed_users[0]
+        return "cli-owner"
 
     async def _send_feishu(text: str):
         if feishu_client and feishu_chat_id:
@@ -679,7 +684,15 @@ def _run_memory_command(args) -> None:
 
     def _print(text: str):
         print(text)
-        asyncio.run(_send_feishu(text))
+        # Avoid nested asyncio.run() in Python 3.10+ when already in an event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop:
+            loop.create_task(_send_feishu(text))
+        else:
+            asyncio.run(_send_feishu(text))
 
     def _parse_args(args_str: str) -> list[str]:
         """Split by pipe to get title/content/keywords or id/title/content/keywords."""
@@ -693,7 +706,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
-            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
+            user_open_id = _get_user_open_id()
             p = mm.add_preference(user_open_id, title, content, keywords)
             _print(f"✅ 用户偏好已保存 (id={p.id})")
 
@@ -701,7 +714,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user del <id>")
                 return
-            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
+            user_open_id = _get_user_open_id()
             ok = mm.delete_preference(raw_args, user_open_id=user_open_id)
             if ok:
                 _print(f"🗑️ 用户偏好 {raw_args} 已删除。")
@@ -714,7 +727,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user update <id>|<title>|<content>|<keywords>")
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
+            user_open_id = _get_user_open_id()
             ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id)
             if ok:
                 _print(f"✅ 用户偏好 {pref_id} 已更新")
@@ -722,7 +735,7 @@ def _run_memory_command(args) -> None:
                 _print(f"未找到 id={pref_id} 的用户偏好")
 
         elif action == "list":
-            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
+            user_open_id = _get_user_open_id()
             prefs = mm.get_preferences_by_user(user_open_id, platform="feishu")
             if not prefs:
                 _print("📭 暂无用户偏好记录")
@@ -738,7 +751,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user search <关键词>")
                 return
-            user_open_id = config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "cli-owner"
+            user_open_id = _get_user_open_id()
             results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu")
             if not results:
                 _print(f"未找到与「{raw_args}」相关的用户偏好")
@@ -752,7 +765,7 @@ def _run_memory_command(args) -> None:
 
     # ── proj ────────────────────────────────────────────────────────────────
     elif scope == "proj":
-        project_path = args.project or ""
+        project_path = args.project or (config.claude.approved_directory if config else "")
 
         if action == "add":
             parts = _parse_args(raw_args)

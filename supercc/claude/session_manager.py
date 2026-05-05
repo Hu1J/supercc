@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +35,7 @@ class Session:
 class SessionManager:
     def __init__(self, db_path: str):
         self._conv_history: dict[str, list[str]] = {}
+        self._conv_history_lock = threading.Lock()
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -125,7 +127,7 @@ class SessionManager:
             last_used=now,
             total_cost=0.0,
             message_count=0,
-            chat_id=chat_id or "",
+            chat_id=chat_id or "",  # None -> "" for P2P sessions that have no chat_id
             platform=platform,
         )
         with sqlite3.connect(self.db_path) as conn:
@@ -179,16 +181,16 @@ class SessionManager:
             )
         return None
 
-    def get_active_session(self, user_id: str) -> Optional[Session]:
-        """Get the most recent session for a user."""
+    def get_active_session(self, user_id: str, platform: str = "feishu") -> Optional[Session]:
+        """Get the most recent session for a user on a given platform."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT * FROM sessions
-                   WHERE user_id = ?
+                   WHERE user_id = ? AND platform = ?
                    ORDER BY last_used DESC
                    LIMIT 1""",
-                (user_id,),
+                (user_id, platform),
             ).fetchone()
         if row:
             return Session(
@@ -243,10 +245,12 @@ class SessionManager:
     def update_sdk_session_id(self, session_id: str, sdk_session_id: str) -> None:
         """Store the SDK's session ID for future continue_session calls."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+            rows = conn.execute(
                 """UPDATE sessions SET sdk_session_id = ? WHERE session_id = ?""",
                 (sdk_session_id, session_id),
-            )
+            ).rowcount
+            if rows == 0:
+                logger.debug(f"update_sdk_session_id: no session found for session_id={session_id}")
 
     def delete_session(self, session_id: str):
         """Delete a session."""
@@ -316,10 +320,12 @@ class SessionManager:
     def update_group_members(self, session_id: str, group_members: str) -> None:
         """Store group members JSON for a session (enables _is_group_chat detection)."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+            rows = conn.execute(
                 """UPDATE sessions SET group_members = ? WHERE session_id = ?""",
                 (group_members, session_id),
-            )
+            ).rowcount
+            if rows == 0:
+                logger.debug(f"update_group_members: no session found for session_id={session_id}")
 
     def get_all_users(self) -> list[Session]:
         """Get all sessions with last_message_at info for proactive check."""
@@ -346,6 +352,7 @@ class SessionManager:
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
                 group_members=row["group_members"],
+                platform=row["platform"],
             )
             for row in rows
         ]
@@ -394,9 +401,10 @@ class SessionManager:
             )
         # Track conversation for auto memory extraction
         if direction == "incoming":
-            history = self._conv_history.setdefault(session_id, [])
-            history.append(content or raw_content)
-            self._conv_history[session_id] = history[-20:]  # keep last 20 messages
+            with self._conv_history_lock:
+                history = self._conv_history.setdefault(session_id, [])
+                history.append(content or raw_content)
+                self._conv_history[session_id] = history[-20:]  # keep last 20 messages
 
     def _init_memories_db(self):
         """Initialize memories DB (separate file from sessions)."""

@@ -270,9 +270,8 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(
-                client.im.v1.message_reaction.create,
-                request,
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message_reaction.create, request)
             )
             if response.success():
                 return response.data.reaction_id
@@ -310,7 +309,10 @@ class FeishuClient:
             if not response.success():
                 raise RuntimeError(f"Failed to download media: {response.msg}")
             # lark-oapi returns response.file as BytesIO — use .read()
-            return response.file.read()
+            data = response.file.read()
+            if not data:
+                raise RuntimeError(f"download_media returned empty data for file_key={file_key}")
+            return data
         except Exception as e:
             logger.error(f"download_media error: {e}")
             raise
@@ -764,7 +766,7 @@ class FeishuClient:
         chat_id: str,
         limit: int = 20,
         sort_type: str = "ByCreateTimeDesc",
-    ) -> list[dict]:
+    ) -> list:
         """Fetch recent messages from a group chat via Feishu API.
 
         Returns a list of message dicts with keys: message_id, chat_id, msg_type,

@@ -43,7 +43,7 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
             claude=ClaudeConfig(
                 cli_path="claude",
                 max_turns=50,
-                approved_directory=str(Path(config_path).resolve().parent.parent),
+                approved_directory=str(Path(config_path).absolute().parent.parent),
             ),
             bypass_accepted=bypass_accepted,
         )
@@ -60,16 +60,18 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
     cfg.channels.feishu.bot_name = "Claude"
     cfg.channels.feishu.bot_open_id = ""  # auto-probed at startup
     cfg.channels.feishu.domain = result.domain
-    cfg.channels.feishu.allowed_users = [result.user_open_id]
+    existing_users = set(cfg.channels.feishu.allowed_users)
+    cfg.channels.feishu.allowed_users = list(existing_users | {result.user_open_id})
     cfg.claude.cli_path = "claude"
     cfg.claude.max_turns = 50
-    cfg.claude.approved_directory = str(Path(config_path).resolve().parent.parent)
+    cfg.claude.approved_directory = str(Path(config_path).absolute().parent.parent)
     cfg.bypass_accepted = bypass_accepted
     write_config(cfg)
     print(f"\n✅ 配置已保存到 {config_path}")
 
 
 async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bool = False) -> AppRegistrationResult:
+    config_path = str(Path(config_path).absolute())
     """Run the full install flow: init → begin → QR → poll → save config."""
     print("\n🚀 开始安装 SuperCC...\n")
 
@@ -101,6 +103,7 @@ async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bo
         # Step 4: Poll for result
         result = await api.poll(begin_result.device_code, timeout=begin_result.expires_in)
     except RuntimeError as e:
+        logger.error(f"安装失败: {e}")
         print(f"\n❌ 安装失败: {e}")
         raise
     finally:
