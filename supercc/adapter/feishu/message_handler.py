@@ -221,7 +221,6 @@ class SessionWorker:
         self.IDLE_TIMEOUT = 300  # 5分钟
         self._current_group_members: list | None = None  # Worker 私有，避免竞态
         self._new_session_requested = False  # /new 标志，SessionWorker 私有
-        self._seen_chat_ids: set = set()  # 记录该 Worker 已处理过的 chat_id，避免每次都创建新 session
         # 当前消息上下文，供工具函数（_get_user_open_id 等）使用
         self._current_user_open_id: str | None = None
         self._current_chat_id: str | None = None
@@ -299,24 +298,6 @@ class SessionWorker:
     async def _cleanup(self) -> None:
         """Worker 退出时清理"""
         pass  # ClaudeIntegration 无需显式清理
-
-    def update_chat_id(self, chat_id: str) -> None:
-        """复用时更新 chat_id，清理所有状态确保 Worker 互不影响"""
-        self.chat_id = chat_id
-        self._seen_chat_ids = set()
-        self._new_session_requested = False
-        self._current_group_members = None
-        self._current_user_open_id = None
-
-        # 重置 _continue_conversation，强制 SDK 为新 chat_id 创建全新会话
-        self.claude._continue_conversation = False
-        self.claude_memory._continue_conversation = False
-        self.claude_skill._continue_conversation = False
-
-        # 重置 options，下一次 query 会用新的 approved_directory 重建
-        self.claude.mark_system_prompt_stale()
-        self.claude_memory.mark_system_prompt_stale()
-        self.claude_skill.mark_system_prompt_stale()
 
     async def _process_message(self, message: IncomingMessage) -> None:
         """处理单条消息：鉴权 → 媒体预处理 → 引用检测 → 查询"""
@@ -484,8 +465,8 @@ class SessionWorker:
             except Exception as ex:
                 logger.warning(f"[GROUP_MENTION] failed to get members: {ex}")
 
-        # 确保 options 已初始化，首次对该 chat_id 发消息时创建新 session
-        self._init_options(system_prompt_append, _init_chat_id=message.chat_id)
+        # 确保 options 已初始化
+        self._init_options(system_prompt_append)
 
         await self._run_query(message, session)
 
@@ -493,17 +474,16 @@ class SessionWorker:
         self,
         system_prompt_append: str | None = None,
         continue_conversation: bool = True,
-        _init_chat_id: str | None = None,
     ) -> None:
         """初始化/更新持久化 options"""
         # /new 设置了 _new_session_requested，下次 query 用 continue_conversation=False
         if self._new_session_requested:
             self._new_session_requested = False
             continue_conversation = False
-        # 首次对该 chat_id 发消息时用 False（新 session），后续用 True
-        elif _init_chat_id and _init_chat_id not in self._seen_chat_ids:
-            self._seen_chat_ids.add(_init_chat_id)
+        # 全新 Worker 的首次消息需要新建会话
+        elif self.claude._options is None:
             continue_conversation = False
+        # Worker 永久绑定 chat_id，后续消息保持连续对话
         self.claude._init_options(system_prompt_append, continue_conversation, channel="feishu")
 
     async def _run_query(
@@ -1178,28 +1158,31 @@ class MessageHandler:
         return HandlerResult(success=True)
 
     async def _get_or_create_worker(self, chat_id: str) -> SessionWorker:
-        """Get or create a SessionWorker for the given chat_id."""
+        """Get or create a SessionWorker for the given chat_id.
+
+        Worker 永久绑定 chat_id：不复用，每次满载时淘汰最老 worker 再创建新的。
+        """
         async with self._workers_lock:
             if chat_id not in self._session_workers:
                 active = [w for w in self._session_workers.values() if w._running]
                 if len(active) >= self._max_concurrent_workers:
-                    # 优先选择真正空闲的_worker（idle_since 非 None），避免选中正在处理消息的
+                    # 淘汰最老的 worker（优先选空闲最久的，否则随机选一个）
                     idle_workers = [w for w in active if w._idle_since is not None]
                     if idle_workers:
                         oldest = min(idle_workers, key=lambda w: w._idle_since)
                     else:
-                        # 所有 worker 都在忙碌，随机选一个（不再用 or 0 误标记为最老）
                         oldest = active[0]
+                    old_chat_id = oldest.chat_id
                     logger.warning(
-                        f"[WORKER_LIMIT] chat_id={chat_id} 复用 worker={oldest.chat_id} "
+                        f"[WORKER_LIMIT] chat_id={chat_id} 淘汰 worker={old_chat_id} "
                         f"(active={len(active)}, max={self._max_concurrent_workers})"
                     )
-                    # 取消旧 task，确保 worker 完全空闲后再复用到新 chat_id
                     if oldest.task and not oldest.task.done():
                         oldest.task.cancel()
-                    worker = oldest
-                    worker.update_chat_id(chat_id)
-                    self._session_workers[chat_id] = worker
+                    # 从 dict 中删除旧 worker，永久绑定不再复用
+                    if old_chat_id in self._session_workers:
+                        del self._session_workers[old_chat_id]
+                    self._session_workers[chat_id] = SessionWorker(chat_id, self)
                 else:
                     self._session_workers[chat_id] = SessionWorker(chat_id, self)
 
