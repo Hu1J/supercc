@@ -363,9 +363,6 @@ def create_wecom_handler(config, data_dir: str, config_path: str | None = None) 
     session_manager = SessionManager(db_path=db_path)
     formatter = WeComReplyFormatter()
 
-    from supercc.evolve.skill_nudge import make_nudge
-    skill_nudge = make_nudge(config.skill_nudge)
-
     handler = WeComMessageHandler(
         wecom_client=wecom,
         authenticator=authenticator,
@@ -378,7 +375,6 @@ def create_wecom_handler(config, data_dir: str, config_path: str | None = None) 
         data_dir=data_dir,
         wecom_groups=config.channels.wecom.groups,
         config_path=config_path,
-        skill_nudge=skill_nudge,
     )
     return handler
 
