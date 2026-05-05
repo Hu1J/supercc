@@ -916,11 +916,12 @@ class SessionWorker:
                         for chunk in chunks:
                             await h._safe_send(message.chat_id, message.message_id, chunk, preformatted=True)
                 else:
-                    # 流式：检查 _buffer 是否已 mention 提问者，无则追加
-                    async with accumulator._lock:
-                        buffered = accumulator._buffer
-                    if not _mentions_user(buffered, sender_id):
-                        await h._safe_send(message.chat_id, message.message_id, mention_tag)
+                    # 流式：检查完整响应或 _buffer 是否已 mention 提问者
+                    if not _mentions_user(_last_response, sender_id):
+                        async with accumulator._lock:
+                            buffered = accumulator._buffer
+                        if not _mentions_user(buffered, sender_id):
+                            await h._safe_send(message.chat_id, message.message_id, mention_tag)
 
         except asyncio.CancelledError:
             await h._safe_send(message.chat_id, message.message_id, "🛑 已打断 Claude。")
