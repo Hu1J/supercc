@@ -238,7 +238,7 @@ class FeishuWSClient:
                 else:
                     mentions = getattr(message, "mentions", None)
                     # Log raw mentions for debugging (INFO level so it appears in supercc.log)
-                    logger.info(
+                    logger.debug(
                         f"[MENTION_DEBUG] is_group={is_group_chat}, mentions type={type(mentions)}, "
                         f"value={repr(mentions)[:500]}, bot_open_id={self.bot_open_id!r}"
                     )
