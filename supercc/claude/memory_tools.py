@@ -1,8 +1,11 @@
 """Memory MCP tools — 10 tools, one per /memory command."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from claude_agent_sdk import tool
 from supercc.claude.memory_manager import get_memory_manager
+from supercc.claude.message_context import get_current_chat_id, get_current_platform, get_current_user_open_id
 
 
 def _fmt_pref(p) -> str:
@@ -26,14 +29,8 @@ def _fmt_proj(m) -> str:
 
 
 def _get_user_open_id() -> str | None:
-    """从当前活跃会话获取 user_open_id。"""
-    from supercc.claude.session_manager import SessionManager
-    from supercc.config import resolve_config_path, SESSIONS_DB_PATH
-    _, _ = resolve_config_path()
-    db_path = SESSIONS_DB_PATH
-    sm = SessionManager(db_path=db_path)
-    session = sm.get_active_session_by_chat_id()
-    return session.user_id if session else None
+    """从当前消息上下文获取 user_open_id（通过 contextvar）。"""
+    return get_current_user_open_id()
 
 
 # ── user tools ─────────────────────────────────────────────────────────────────
@@ -53,8 +50,9 @@ async def memory_add_user(args: dict) -> dict:
     if not user_open_id:
         return {"content": [{"type": "text", "text": "无法获取当前用户身份，请确保在飞书私聊中使用"}], "is_error": True}
     mm = get_memory_manager()
+    platform = get_current_platform()
     try:
-        p = mm.add_preference(user_open_id, title, content, keywords)
+        p = mm.add_preference(user_open_id, title, content, keywords, platform=platform)
     except ValueError as e:
         return {"content": [{"type": "text", "text": f"输入过长：{e}"}], "is_error": True}
     return {"content": [{"type": "text", "text": f"✅ 用户偏好已保存\n\n{_fmt_pref(p)}"}]}
@@ -67,7 +65,11 @@ async def memory_add_user(args: dict) -> dict:
 )
 async def memory_delete_user(args: dict) -> dict:
     mm = get_memory_manager()
-    ok = mm.delete_preference(args["id"])
+    platform = get_current_platform()
+    user_open_id = _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
+    ok = mm.delete_preference(args["id"], user_open_id=user_open_id, platform=platform)
     if ok:
         return {"content": [{"type": "text", "text": f"🗑️ 用户偏好 {args['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -85,7 +87,11 @@ async def memory_update_user(args: dict) -> dict:
     if not title or not content or not keywords:
         return {"content": [{"type": "text", "text": "title、content、keywords 三样必填"}], "is_error": True}
     mm = get_memory_manager()
-    ok = mm.update_preference(args["id"], title, content, keywords)
+    platform = get_current_platform()
+    user_open_id = _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
+    ok = mm.update_preference(args["id"], title, content, keywords, user_open_id=user_open_id, platform=platform)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 用户偏好 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -97,12 +103,13 @@ async def memory_update_user(args: dict) -> dict:
     {},
 )
 async def memory_list_user(args: dict) -> dict:
-    user_open_id = args.get("user_open_id", "").strip() or _get_user_open_id()
+    user_open_id = _get_user_open_id()
     mm = get_memory_manager()
+    platform = get_current_platform()
     if user_open_id:
-        prefs = mm.get_preferences_by_user(user_open_id)
+        prefs = mm.get_preferences_by_user(user_open_id, platform=platform)
     else:
-        prefs = mm.get_all_preferences()
+        prefs = []
     if not prefs:
         return {"content": [{"type": "text", "text": "📭 暂无用户偏好记录。"}]}
     lines = [f"👤 用户偏好（共 {len(prefs)} 条）\n"]
@@ -120,10 +127,13 @@ async def memory_list_user(args: dict) -> dict:
 async def memory_search_user(args: dict) -> dict:
     query = args.get("query", "").strip()
     user_open_id = args.get("user_open_id", "").strip() or _get_user_open_id()
+    if not user_open_id:
+        return {"content": [{"type": "text", "text": f"未找到与「{query}」相关的用户偏好。"}]}
     if not query:
         return {"content": [{"type": "text", "text": "查询词不能为空"}], "is_error": True}
     mm = get_memory_manager()
-    results = mm.search_preferences(query, user_open_id=user_open_id, limit=5)
+    platform = get_current_platform()
+    results = mm.search_preferences(query, user_open_id=user_open_id, platform=platform, limit=5)
     if not results:
         return {"content": [{"type": "text", "text": f"未找到与「{query}」相关的用户偏好。"}]}
     lines = [f"🔍 用户偏好搜索结果（共 {len(results)} 条）\n"]
@@ -150,8 +160,10 @@ async def memory_add_proj(args: dict) -> dict:
     if not project_path:
         return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
+    platform = get_current_platform()
+    chat_id = get_current_chat_id() or ""
     try:
-        m = mm.add_project_memory(project_path, title, content, keywords)
+        m = mm.add_project_memory(project_path, title, content, keywords, platform=platform, chat_id=chat_id)
     except ValueError as e:
         return {"content": [{"type": "text", "text": f"输入过长：{e}"}], "is_error": True}
     return {"content": [{"type": "text", "text": f"✅ 项目记忆已保存\n\n{_fmt_proj(m)}"}]}
@@ -163,8 +175,13 @@ async def memory_add_proj(args: dict) -> dict:
     {"id": str, "project_path": str},
 )
 async def memory_delete_proj(args: dict) -> dict:
+    project_path = args.get("project_path", "").strip()
+    if not project_path:
+        return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
-    deleted = mm.delete_project_memory(args["id"])
+    platform = get_current_platform()
+    chat_id = get_current_chat_id() or ""
+    deleted = mm.delete_project_memory(args["id"], project_path, platform=platform, chat_id=chat_id)
     if deleted:
         return {"content": [{"type": "text", "text": f"🗑️ 项目记忆 {deleted['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}
@@ -179,10 +196,15 @@ async def memory_update_proj(args: dict) -> dict:
     title = args.get("title", "").strip()
     content = args.get("content", "").strip()
     keywords = args.get("keywords", "").strip()
+    project_path = args.get("project_path", "").strip()
     if not title or not content or not keywords:
         return {"content": [{"type": "text", "text": "title、content、keywords 三样必填"}], "is_error": True}
+    if not project_path:
+        return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
-    ok = mm.update_project_memory(args["id"], title, content, keywords)
+    platform = get_current_platform()
+    chat_id = get_current_chat_id() or ""
+    ok = mm.update_project_memory(args["id"], title, content, keywords, project_path, platform=platform, chat_id=chat_id)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 项目记忆 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的项目记忆"}], "is_error": True}
@@ -198,7 +220,9 @@ async def memory_list_proj(args: dict) -> dict:
     if not project_path:
         return {"content": [{"type": "text", "text": "project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
-    mems = mm.get_project_memories(project_path)
+    platform = get_current_platform()
+    chat_id = get_current_chat_id() or ""
+    mems = mm.get_project_memories(project_path, platform=platform, chat_id=chat_id)
     if not mems:
         return {"content": [{"type": "text", "text": "📭 暂无项目记忆记录。"}]}
     lines = [f"📁 项目记忆（共 {len(mems)} 条）\n"]
@@ -219,7 +243,9 @@ async def memory_search_proj(args: dict) -> dict:
     if not query or not project_path:
         return {"content": [{"type": "text", "text": "query 和 project_path 不能为空"}], "is_error": True}
     mm = get_memory_manager()
-    results = mm.search_project_memories(query, project_path, limit=5)
+    platform = get_current_platform()
+    chat_id = get_current_chat_id() or ""
+    results = mm.search_project_memories(query, project_path, platform=platform, chat_id=chat_id, limit=5)
     if not results:
         return {"content": [{"type": "text", "text": f"未找到与「{query}」相关的项目记忆。"}]}
     lines = [f"🔍 项目记忆搜索结果（共 {len(results)} 条）\n"]

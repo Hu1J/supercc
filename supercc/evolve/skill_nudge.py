@@ -1,23 +1,25 @@
-"""Hermes-style skill nudge — triggers skill review after N tool calls.
+"""Skill self-evolution — triggers skill review after N tool calls.
 
 This module tracks tool call count per session and triggers a background
-review when the threshold is reached, asking Claude Code to consider
-creating or updating a skill based on recent conversation patterns.
+review when the threshold is reached. When skill changes are detected,
+notifies the triggering chat immediately (no polling).
+
+Key components:
+- SkillNudge: tracks tool call count per session
+- SKILL_NUDGE_PROMPT: review prompt template
+- _get_skill_git_state / _get_skill_commit_message / _detect_skill_changes: git-based change detection
+- trigger_skill_review: calls _detect_skill_changes with notify=True after review
+- _ensure_symlinks: syncs skills to ~/.claude/skills/ (called by cron_scheduler)
+- _ensure_skills_git_repo / README_CONTENT: git repo setup for skills directory
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-import shutil
-import sqlite3
 import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Awaitable
-
-from supercc.config import SESSIONS_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,38 @@ def _ensure_skills_git_repo(skills_dir: Path) -> None:
             logger.info(f"[skill_nudge] created README at {skills_dir}")
 
 
+def _ensure_symlinks(skills_dir: Path, symlink_dir: Path | None = None) -> None:
+    """Ensure all skills in skills_dir have a corresponding symlink in symlink_dir.
+
+    Symlinks are created in ~/.claude/skills/ by default.
+    Idempotent: existing correct symlinks are left as-is.
+    """
+    symlink_dir = symlink_dir or (Path.home() / ".claude" / "skills")
+    if not skills_dir.exists():
+        return
+    symlink_dir.mkdir(parents=True, exist_ok=True)
+    for skill_path in skills_dir.iterdir():
+        if not skill_path.is_dir():
+            continue
+        skill_md = skill_path / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        symlink_path = symlink_dir / skill_path.name
+        if symlink_path.exists() or symlink_path.is_symlink():
+            if symlink_path.resolve() == skill_path.resolve():
+                logger.debug(f"[skill_nudge] symlink {symlink_path.name} already points to {skill_path}, skipping")
+                continue
+            try:
+                symlink_path.unlink()
+            except PermissionError:
+                if symlink_path.is_dir():
+                    symlink_path.rmdir()
+                else:
+                    raise
+        symlink_path.symlink_to(skill_path)
+        logger.info(f"[skill_nudge] symlinked {skill_path.name}")
+
+
 @dataclass
 class SkillNudgeConfig:
     enabled: bool = True
@@ -122,41 +156,7 @@ def make_nudge(config: SkillNudgeConfig) -> SkillNudge:
     return SkillNudge(config=config)
 
 
-def _ensure_symlinks(skills_dir: Path, symlink_dir: Path | None = None) -> None:
-    """Ensure all skills in skills_dir have a corresponding symlink in symlink_dir.
-
-    Symlinks are created in ~/.claude/skills/ by default.
-    Idempotent: existing correct symlinks are left as-is.
-    """
-    symlink_dir = symlink_dir or (Path.home() / ".claude" / "skills")
-    if not skills_dir.exists():
-        return
-    symlink_dir.mkdir(parents=True, exist_ok=True)
-    for skill_path in skills_dir.iterdir():
-        if not skill_path.is_dir():
-            continue
-        skill_md = skill_path / "SKILL.md"
-        if not skill_md.exists():
-            continue
-        symlink_path = symlink_dir / skill_path.name
-        if symlink_path.exists() or symlink_path.is_symlink():
-            if symlink_path.resolve() == skill_path.resolve():
-                logger.debug(f"[skill_nudge] symlink {symlink_path.name} already points to {skill_path}, skipping")
-                continue
-            try:
-                symlink_path.unlink()
-            except PermissionError:
-                # Directory symlink on macOS - unlink fails, use rmdir
-                if symlink_path.is_dir():
-                    symlink_path.rmdir()
-                else:
-                    raise
-        symlink_path.symlink_to(skill_path)
-        logger.info(f"[skill_nudge] symlinked {skill_path.name}")
-
-
 # Review prompt shown to Claude Code when nudge fires
-# Claude writes skills directly to {SKILLS_DIR}/ and manages git commits there
 SKILL_NUDGE_PROMPT = """\
 根据当前对话历史，判断是否有值得创建或更新的 Skill。
 
@@ -183,22 +183,6 @@ SKILL_NUDGE_PROMPT = """\
 - **删除**：Skill 只有在确定无价值时才删除，且**删除前必须先向用户确认**，得到肯定答复后再执行删除
 - 新建和更新不需要确认，发现就直接做
 """
-
-
-def _parse_skill_meta(content: str) -> tuple[str, str, str]:
-    """Returns (name, description, author) from SKILL.md frontmatter."""
-    name, description, author = "", "", ""
-    if content.startswith("---"):
-        parts = content.split("---", 2)
-        if len(parts) >= 3:
-            for line in parts[1].splitlines():
-                if line.startswith("name:"):
-                    name = line.split("name:", 1)[1].strip()
-                elif line.startswith("description:"):
-                    description = line.split("description:", 1)[1].strip()
-                elif line.startswith("author:"):
-                    author = line.split("author:", 1)[1].strip()
-    return name, description, author
 
 
 def _get_skill_git_state(skills_dir: Path) -> dict[str, str | None]:
@@ -252,15 +236,12 @@ async def _detect_skill_changes(
     for skill_name, sha in after_state.items():
         before_sha = before_state.get(skill_name)
         if before_sha is None and sha is not None:
-            # New skill
             msg = _get_skill_commit_message(skills_dir, skill_name, sha)
             changed.append({"name": skill_name, "action": "🆕 新建", "commit": msg})
         elif sha != before_sha and sha is not None:
-            # Updated skill
             msg = _get_skill_commit_message(skills_dir, skill_name, sha)
             changed.append({"name": skill_name, "action": "🔄 更新", "commit": msg})
 
-    # Detect deleted skills
     for skill_name, before_sha in before_state.items():
         if skill_name not in after_state and before_sha is not None:
             changed.append({"name": skill_name, "action": "🗑️ 删除", "commit": ""})
@@ -268,10 +249,9 @@ async def _detect_skill_changes(
     if not changed:
         return
 
-    # Build notification with commit messages
     parts = []
     for c in changed:
-        commit_info = f"（{c['commit']}）" if c['commit'] else ""
+        commit_info = f"（{c['commit']}）" if c["commit"] else ""
         parts.append(f"{c['action']} **{c['name']}**{commit_info}")
 
     msg = "🧰 Skill 自进化：" + "、".join(parts)
@@ -281,91 +261,6 @@ async def _detect_skill_changes(
             await send_to_feishu(chat_id, msg)
         except Exception as e:
             logger.warning(f"[skill_nudge] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
-
-
-async def poll_skill_changes_and_notify(
-    data_dir: str,
-    skills_dir: Path,
-    send_to_feishu: Callable[[str, str], Awaitable[None]] | None = None,
-    get_chat_id: Callable[[str], str | None] | None = None,
-) -> None:
-    """Poll skills directory for changes and notify user.
-
-    Stores last known state in data_dir/.skill_poll_state.json.
-    Detects new, updated, and deleted skills since last poll.
-    Sends notification to the current active chat_id.
-    """
-    state_file = Path(data_dir) / ".skill_poll_state.json"
-
-    # Load last state
-    last_state: dict[str, str | None] = {}
-    if state_file.exists():
-        try:
-            last_state = json.loads(state_file.read_text(encoding="utf-8"))
-        except Exception:
-            last_state = {}
-
-    current_state = _get_skill_git_state(skills_dir)
-
-    # First run: ensure symlinks for all existing skills, then save state
-    if not last_state:
-        symlink_dir = Path.home() / ".claude" / "skills"
-        _ensure_symlinks(skills_dir, symlink_dir)
-        state_file.write_text(json.dumps(current_state, ensure_ascii=False), encoding="utf-8")
-        return
-
-    # Detect changes
-    changed = []
-    for skill_name, sha in current_state.items():
-        before_sha = last_state.get(skill_name)
-        if before_sha is None and sha is not None:
-            msg = _get_skill_commit_message(skills_dir, skill_name, sha)
-            changed.append({"name": skill_name, "action": "🆕 新建", "commit": msg})
-        elif sha != before_sha and sha is not None:
-            msg = _get_skill_commit_message(skills_dir, skill_name, sha)
-            changed.append({"name": skill_name, "action": "🔄 更新", "commit": msg})
-
-    for skill_name, before_sha in last_state.items():
-        if skill_name not in current_state and before_sha is not None:
-            changed.append({"name": skill_name, "action": "🗑️ 删除", "commit": ""})
-
-    # Save current state
-    state_file.write_text(json.dumps(current_state, ensure_ascii=False), encoding="utf-8")
-
-    # Always ensure symlinks on every tick (idempotent — safe to call repeatedly)
-    symlink_dir = Path.home() / ".claude" / "skills"
-    _ensure_symlinks(skills_dir, symlink_dir)
-
-    if not changed:
-        return
-
-    # Send notification
-    parts = []
-    for c in changed:
-        commit_info = f"（{c['commit']}）" if c['commit'] else ""
-        parts.append(f"{c['action']} **{c['name']}**{commit_info}")
-
-    msg = "🧰 Skill 自进化：" + "、".join(parts)
-
-    chat_id = get_chat_id(data_dir) if get_chat_id else None
-    if chat_id and send_to_feishu:
-        try:
-            await send_to_feishu(chat_id, msg)
-        except Exception as e:
-            logger.warning(f"[poll_skill_changes] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
-            # 清除 sessions.db 中该 chat_id，避免无限重试
-            _invalidate_chat_id(chat_id)
-
-
-def _invalidate_chat_id(chat_id: str) -> None:
-    """清除 sessions.db 中指定 chat_id，避免 poll 无限重试失败."""
-    try:
-        with sqlite3.connect(SESSIONS_DB_PATH) as conn:
-            conn.execute("UPDATE sessions SET chat_id = NULL WHERE chat_id = ?", (chat_id,))
-            conn.commit()
-            logger.info(f"[poll_skill_changes] invalidated stale chat_id={chat_id!r}")
-    except Exception:
-        pass  # 非关键路径，失败不影响主流程
 
 
 async def trigger_skill_review(
@@ -402,13 +297,13 @@ async def trigger_skill_review(
         response, _, _ = await make_claude_query(prompt)
         logger.info(f"[trigger_skill_review] done: {response[:200] if response else '(empty)'}")
 
-        # Detect changes via git state comparison (don't notify — poll_skill_changes_and_notify handles that)
+        # Detect changes via git state comparison, then notify the triggering chat immediately
         await _detect_skill_changes(
             before_state=before_state,
             skills_dir=skills_dir,
             chat_id=chat_id,
             send_to_feishu=send_to_feishu,
-            notify=False,
+            notify=True,
         )
 
     except Exception as e:

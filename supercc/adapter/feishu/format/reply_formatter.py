@@ -6,6 +6,7 @@ import re
 
 from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.claude.message_context import get_current_user_open_id
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card
@@ -232,6 +233,8 @@ class ReplyFormatter:
                 tool_name, tool_input,
                 memory_manager=kwargs.get("memory_manager"),
                 default_project_path=kwargs.get("default_project_path", ""),
+                platform=kwargs.get("platform", "feishu"),
+                chat_id=kwargs.get("chat_id", ""),
             )
 
         # Cron MCP tools → ⏰ 时钟图标
@@ -272,6 +275,8 @@ class ReplyFormatter:
         tool_input: str,
         memory_manager=None,
         default_project_path: str = "",
+        platform: str = "feishu",
+        chat_id: str = "",
     ) -> _MemoryCardMarker | str:
         """格式化记忆 MCP 工具调用为卡片标记。
 
@@ -310,32 +315,33 @@ class ReplyFormatter:
             # list/search — 查询实际条目（project_path 缺失时使用 default_project_path）
             query = args.get("query", "")
             project_path = args.get("project_path", "") or default_project_path
-            user_open_id = args.get("user_open_id", "")
+            user_open_id = args.get("user_open_id", "") or get_current_user_open_id() or ""
 
             if memory_manager is not None:
                 try:
                     if scope == "proj":
                         if card_type == "list":
-                            mems = memory_manager.get_project_memories(project_path)
+                            mems = memory_manager.get_project_memories(project_path, platform=platform, chat_id=chat_id)
                             entries = [{"id": m.id, "title": m.title,
                                         "content": m.content, "keywords": m.keywords} for m in mems]
                         elif card_type == "search" and query:
-                            results = memory_manager.search_project_memories(query, project_path)
+                            results = memory_manager.search_project_memories(query, project_path, platform=platform, chat_id=chat_id)
                             entries = [{"id": r.memory.id, "title": r.memory.title,
                                         "content": r.memory.content,
                                         "keywords": r.memory.keywords} for r in results]
                         else:
                             entries = []
                     else:
-                        # user scope — mirror memory_tools.py fallback: empty user_open_id → get all
+                        # user scope — 必须提供 user_open_id，否则无法确定归属
                         if user_open_id:
-                            prefs = memory_manager.get_preferences_by_user(user_open_id)
+                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform)
                             if card_type == "search" and query:
-                                prefs = memory_manager.search_preferences(query, user_open_id)
+                                prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform)
+                            entries = [{"id": p.id, "title": p.title,
+                                        "content": p.content, "keywords": p.keywords} for p in prefs]
                         else:
-                            prefs = memory_manager.get_all_preferences()
-                        entries = [{"id": p.id, "title": p.title,
-                                    "content": p.content, "keywords": p.keywords} for p in prefs]
+                            # user_open_id 为空时不能返回所有用户偏好（隐私泄漏），返回空列表
+                            entries = []
                 except Exception:
                     entries = []
 

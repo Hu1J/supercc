@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,67 +28,63 @@ class Session:
     proactive_today_count: int = 0
     proactive_today_date: str | None = None   # YYYY-MM-DD 格式
     last_proactive_at: datetime | None = None  # 发完主动推送后，记录时间戳，用于冷却期判断
+    group_members: str | None = None  # 群成员 JSON 字符串，用于 _is_group_chat 判断
+    platform: str = "feishu"  # 平台：feishu/wecom/qq/wechat/...
 
 
 class SessionManager:
     def __init__(self, db_path: str):
         self._conv_history: dict[str, list[str]] = {}
+        self._conv_history_lock = threading.Lock()
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         self._init_memories_db()
+
+    def _migrate_add_column(self, conn, table: str, column: str, dtype: str):
+        """Add a column if it doesn't exist (safe for fresh installs and old DBs)."""
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {dtype}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
-                    sdk_session_id TEXT,
                     user_id TEXT NOT NULL,
-                    chat_id TEXT,
                     project_path TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     last_used TIMESTAMP NOT NULL,
                     total_cost REAL DEFAULT 0,
-                    message_count INTEGER DEFAULT 0,
-                    last_message_at TIMESTAMP,
-                    proactive_today_count INTEGER DEFAULT 0,
-                    proactive_today_date TEXT
+                    message_count INTEGER DEFAULT 0
                 )
             """)
-            # Migrate: add sdk_session_id column if it doesn't exist (existing installs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN sdk_session_id TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add chat_id column if it doesn't exist (existing installs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN chat_id TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add last_message_at column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN last_message_at TIMESTAMP")
-            except sqlite3.OperationalError:
-                pass  # column already exists
-            # Migrate: add proactive_today_count column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN proactive_today_count INTEGER DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add proactive_today_date column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN proactive_today_date TEXT")
-            except sqlite3.OperationalError:
-                pass
-            # Migrate: add last_proactive_at column if it doesn't exist
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN last_proactive_at TIMESTAMP")
-            except sqlite3.OperationalError:
-                pass
+            # Migrate: add columns that don't exist in old installations
+            self._migrate_add_column(
+                conn, "sessions", "sdk_session_id", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "chat_id", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "last_message_at", "TIMESTAMP")
+            self._migrate_add_column(
+                conn, "sessions", "proactive_today_count", "INTEGER DEFAULT 0")
+            self._migrate_add_column(
+                conn, "sessions", "proactive_today_date", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "last_proactive_at", "TIMESTAMP")
+            self._migrate_add_column(
+                conn, "sessions", "group_members", "TEXT")
+            self._migrate_add_column(
+                conn, "sessions", "platform", "TEXT DEFAULT 'feishu'")
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_user_last
                 ON sessions(user_id, last_used DESC)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_platform_chat
+                ON sessions(platform, chat_id)
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -117,12 +114,9 @@ class SessionManager:
         sdk_session_id: str | None = None,
         chat_id: str | None = None,
         thread_id: str | None = None,
+        platform: str = "feishu",
     ) -> Session:
-        """Create a new session for a user.
-
-        For group chat, pass chat_id (and optionally thread_id) to enable
-        session isolation per chat. Session key is: user_id + chat_id (+ thread_id).
-        """
+        """Create a new session for a user."""
         now = datetime.utcnow()
         session = Session(
             session_id=f"session_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}",
@@ -133,13 +127,14 @@ class SessionManager:
             last_used=now,
             total_cost=0.0,
             message_count=0,
-            chat_id=chat_id or "",
+            chat_id=chat_id or "",  # None -> "" for P2P sessions that have no chat_id
+            platform=platform,
         )
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO sessions
-                   (session_id, sdk_session_id, user_id, chat_id, project_path, created_at, last_used, total_cost, message_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (session_id, sdk_session_id, user_id, chat_id, project_path, created_at, last_used, total_cost, message_count, platform)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.session_id,
                     session.sdk_session_id,
@@ -150,24 +145,21 @@ class SessionManager:
                     session.last_used.isoformat(),
                     session.total_cost,
                     session.message_count,
+                    session.platform,
                 ),
             )
         return session
 
-    def get_active_session_for_chat(self, user_id: str, chat_id: str) -> Optional[Session]:
-        """Get the most recent session for a user in a specific chat (group or p2p).
-
-        This enables session isolation per chat — group chat sessions are separate
-        from p2p sessions even for the same user.
-        """
+    def get_active_session_for_chat(self, user_id: str, chat_id: str, platform: str = "feishu") -> Optional[Session]:
+        """Get the most recent session for a user in a specific chat and platform."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT * FROM sessions
-                   WHERE user_id = ? AND chat_id = ?
+                   WHERE user_id = ? AND chat_id = ? AND platform = ?
                    ORDER BY last_used DESC
                    LIMIT 1""",
-                (user_id, chat_id),
+                (user_id, chat_id, platform),
             ).fetchone()
         if row:
             return Session(
@@ -184,19 +176,21 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
+                platform=row["platform"],
             )
         return None
 
-    def get_active_session(self, user_id: str) -> Optional[Session]:
-        """Get the most recent session for a user."""
+    def get_active_session(self, user_id: str, platform: str = "feishu") -> Optional[Session]:
+        """Get the most recent session for a user on a given platform."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT * FROM sessions
-                   WHERE user_id = ?
+                   WHERE user_id = ? AND platform = ?
                    ORDER BY last_used DESC
                    LIMIT 1""",
-                (user_id,),
+                (user_id, platform),
             ).fetchone()
         if row:
             return Session(
@@ -213,6 +207,8 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
+                platform=row["platform"],
             )
         return None
 
@@ -249,26 +245,43 @@ class SessionManager:
     def update_sdk_session_id(self, session_id: str, sdk_session_id: str) -> None:
         """Store the SDK's session ID for future continue_session calls."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+            rows = conn.execute(
                 """UPDATE sessions SET sdk_session_id = ? WHERE session_id = ?""",
                 (sdk_session_id, session_id),
-            )
+            ).rowcount
+            if rows == 0:
+                logger.debug(f"update_sdk_session_id: no session found for session_id={session_id}")
 
     def delete_session(self, session_id: str):
         """Delete a session."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
 
-    def get_active_session_by_chat_id(self) -> Optional[Session]:
-        """Get the most recent session that has a chat_id set."""
+    def get_active_session_by_chat_id(
+        self, project_path: str | None = None, platform: str = "feishu"
+    ) -> Optional[Session]:
+        """Get the most recent session that has a chat_id set (optionally filtered by project_path)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                """SELECT * FROM sessions
-                   WHERE chat_id IS NOT NULL AND chat_id != ''
-                   ORDER BY last_used DESC
-                   LIMIT 1""",
-            ).fetchone()
+            if project_path:
+                row = conn.execute(
+                    """SELECT * FROM sessions
+                       WHERE chat_id IS NOT NULL AND chat_id != ''
+                       AND project_path = ?
+                       AND platform = ?
+                       ORDER BY last_used DESC
+                       LIMIT 1""",
+                    (project_path, platform),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT * FROM sessions
+                       WHERE chat_id IS NOT NULL AND chat_id != ''
+                       AND platform = ?
+                       ORDER BY last_used DESC
+                       LIMIT 1""",
+                    (platform,),
+                ).fetchone()
             if row:
                 return Session(
                     session_id=row["session_id"],
@@ -284,23 +297,35 @@ class SessionManager:
                     proactive_today_count=row["proactive_today_count"],
                     proactive_today_date=row["proactive_today_date"],
                     last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                    group_members=row["group_members"],
+                    platform=row["platform"],
                 )
             return None
 
-    def update_chat_id(self, user_id: str, chat_id: str) -> None:
-        """Update the chat_id for the most recent session of a user."""
+    def update_chat_id(self, user_id: str, chat_id: str, platform: str = "feishu") -> None:
+        """Update the chat_id for the most recent session of a user (must specify platform)."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """UPDATE sessions
                    SET chat_id = ?
                    WHERE session_id = (
                        SELECT session_id FROM sessions
-                       WHERE user_id = ?
+                       WHERE user_id = ? AND platform = ?
                        ORDER BY last_used DESC
                        LIMIT 1
                    )""",
-                (chat_id, user_id),
+                (chat_id, user_id, platform),
             )
+
+    def update_group_members(self, session_id: str, group_members: str) -> None:
+        """Store group members JSON for a session (enables _is_group_chat detection)."""
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                """UPDATE sessions SET group_members = ? WHERE session_id = ?""",
+                (group_members, session_id),
+            ).rowcount
+            if rows == 0:
+                logger.debug(f"update_group_members: no session found for session_id={session_id}")
 
     def get_all_users(self) -> list[Session]:
         """Get all sessions with last_message_at info for proactive check."""
@@ -326,6 +351,8 @@ class SessionManager:
                 proactive_today_count=row["proactive_today_count"],
                 proactive_today_date=row["proactive_today_date"],
                 last_proactive_at=datetime.fromisoformat(row["last_proactive_at"]) if row["last_proactive_at"] else None,
+                group_members=row["group_members"],
+                platform=row["platform"],
             )
             for row in rows
         ]
@@ -374,9 +401,10 @@ class SessionManager:
             )
         # Track conversation for auto memory extraction
         if direction == "incoming":
-            history = self._conv_history.setdefault(session_id, [])
-            history.append(content or raw_content)
-            self._conv_history[session_id] = history[-20:]  # keep last 20 messages
+            with self._conv_history_lock:
+                history = self._conv_history.setdefault(session_id, [])
+                history.append(content or raw_content)
+                self._conv_history[session_id] = history[-20:]  # keep last 20 messages
 
     def _init_memories_db(self):
         """Initialize memories DB (separate file from sessions)."""

@@ -7,6 +7,48 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# 默认重试和超时配置
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_TIMEOUT = 30
+
+
+async def _call_with_retry(coro_fn, max_retries: int = DEFAULT_MAX_RETRIES, timeout: int = DEFAULT_TIMEOUT):
+    """带重试和超时的 API 调用辅助函数。
+
+    Args:
+        coro_fn: 异步调用函数
+        max_retries: 最大重试次数
+        timeout: 超时秒数
+
+    Returns:
+        API 响应对象
+
+    Raises:
+        最后一次超时时抛出 asyncio.TimeoutError
+        429 限流时等待后重试
+        其他错误直接抛出
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = await asyncio.wait_for(coro_fn(), timeout=timeout)
+            # 检查 API 返回的错误码
+            if hasattr(response, 'code') and response.code == 429:
+                # 限流，等待后重试（指数退避）
+                wait_time = 2 ** attempt
+                logger.warning(f"API rate limited, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                last_error = RuntimeError(f"Rate limited (429)")
+                continue
+            return response
+        except asyncio.TimeoutError:
+            last_error = asyncio.TimeoutError(f"API call timed out after {timeout}s (attempt {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                logger.warning(f"API call timeout, retrying (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(1)
+            # 最后一次超时时抛出
+    raise last_error
+
 
 def _stream_to_buffer(stream) -> bytes:
     """Consume a Readable stream into a bytes buffer."""
@@ -128,6 +170,7 @@ class FeishuClient:
         self.bot_name = bot_name
         self.data_dir = data_dir
         self._client = None
+        self._user_name_cache: dict[str, str] = {}  # open_id -> display_name
 
     def _get_client(self):
         if self._client is None:
@@ -158,9 +201,8 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(
-            client.im.v1.message.create,
-            request,
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.create, request)
         )
         if not response.success():
             raise RuntimeError(f"Failed to send message: {response.msg}")
@@ -179,7 +221,9 @@ class FeishuClient:
             .message_id(message_id)
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.get, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.get, request)
+        )
         if not response.success():
             logger.warning(f"get_message({message_id}) failed: {response.msg}")
             return None
@@ -227,9 +271,8 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(
-                client.im.v1.message_reaction.create,
-                request,
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message_reaction.create, request)
             )
             if response.success():
                 return response.data.reaction_id
@@ -249,7 +292,7 @@ class FeishuClient:
             pass
 
     async def download_media(self, message_id: str, file_key: str, msg_type: str = "image") -> bytes:
-        """Download media (image/file) from a Feishu message."""
+        """Download media (image/file) from a Feishu message. Has 60s timeout."""
         import lark_oapi as lark
         client = self._get_client()
         request = (
@@ -260,11 +303,17 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(client.im.v1.message_resource.get, request)
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message_resource.get, request),
+                timeout=60,
+            )
             if not response.success():
                 raise RuntimeError(f"Failed to download media: {response.msg}")
             # lark-oapi returns response.file as BytesIO — use .read()
-            return response.file.read()
+            data = response.file.read()
+            if not data:
+                raise RuntimeError(f"download_media returned empty data for file_key={file_key}")
+            return data
         except Exception as e:
             logger.error(f"download_media error: {e}")
             raise
@@ -285,7 +334,9 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(client.im.v1.image.create, request)
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.image.create, request)
+            )
             if not response.success():
                 raise RuntimeError(f"Failed to upload image: {response.msg}")
             logger.info(f"Uploaded image: {response.data.image_key}")
@@ -312,7 +363,9 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(client.im.v1.message.create, request)
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.create, request)
+            )
             if not response.success():
                 raise RuntimeError(f"Failed to send image: {response.msg}")
             logger.info(f"Sent image to {chat_id}: {response.data.message_id}")
@@ -338,7 +391,9 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(client.im.v1.file.create, request)
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.file.create, request)
+            )
             if not response.success():
                 logger.error(f"upload_file raw response: {response}")
                 raise RuntimeError(f"Failed to upload file: {response.msg}")
@@ -366,7 +421,9 @@ class FeishuClient:
             .build()
         )
         try:
-            response = await asyncio.to_thread(client.im.v1.message.create, request)
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.create, request)
+            )
             if not response.success():
                 raise RuntimeError(f"Failed to send file: {response.msg}")
             logger.info(f"Sent file {file_name} to {chat_id}: {response.data.message_id}")
@@ -391,7 +448,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
         return response.data.message_id
@@ -417,7 +476,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to reply: {response.msg}")
         logger.info(f"Replied to {reply_to_message_id} in chat {chat_id}: {response.data.message_id}")
@@ -454,7 +515,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to reply (post): {response.msg}")
         if log_reply:
@@ -491,7 +554,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.create, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.create, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to send post: {response.msg}")
         logger.info(f"Sent post to chat {chat_id}: {response.data.message_id}")
@@ -537,7 +602,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.create, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.create, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
         logger.info(f"Sent card to chat {chat_id}: {response.data.message_id}")
@@ -598,7 +665,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to reply image: {response.msg}")
         return response.data.message_id
@@ -625,7 +694,9 @@ class FeishuClient:
             )
             .build()
         )
-        response = await asyncio.to_thread(client.im.v1.message.reply, request)
+        response = await _call_with_retry(
+            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+        )
         if not response.success():
             raise RuntimeError(f"Failed to reply file: {response.msg}")
         return response.data.message_id
@@ -696,7 +767,7 @@ class FeishuClient:
         chat_id: str,
         limit: int = 20,
         sort_type: str = "ByCreateTimeDesc",
-    ) -> list[dict]:
+    ) -> list:
         """Fetch recent messages from a group chat via Feishu API.
 
         Returns a list of message dicts with keys: message_id, chat_id, msg_type,
@@ -713,7 +784,9 @@ class FeishuClient:
             .build()
         )
         try:
-            resp = await asyncio.to_thread(client.im.v1.message.list, request)
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.list, request)
+            )
             logger.debug(f"[GROUP_HISTORY][API] chat_id={chat_id} code={resp.code} msg={getattr(resp, 'msg', '')}")
             if not resp.success():
                 logger.warning(f"get_chat_history failed: code={resp.code} msg={getattr(resp, 'msg', '')}")
@@ -751,7 +824,9 @@ class FeishuClient:
                 .member_id_type("open_id")
                 .build()
             )
-            resp = await asyncio.to_thread(client.im.v1.chat_members.get, request)
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.chat_members.get, request)
+            )
             if resp.success():
                 items = resp.data.items if resp.data and hasattr(resp.data, 'items') else []
                 all_members.extend(items)
@@ -771,7 +846,9 @@ class FeishuClient:
                 .token_types({lark.core.enum.AccessTokenType.TENANT})
                 .build()
             )
-            bot_resp = await asyncio.to_thread(client.request, bot_request)
+            bot_resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.request, bot_request)
+            )
             if bot_resp.success():
                 raw = bot_resp.raw.content if bot_resp.raw else None
                 if raw:
@@ -785,6 +862,34 @@ class FeishuClient:
             logger.warning(f"[CHAT_MEMBERS] bots error: {e}")
 
         return all_members
+
+    async def get_user_name(self, open_id: str) -> str:
+        """Fetch user display name by open_id. Results are cached.
+
+        Returns the user name, or open_id if the API call fails.
+        """
+        if not open_id or open_id in self._user_name_cache:
+            return self._user_name_cache.get(open_id, open_id)
+        import lark_oapi as lark
+        client = self._get_client()
+        try:
+            request = (
+                lark.contact.v3.User.builder()
+                .user_id(open_id)
+                .user_id_type("open_id")
+                .build()
+            )
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.contact.v3.user.get, request)
+            )
+            if resp.success() and resp.data and hasattr(resp.data, "user"):
+                name = getattr(resp.data.user, "name", None) or ""
+                self._user_name_cache[open_id] = name
+                return name
+        except Exception as e:
+            logger.debug(f"[USER_NAME] failed for {open_id}: {e}")
+        self._user_name_cache[open_id] = open_id
+        return open_id
 
     async def check_group_permissions(self, chat_id: str) -> dict:
         """Check if the bot has required group chat permissions.
@@ -811,7 +916,9 @@ class FeishuClient:
                 .page_size(1)
                 .build()
             )
-            resp = await asyncio.to_thread(client.im.v1.message.list, request)
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.list, request)
+            )
             history_ok = resp.success()
             logger.debug(f"[PERMISSION_CHECK] history: ok={history_ok} code={getattr(resp, 'code', None)}")
         except Exception as e:
@@ -826,7 +933,9 @@ class FeishuClient:
                 .member_id_type("open_id")
                 .build()
             )
-            resp = await asyncio.to_thread(client.im.v1.chat_members.get, request)
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.chat_members.get, request)
+            )
             members_ok = resp.success()
             logger.debug(f"[PERMISSION_CHECK] members: ok={members_ok} code={getattr(resp, 'code', None)}")
         except Exception as e:

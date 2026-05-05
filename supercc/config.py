@@ -69,6 +69,7 @@ class FeishuChannelConfig:
     bot_open_id: str = ""        # 机器人的 open_id，用于检测群聊 @CC
     domain: str = "feishu"
     groups: dict = field(default_factory=dict)  # group_id -> GroupConfigEntry dict
+    allowed_users: List[str] = field(default_factory=list)  # 飞书 P2P 白名单
 
 
 @dataclass
@@ -76,6 +77,7 @@ class DingTalkChannelConfig:
     enabled: bool = False
     app_key: str = ""
     app_secret: str = ""
+    allowed_users: List[str] = field(default_factory=list)  # 企微 P2P 白名单
 
 
 @dataclass
@@ -93,7 +95,7 @@ class AuthConfig:
 class ClaudeConfig:
     cli_path: str = "claude"
     max_turns: int = 50
-    approved_directory: str = str(Path.home())
+    approved_directory: str = ""
 
 
 @dataclass
@@ -201,9 +203,17 @@ def load_config(path: str, data_dir: str = "") -> Config:
 
     feishu_raw = raw.get("channels", {}).get("feishu", {}).copy()
     feishu_raw["groups"] = groups
+    # 读取 allowed_users（从 channels.feishu，兼容旧版 auth.allowed_users）
+    auth_allowed_users = raw.get("auth", {}).get("allowed_users", [])
+    feishu_allowed_users = feishu_raw.get("allowed_users", [])
+    if auth_allowed_users and not feishu_allowed_users:
+        feishu_allowed_users = auth_allowed_users
+    feishu_raw["allowed_users"] = feishu_allowed_users
     feishu_cfg = FeishuChannelConfig(**feishu_raw)
 
-    dingtalk_raw = raw.get("channels", {}).get("dingtalk", {})
+    dingtalk_raw = raw.get("channels", {}).get("dingtalk", {}).copy()
+    dingtalk_allowed_users = dingtalk_raw.get("allowed_users", [])
+    dingtalk_raw["allowed_users"] = dingtalk_allowed_users
     dingtalk_cfg = DingTalkChannelConfig(**dingtalk_raw)
 
     channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
@@ -222,13 +232,17 @@ def load_config(path: str, data_dir: str = "") -> Config:
 
     return Config(
         channels=channels_cfg,
-        auth=AuthConfig(**raw.get("auth", {})),
-        claude=ClaudeConfig(**raw.get("claude", {})),
+        auth=AuthConfig(),
+        claude=ClaudeConfig(**{k: v for k, v in raw.get("claude", {}).items() if k in {"cli_path", "max_turns", "approved_directory"}}),
         codex=codex_cfg,
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
     )
+
+    # 校验 approved_directory 不能为空
+    if not cfg.claude.approved_directory:
+        raise ValueError("claude.approved_directory cannot be empty")
 
 
 def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
@@ -296,15 +310,14 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "bot_open_id": cfg.channels.feishu.bot_open_id,
                 "domain": cfg.channels.feishu.domain,
                 "groups": feishu_groups_raw,
+                "allowed_users": cfg.channels.feishu.allowed_users,
             },
             "dingtalk": {
                 "enabled": cfg.channels.dingtalk.enabled,
                 "app_key": cfg.channels.dingtalk.app_key,
                 "app_secret": cfg.channels.dingtalk.app_secret,
+                "allowed_users": cfg.channels.dingtalk.allowed_users,
             },
-        },
-        "auth": {
-            "allowed_users": cfg.auth.allowed_users,
         },
         "claude": {
             "cli_path": cfg.claude.cli_path,

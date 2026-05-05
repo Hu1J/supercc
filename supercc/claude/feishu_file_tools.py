@@ -64,17 +64,9 @@ def _get_feishu_client() -> "FeishuClient":
 
 
 def _get_chat_id() -> Optional[str]:
-    """从当前活跃会话获取 chat_id（按 project_path 过滤）。"""
-    from supercc.config import get_config
-
-    project_path = get_config().claude.approved_directory
-    with sqlite3.connect(SESSIONS_DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL AND project_path = ? ORDER BY last_used DESC LIMIT 1",
-            (project_path,),
-        ).fetchone()
-    return row["chat_id"] if row else None
+    """从 contextvar 获取当前 chat_id。"""
+    from supercc.claude.message_context import get_current_chat_id
+    return get_current_chat_id()
 
 
 async def _send_single_file(file_path: str, chat_id: str) -> str:
@@ -114,6 +106,8 @@ async def feishu_send_file(args: dict) -> dict:
     file_paths: list = args.get("file_paths", [])
     if not file_paths:
         return {"content": [{"type": "text", "text": "未提供文件路径"}], "is_error": True}
+    if not isinstance(file_paths, list):
+        return {"content": [{"type": "text", "text": "file_paths 必须是列表"}], "is_error": True}
 
     # 获取 chat_id
     chat_id = _get_chat_id()

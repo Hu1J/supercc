@@ -67,18 +67,20 @@ def format_codex_card(event_type: str, content: str = "", extra: dict | None = N
     }
 
 
-def format_agent_card(text: str, title: str = "## 🤖 Agent") -> dict:
+def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
     """构建 Agent / Plan 响应飞书卡片。
 
-    tool_input 为 JSON 字符串时，解析为 key-value 对用 markdown 展示，
-    字段间用 `--` 分割。非 JSON 时直接渲染为 markdown。
+    tool_input 为 dict 时直接解析；为 JSON 字符串时解析为 key-value 对，
+    字段间用 `--` 分割；非 JSON 时直接渲染为 markdown。
     """
     # 尝试解析 JSON
     data = None
-    if text and text.strip().startswith("{"):
+    if isinstance(text, dict):
+        data = text
+    elif text and text.strip().startswith("{"):
         try:
             data = json.loads(text)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             pass
 
     if data and isinstance(data, dict):

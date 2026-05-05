@@ -224,14 +224,9 @@ def print_banner(version: str) -> None:
         pass
 
 
-def write_log_banner(log_file: str, version: str) -> None:
-    """Write banner header to log file if it is empty or doesn't exist."""
-    p = Path(log_file)
-    p.parent.mkdir(parents=True, exist_ok=True)
-
-    if p.exists() and p.stat().st_size > 0:
-        return
-
+def write_log_banner(version: str) -> None:
+    """Write banner header via logger so it goes through the logging system."""
+    logger = logging.getLogger(__name__)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     banner_lines = [
         "=" * 64,
@@ -240,8 +235,6 @@ def write_log_banner(log_file: str, version: str) -> None:
         f"  启动时间: {timestamp}",
         "  自进化超级 AI · 越用越懂你",
         "=" * 64,
-        "",
     ]
-    banner = "\n".join(banner_lines)
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(banner)
+    for line in banner_lines:
+        logger.info(line)

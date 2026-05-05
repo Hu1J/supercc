@@ -51,6 +51,27 @@ def _get_active_chat_id(data_dir: str) -> str | None:
     except Exception:
         return None
 
+
+def _is_group_chat(data_dir: str, chat_id: str) -> bool:
+    """Check if a chat_id is a group chat (has members in DB)."""
+    db_path = SESSIONS_DB_PATH
+    if not os.path.exists(db_path):
+        return False
+    project_path = str(Path(data_dir).resolve().parent)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT group_members FROM sessions WHERE chat_id = ? AND project_path = ? LIMIT 1",
+                (chat_id, project_path),
+            ).fetchone()
+            if row:
+                members = row["group_members"]
+                return members is not None and members != ""
+            return False
+    except Exception:
+        return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -344,6 +365,7 @@ def create_job(
     data_dir: str = "",
     verbose: bool = False,
     notify_at: Optional[str] = None,
+    platform: str = "feishu",
 ) -> dict:
     """
     Create a new cron job.
@@ -390,6 +412,7 @@ def create_job(
         "enabled": True,
         "state": "scheduled",
         "chat_id": chat_id,
+        "platform": platform,
         "verbose": verbose,
         "notify_at": notify_schedule,
         "notify_at_display": notify_schedule.get("display") if notify_schedule else None,
@@ -416,8 +439,11 @@ def get_job(job_id: str, data_dir: str) -> Optional[dict]:
     return None
 
 
-def list_jobs(data_dir: str) -> list:
-    return _CronStore(data_dir).load_jobs()
+def list_jobs(data_dir: str, chat_id: str | None = None) -> list:
+    jobs = _CronStore(data_dir).load_jobs()
+    if chat_id:
+        jobs = [j for j in jobs if j.get("chat_id") == chat_id]
+    return jobs
 
 
 def update_job(job_id: str, updates: dict, data_dir: str) -> Optional[dict]:
@@ -498,11 +524,13 @@ def mark_run(
         return
 
 
-def get_due_jobs(data_dir: str) -> list:
-    """Return all jobs that are due to run now."""
+def get_due_jobs(data_dir: str, chat_id: str | None = None) -> list:
+    """Return all jobs that are due to run now. If chat_id is set, only return jobs for that chat_id."""
     now = _utcnow()
     store = _CronStore(data_dir)
     jobs = store.load_jobs()
+    if chat_id:
+        jobs = [j for j in jobs if j.get("chat_id") == chat_id]
     due = []
 
     for job in jobs:
@@ -599,6 +627,15 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     _log("JOB_TRIGGERED", f"name={job_name}, schedule={job.get('schedule_display')}")
 
+    # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
+    from supercc.claude.message_context import set_current_context
+    set_current_context(
+        user_open_id=config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "",
+        chat_id=chat_id,
+        platform=job.get("platform", "feishu"),
+    )
+    _log("CONTEXT_SET")
+
     # Create Feishu client for delivery
     feishu = FeishuClient(
         app_id=config.channels.feishu.app_id,
@@ -609,8 +646,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     _log("FEISHU_CLIENT_CREATED")
 
     # Memory manager for formatting memory tool calls
-    from supercc.claude.memory_manager import MemoryManager
-    memory_manager = MemoryManager()
+    from supercc.claude.memory_manager import get_memory_manager
+    memory_manager = get_memory_manager()
     _log("MEMORY_MANAGER_CREATED")
 
     # Create independent Claude instance (avoids concurrent conflicts)
@@ -660,6 +697,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                 result = formatter.format_tool_call(
                     claude_msg.tool_name, claude_msg.tool_input,
                     memory_manager=memory_manager,
+                    platform=job.get("platform", "feishu"), chat_id=chat_id or "",
+                    default_project_path=config.claude.approved_directory,
                 )
 
                 if stream_to_feishu:
@@ -836,15 +875,23 @@ class CronScheduler:
     Background scheduler that checks for due cron jobs every 60 seconds.
 
     Usage:
-        scheduler = CronScheduler(config, data_dir)
+        scheduler = CronScheduler(config, data_dir, chat_id=None)
         scheduler.start()
         # ... bridge runs ...
         scheduler.stop()
+
+    Args:
+        config: SuperCC Config object
+        data_dir: SuperCC data directory path
+        chat_id: Optional chat_id for job filtering. If set, only jobs for this chat_id
+                 are processed, and P2P-only features (skill nudge) are also scoped.
+                 In group chats, skill nudge is disabled.
     """
 
-    def __init__(self, config: Config, data_dir: str):
+    def __init__(self, config: Config, data_dir: str, chat_id: str | None = None):
         self.config = config
         self.data_dir = data_dir
+        self.chat_id = chat_id  # scope jobs and features to this chat_id
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = asyncio.Event()
@@ -895,34 +942,17 @@ class CronScheduler:
 
     async def _tick(self):
         """Check for due jobs and run them. Awaits all jobs to ensure completion."""
-        # Poll skill changes on every tick (independent of job scheduling)
+        # Ensure skill symlinks are in sync on every tick (idempotent)
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
-            from supercc.evolve.skill_nudge import poll_skill_changes_and_notify
-            from supercc.adapter.feishu.client import FeishuClient
-            feishu = FeishuClient(
-                app_id=self.config.channels.feishu.app_id,
-                app_secret=self.config.channels.feishu.app_secret,
-                bot_name=self.config.channels.feishu.bot_name,
-                data_dir=self.data_dir,
-            )
-
-            async def _skill_send(cid, text):
-                await feishu.send_post(cid, text)
-
-            try:
-                await poll_skill_changes_and_notify(
-                    data_dir=self.data_dir,
-                    skills_dir=skills_dir,
-                    send_to_feishu=_skill_send,
-                    get_chat_id=lambda dd: _get_active_chat_id(dd),
-                )
-            except Exception:
-                logger.exception("[cron] poll_skill_changes_and_notify error")
-
+            from supercc.evolve.skill_nudge import _ensure_symlinks
+            _ensure_symlinks(skills_dir)
         # Deliver any pending notifications that have reached their notify_at time
+        # Filter by scoped chat_id if set (per-chat-id isolation)
         pending_store = _PendingStore(self.data_dir)
         due_pending = pending_store.get_due()
+        if self.chat_id:
+            due_pending = [e for e in due_pending if e.get("chat_id") == self.chat_id]
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
             from supercc.adapter.feishu.client import FeishuClient
@@ -969,7 +999,7 @@ class CronScheduler:
                 except Exception as e:
                     logger.warning(f"[cron] Pending notification delivery failed: {e}")
 
-        due = get_due_jobs(self.data_dir)
+        due = get_due_jobs(self.data_dir, chat_id=self.chat_id)
         # Filter out jobs that are already running (prevents overlap if job takes >60s)
         due = [j for j in due if j["id"] not in self._running_jobs]
         if not due:

@@ -100,7 +100,7 @@ from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
 from supercc.claude.session_manager import SessionManager
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
-from supercc.cron_scheduler import CronScheduler
+from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
 from supercc.claude.cron_tools import set_cron_scheduler
 
 logger = logging.getLogger(__name__)
@@ -109,19 +109,19 @@ logger = logging.getLogger(__name__)
 def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     """Register a daily skill optimization scan job.
 
-    Creates a cron job that delivers results to the active user's chat.
+    Creates a cron job that delivers results to the active user's P2P chat.
+    Only registers if active chat is P2P (not group).
+    Only recreates job if the prompt has changed from the existing one.
     """
-    # Get chat_id from active session
-    from supercc.cron_scheduler import list_jobs, create_job
+    from supercc.cron_scheduler import list_jobs, create_job, delete_job
+
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
         logger.info("[skill_optimize] no active chat_id, skipping")
         return
 
-    # Idempotency: skip if a "Skill 优化扫描" job already exists
-    existing = list_jobs(data_dir)
-    if any(j.get("name") == "Skill 优化扫描" for j in existing):
-        logger.info("[skill_optimize] job already registered, skipping")
+    if _is_group_chat(data_dir, chat_id):
+        logger.info("[skill_optimize] active chat is a group, skipping registration")
         return
 
     prompt = """【Skill 优化扫描 — 直接动手，不要只给建议】
@@ -152,36 +152,31 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
 
 完成后输出简短报告：做了哪些新建/更新/合并/删除操作。"""
 
+    # Only recreate if prompt changed
+    existing = list_jobs(data_dir)
+    for j in existing:
+        if j.get("name") == "Skill 优化扫描":
+            if j.get("prompt") == prompt:
+                logger.info("[skill_optimize] prompt unchanged, skipping recreation")
+                return
+            delete_job(j["id"], data_dir)
+            logger.info("[skill_optimize] prompt changed, removed old job, will recreate")
+            break
+
     try:
         create_job(
             prompt=prompt,
-            schedule="0 9 * * *",  # 每天早上9点执行
+            schedule="0 4 * * *",  # 每天凌晨4点执行
             chat_id=chat_id,
             name="Skill 优化扫描",
             repeat=None,
             data_dir=data_dir,
-            verbose=True,  # 流式推送 tool calls 到飞书
+            verbose=False,  # 不推送中间过程，只在 notify_at 发最终结果
+            notify_at="0 8 * * *",  # 早上8点通知结果
         )
-        logger.info("[skill_optimize] registered daily scan at 9am")
+        logger.info("[skill_optimize] registered daily scan at 4am, notify at 8am")
     except Exception as e:
         logger.warning(f"[skill_optimize] failed to register: {e}")
-
-
-def _get_active_chat_id(data_dir: str) -> str | None:
-    """Get the most recent active session's chat_id."""
-    db_path = SESSIONS_DB_PATH
-    if not os.path.exists(db_path):
-        return None
-    try:
-        import sqlite3
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT chat_id FROM sessions WHERE chat_id IS NOT NULL ORDER BY last_used DESC LIMIT 1"
-            ).fetchone()
-            return row["chat_id"] if row else None
-    except Exception:
-        return None
 
 
 class _SafeStreamHandler(logging.StreamHandler):
@@ -224,11 +219,11 @@ class _BaseLogFormatter(logging.Formatter):
     """
 
     def _format_time(self, record: logging.LogRecord) -> str:
-        """Format timestamp as [MM-DD HH:MM:SS.mmm], no year."""
+        """Format timestamp as HH:MM:SS.mmm in gray."""
         ct = record.created
         ms = int((ct - int(ct)) * 1000)
         st = self.converter(ct)
-        return f"[{st.tm_mon:02d}-{st.tm_mday:02d} {st.tm_hour:02d}:{st.tm_min:02d}:{st.tm_sec:02d}.{ms:03d}]"
+        return f"\033[90m{st.tm_hour:02d}:{st.tm_min:02d}:{st.tm_sec:02d}.{ms:03d}\033[0m"
 
     def _get_module(self, record: logging.LogRecord) -> str:
         """Derive short module name from logger name.
@@ -247,10 +242,10 @@ class _BaseLogFormatter(logging.Formatter):
 
 
 class ColoredFormatter(_BaseLogFormatter):
-    """Add ANSI color codes to log records based on level. Used for terminal only.
+    """Add ANSI color codes to log records based on level and module.
 
-    Format: [MM-DD HH:MM:SS.mmm] LEVEL [module]  message
-    Colors are applied only to the LEVEL field.
+    Format: [MM-DD HH:MM:SS.mmm] LEVEL [module] message
+    Colors: LEVEL by level, [module] + msg by module.
     """
 
     COLORS = {
@@ -260,27 +255,46 @@ class ColoredFormatter(_BaseLogFormatter):
         "ERROR": "\033[31m",     # red
         "CRITICAL": "\033[35m",  # magenta
     }
+    MODULE_COLORS = {
+        "supercc": "\033[34m",      # blue
+        "evolve": "\033[32m",       # green
+        "feishu": "\033[36m",       # cyan
+        "adapter": "\033[33m",      # yellow
+        "claude": "\033[35m",       # purple
+        "gateway": "\033[31m",      # red
+        "security": "\033[38;5;208m",  # orange
+        "skill_search": "\033[38;5;213m",  # pink
+    }
     RESET = "\033[0m"
+
+    def _get_module_color(self, module: str) -> str:
+        for name, color in self.MODULE_COLORS.items():
+            if module.startswith(name):
+                return color
+        return self.RESET
 
     def format(self, record: logging.LogRecord) -> str:
         ts = self._format_time(record)
-        color = self.COLORS.get(record.levelname, self.RESET)
-        level = f"{color}{record.levelname:>5}{self.RESET}"
+        level_color = self.COLORS.get(record.levelname, self.RESET)
+        level = f"{level_color}{record.levelname:>5}{self.RESET}"
         module = self._get_module(record)
-        return f"{ts}  {level}  [{module}]  {record.getMessage()}"
+        module_color = self._get_module_color(module)
+        module_part = f"{module_color}[{module}] {self.RESET}"
+        msg = f"{module_color}{record.getMessage()}{self.RESET}"
+        return f"{ts} {level} {module_part}{msg}"
 
 
 class PlainFormatter(_BaseLogFormatter):
     """Plain log formatter for file output (no colors).
 
-    Format: [MM-DD HH:MM:SS.mmm] LEVEL [module]  message
+    Format: HH:MM:SS.mmm LEVEL [module] message
     """
 
     def format(self, record: logging.LogRecord) -> str:
         ts = self._format_time(record)
         level = record.levelname
         module = self._get_module(record)
-        return f"{ts}  {level:>5}  [{module}]  {record.getMessage()}"
+        return f"{ts} {level:>5} [{module}] {record.getMessage()}"
 
 
 def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
@@ -292,7 +306,7 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
         data_dir=data_dir,
     )
     setup_error_notifier(feishu)
-    authenticator = Authenticator(allowed_users=config.auth.allowed_users)
+    authenticator = Authenticator(allowed_users=config.channels.feishu.allowed_users)
     validator = SecurityValidator(approved_directory=config.claude.approved_directory)
     claude = ClaudeIntegration(
         cli_path=config.claude.cli_path,
@@ -331,7 +345,7 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
     # Store raw message for memory enhancement
     session = None
     if message.user_open_id:
-        session = handler.sessions.get_active_session(message.user_open_id)
+        session = handler.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
         if session:
             handler.sessions.update_session(session.session_id, update_last_message=True)
             handler.sessions.store_message(
@@ -348,6 +362,12 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
         await handler.handle(message)
     except Exception as e:
         logger.exception(f"Error handling message: {e}")
+        # 直接发送飞书错误通知，不依赖 logging handler
+        err_msg = f"❌ 处理消息时出错：{e}"
+        try:
+            await handler._safe_send(message.chat_id, message.message_id, err_msg)
+        except Exception:
+            pass
 
 
 def write_pid(pid_file: str) -> None:
@@ -418,9 +438,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     config = init_config(config_path)
 
-    # Startup: ensure model config is migrated (幂等，重复调用无影响)
-    from supercc.claude.model_config import get_all_models
-    get_all_models()  # 触发 YAML→JSON 迁移（如果需要）
+    # Startup: initialize model env singleton with global ~/.supercc/model.json
+    # 直接用 Config 单例里的 approved_directory（就是项目根路径）
+    from supercc.claude.model_config import init_model_env
+    init_model_env(config.claude.approved_directory)
 
     # Startup: ensure Claude Code onboarding is complete (幂等，重复调用无影响)
     _ensure_codex_mcp(config)
@@ -566,7 +587,8 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
     # 3. Find the most recently active session's chat_id
     from supercc.claude.session_manager import SessionManager
     sm = SessionManager(db_path=db_path)
-    session = sm.get_active_session_by_chat_id()
+    project_path = config.claude.approved_directory
+    session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
     if not session or not session.chat_id:
         print("Error: no active chat session found. Make sure SuperCC has been used.")
         return
@@ -591,11 +613,10 @@ def run_send_command(file_paths: list[str], config_path: str) -> None:
         """Send a single file. Raises on error so gather() can collect it."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
-        size = os.path.getsize(file_path)
-        if size > MAX_FILE_SIZE:
-            raise ValueError(f"{file_path} exceeds 30MB limit")
-
         with open(file_path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            if size > MAX_FILE_SIZE:
+                raise ValueError(f"{file_path} exceeds 30MB limit")
             data = f.read()
 
         ext = os.path.splitext(file_path)[1].lower()
@@ -657,6 +678,7 @@ def _run_memory_command(args) -> None:
     # Try to send results to Feishu if we're in a SuperCC session
     feishu_client = None
     feishu_chat_id = None
+    config = None
     try:
         _, data_dir = resolve_config_path()
         config = get_config()
@@ -666,11 +688,17 @@ def _run_memory_command(args) -> None:
             app_id=config.channels.feishu.app_id,
             app_secret=config.channels.feishu.app_secret,
         )
-        sm = SessionManager(db_path=os.path.join(data_dir, "sessions.db"))
-        session = sm.get_active_session_by_chat_id()
+        sm = SessionManager(db_path=SESSIONS_DB_PATH)
+        project_path = config.claude.approved_directory
+        session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
         feishu_chat_id = session.chat_id if session and session.chat_id else None
-    except Exception:
-        pass  # Not in a SuperCC session, skip Feishu push
+    except Exception as e:
+        logger.debug(f"Feishu push skipped (not in SuperCC session): {e}")
+
+    def _get_user_open_id() -> str:
+        if config and config.channels.feishu.allowed_users:
+            return config.channels.feishu.allowed_users[0]
+        return "cli-owner"
 
     async def _send_feishu(text: str):
         if feishu_client and feishu_chat_id:
@@ -678,7 +706,15 @@ def _run_memory_command(args) -> None:
 
     def _print(text: str):
         print(text)
-        asyncio.run(_send_feishu(text))
+        # Avoid nested asyncio.run() in Python 3.10+ when already in an event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop:
+            loop.create_task(_send_feishu(text))
+        else:
+            asyncio.run(_send_feishu(text))
 
     def _parse_args(args_str: str) -> list[str]:
         """Split by pipe to get title/content/keywords or id/title/content/keywords."""
@@ -692,14 +728,16 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
-            p = mm.add_preference(title, content, keywords)
+            user_open_id = _get_user_open_id()
+            p = mm.add_preference(user_open_id, title, content, keywords)
             _print(f"✅ 用户偏好已保存 (id={p.id})")
 
         elif action == "del":
             if not raw_args.strip():
                 _print("用法: supercc memory user del <id>")
                 return
-            ok = mm.delete_preference(raw_args)
+            user_open_id = _get_user_open_id()
+            ok = mm.delete_preference(raw_args, user_open_id=user_open_id)
             if ok:
                 _print(f"🗑️ 用户偏好 {raw_args} 已删除。")
             else:
@@ -711,14 +749,16 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user update <id>|<title>|<content>|<keywords>")
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            ok = mm.update_preference(pref_id, title, content, keywords)
+            user_open_id = _get_user_open_id()
+            ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id)
             if ok:
                 _print(f"✅ 用户偏好 {pref_id} 已更新")
             else:
                 _print(f"未找到 id={pref_id} 的用户偏好")
 
         elif action == "list":
-            prefs = mm.get_all_preferences()
+            user_open_id = _get_user_open_id()
+            prefs = mm.get_preferences_by_user(user_open_id, platform="feishu")
             if not prefs:
                 _print("📭 暂无用户偏好记录")
                 return
@@ -733,7 +773,8 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory user search <关键词>")
                 return
-            results = mm.search_preferences(raw_args)
+            user_open_id = _get_user_open_id()
+            results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu")
             if not results:
                 _print(f"未找到与「{raw_args}」相关的用户偏好")
                 return
@@ -746,7 +787,7 @@ def _run_memory_command(args) -> None:
 
     # ── proj ────────────────────────────────────────────────────────────────
     elif scope == "proj":
-        project_path = args.project or ""
+        project_path = args.project or (config.claude.approved_directory if config else "")
 
         if action == "add":
             parts = _parse_args(raw_args)
@@ -754,14 +795,14 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory proj add <title>|<content>|<keywords>")
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
-            m = mm.add_project_memory(project_path, title, content, keywords)
+            m = mm.add_project_memory(project_path, title, content, keywords, platform="feishu", chat_id="")
             _print(f"✅ 项目记忆已保存 (id={m.id})")
 
         elif action == "del":
             if not raw_args.strip():
                 _print("用法: supercc memory proj del <id>")
                 return
-            ok = mm.delete_project_memory(raw_args)
+            ok = mm.delete_project_memory(raw_args, project_path, platform="feishu", chat_id="")
             if ok:
                 _print(f"🗑️ 项目记忆 {raw_args} 已删除。")
             else:
@@ -773,14 +814,14 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory proj update <id>|<title>|<content>|<keywords>")
                 return
             mem_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
-            ok = mm.update_project_memory(mem_id, title, content, keywords)
+            ok = mm.update_project_memory(mem_id, title, content, keywords, project_path, platform="feishu", chat_id="")
             if ok:
                 _print(f"✅ 项目记忆 {mem_id} 已更新")
             else:
                 _print(f"未找到 id={mem_id} 的项目记忆")
 
         elif action == "list":
-            mems = mm.get_project_memories(project_path)
+            mems = mm.get_project_memories(project_path, platform="feishu", chat_id="")
             if not mems:
                 _print("📭 暂无项目记忆记录")
                 return
@@ -795,7 +836,7 @@ def _run_memory_command(args) -> None:
             if not raw_args.strip():
                 _print("用法: supercc memory proj search <关键词>")
                 return
-            results = mm.search_project_memories(raw_args, project_path)
+            results = mm.search_project_memories(raw_args, project_path, platform="feishu", chat_id="")
             if not results:
                 _print(f"未找到与「{raw_args}」相关的项目记忆")
                 return
@@ -848,7 +889,7 @@ def _run_config_interactive() -> None:
             # 1. 选供应商
             provider_choices = [
                 questionary.Choice(
-                    f"{p.name}  ({p.base_url or '用户填入'})",
+                    f"{p.id}  ({p.base_url or '用户填入'})",
                     value=pid,
                 )
                 for pid, p in PROVIDERS.items()
@@ -928,7 +969,7 @@ def _run_config_interactive() -> None:
                 for m in provider.models
             ]
             selected_model = questionary.select(
-                f"请选择模型（{provider.name}）",
+                f"请选择模型（{provider.id}）",
                 choices=model_choices,
                 style=questionary.Style([
                     ("selected", "fg:#00AA00 bold"),
@@ -953,13 +994,13 @@ def _run_config_interactive() -> None:
 
             # 4. 保存
             model_id = provider_id
-            name = f"{provider.name} ({selected_model})"
+            name = f"{provider.id} ({selected_model})"
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=token,
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=selected_model,
             )
-            added = add_model(model_id, name, f"供应商: {provider.name}", env, provider_name=provider.name)
+            added = add_model(model_id, name, f"供应商: {provider.id}", env, provider_name=provider.id)
             if not added:
                 print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换：`supercc config switch {model_id}`")
                 continue
@@ -1069,7 +1110,7 @@ def _run_config_interactive() -> None:
                 models_preview = ", ".join(p.models[:3])
                 if len(p.models) > 3:
                     models_preview += f" ... (+{len(p.models) - 3})"
-                lines.append(f"  `{pid}` — {p.name}")
+                lines.append(f"  `{pid}`")
                 lines.append(f"    端点: {p.base_url or '(用户填入)'}")
                 lines.append(f"    认证: {auth}")
                 lines.append(f"    模型: {models_preview}")
@@ -1176,7 +1217,7 @@ def _run_config_command(args) -> None:
             pos_args = raw_args.split() if raw_args else []
             if len(pos_args) < 2:
                 print(f"用法: supercc config add --provider {provider_id} <api_key> <model> [model_id] [name]")
-                print(f"\n{provider.name} 可用模型:")
+                print(f"\n{provider.id} 可用模型:")
                 for m in provider.models:
                     print(f"  `{m}`")
                 return
@@ -1185,19 +1226,19 @@ def _run_config_command(args) -> None:
             token, model = pos_args[0], pos_args[1]
             # 默认用 md5(provider_id + model) 生成唯一 ID，可指定第3参数覆盖
             model_id = pos_args[2] if len(pos_args) > 2 else hashlib.md5(f"{provider_id}{model}".encode()).hexdigest()[:8]
-            name = pos_args[3] if len(pos_args) > 3 else provider.name
+            name = pos_args[3] if len(pos_args) > 3 else provider.id
 
             env = ModelEnv(
                 ANTHROPIC_AUTH_TOKEN=token,
                 ANTHROPIC_BASE_URL=provider.base_url,
                 ANTHROPIC_MODEL=model,
             )
-            ok = add_model(model_id, name, f"供应商: {provider.name}", env)
+            ok = add_model(model_id, name, f"供应商: {provider.id}", env)
             if not ok:
                 print(f"❌ 模型 ID `{model_id}` 已存在，请使用其他 ID")
                 return
             print(f"✅ 模型 **{name}** (`{model_id}`) 已添加")
-            print(f"   供应商: {provider.name}")
+            print(f"   供应商: {provider.id}")
             print(f"   模型: `{model}`")
             print(f"   端点: `{provider.base_url}`")
             print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
@@ -1209,7 +1250,7 @@ def _run_config_command(args) -> None:
             print("\n可用供应商:")
             from supercc.claude.model_providers import PROVIDERS
             for pid, p in PROVIDERS.items():
-                print(f"  `{pid}` — {p.name}")
+                print(f"  `{pid}`")
             return
 
         parts = _parse_args(raw_args)
@@ -1271,7 +1312,7 @@ def _run_config_command(args) -> None:
             models_preview = ", ".join(p.models[:4])
             if len(p.models) > 4:
                 models_preview += f" ... (+{len(p.models) - 4})"
-            print(f"  `{pid}` — {p.name}")
+            print(f"  `{pid}`")
             print(f"    端点: {p.base_url or '(用户填入)'}")
             print(f"    认证: {auth}")
             print(f"    模型: {models_preview}")
@@ -1522,7 +1563,8 @@ def main(args=None):
                 app_secret=config.channels.feishu.app_secret,
             )
             sm = SessionManager(db_path=db_path)
-            session = sm.get_active_session_by_chat_id()
+            project_path = config.claude.approved_directory
+            session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
             chat_id = session.chat_id if session and session.chat_id else None
         except Exception:
             pass  # Feishu not available, proceed without notifications
@@ -1604,21 +1646,20 @@ def main(args=None):
 
     init_config(cfg_path)
 
-    # Risk warning must be acknowledged before starting (skip if already accepted in config)
     config = get_config()
+
+    # Risk warning must be acknowledged before starting (skip if already accepted in config)
     if config.bypass_accepted:
         logger.info("Bypass warning already accepted, skipping.")
     else:
         if not confirm_risk_warning(cfg_path):
             return
-
-    # Set up logging to file
     log_file = os.path.join(data_dir, "supercc.log")
     Path(data_dir).mkdir(exist_ok=True)
-    fh = logging.FileHandler(log_file)
+    fh = logging.FileHandler(log_file, mode="w")
     fh.setFormatter(PlainFormatter())
     logging.getLogger().addHandler(fh)
-    write_log_banner(log_file, _version)
+    write_log_banner(_version)
     logger.info("Starting SuperCC...")
     start_bridge(cfg_path, data_dir)
 
