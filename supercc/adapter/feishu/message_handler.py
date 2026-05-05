@@ -888,10 +888,16 @@ class SessionWorker:
             if new_sid and new_sid != old_sid:
                 logger.info(f"[_run_query] sdk_session_id: {old_sid!r} -> {new_sid!r}")
                 h.sessions.update_sdk_session_id(session.session_id, new_sid)
-                if old_sid:  # 旧值存在才通知（首次建无需通知）
+                if old_sid:
                     await h._safe_send(
                         message.chat_id, message.message_id,
                         f"🔄 已切换到新 Session\nSession ID: `{new_sid}`",
+                        log_reply=False,
+                    )
+                else:
+                    await h._safe_send(
+                        message.chat_id, message.message_id,
+                        f"✅ 新 Session 已建立\nSession ID: `{new_sid}`",
                         log_reply=False,
                     )
 
