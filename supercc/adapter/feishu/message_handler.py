@@ -1127,12 +1127,13 @@ class MessageHandler:
         if message.is_group_chat and message.content:
             if message.chat_id not in self._fetched_group_chats:
                 self._fetched_group_chats.add(message.chat_id)
-                # Fetch last 20 messages from Feishu (ascending = chronological)
+                # Fetch last 20 messages from Feishu (descending = newest first, reversed for chronological)
                 raw_messages = await self.feishu.get_chat_history(
-                    message.chat_id, limit=20, sort_type="ByCreateTimeAsc"
+                    message.chat_id, limit=20, sort_type="ByCreateTimeDesc"
                 )
                 hist = self._group_history.setdefault(message.chat_id, [])
-                for msg in raw_messages:
+                # Reverse to chronological order (oldest first) for context injection
+                for msg in reversed(raw_messages):
                     sender = msg.sender
                     if sender is None:
                         user_id = ""
@@ -1143,9 +1144,12 @@ class MessageHandler:
                         # lark-oapi Sender object — has sender_id (UserID object) and sender_type
                         sid = getattr(sender, "sender_id", None)
                         user_id = getattr(sid, "open_id", "") if sid is not None else ""
+                    # Get display name and timestamp
+                    user_name = await self.feishu.get_user_name(user_id)
+                    create_time = getattr(msg, "create_time", "") or ""
                     msg_content = self.feishu._extract_content(msg)
                     if msg_content:
-                        hist.append(f"{user_id}: {msg_content}")
+                        hist.append(f"[{create_time}] {user_name}: {msg_content}")
                 if len(hist) > 20:
                     hist[:] = hist[-20:]
                 logger.debug(f"[GROUP_HISTORY][FETCH] chat_id={message.chat_id} fetched {len(raw_messages)} messages, hist_len={len(hist)}")

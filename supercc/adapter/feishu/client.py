@@ -170,6 +170,7 @@ class FeishuClient:
         self.bot_name = bot_name
         self.data_dir = data_dir
         self._client = None
+        self._user_name_cache: dict[str, str] = {}  # open_id -> display_name
 
     def _get_client(self):
         if self._client is None:
@@ -861,6 +862,34 @@ class FeishuClient:
             logger.warning(f"[CHAT_MEMBERS] bots error: {e}")
 
         return all_members
+
+    async def get_user_name(self, open_id: str) -> str:
+        """Fetch user display name by open_id. Results are cached.
+
+        Returns the user name, or open_id if the API call fails.
+        """
+        if not open_id or open_id in self._user_name_cache:
+            return self._user_name_cache.get(open_id, open_id)
+        import lark_oapi as lark
+        client = self._get_client()
+        try:
+            request = (
+                lark.contact.v3.User.builder()
+                .user_id(open_id)
+                .user_id_type("open_id")
+                .build()
+            )
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.contact.v3.user.get, request)
+            )
+            if resp.success() and resp.data and hasattr(resp.data, "user"):
+                name = getattr(resp.data.user, "name", None) or ""
+                self._user_name_cache[open_id] = name
+                return name
+        except Exception as e:
+            logger.debug(f"[USER_NAME] failed for {open_id}: {e}")
+        self._user_name_cache[open_id] = open_id
+        return open_id
 
     async def check_group_permissions(self, chat_id: str) -> dict:
         """Check if the bot has required group chat permissions.
