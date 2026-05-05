@@ -17,6 +17,7 @@ from supercc.claude.memory_tools import (
     memory_search_proj,
 )
 from supercc.claude.feishu_file_tools import feishu_send_file, get_chat_members
+from supercc.claude.wecom_file_tools import wecom_send_file
 from supercc.claude.cron_tools import (
     cron_create,
     cron_list,
@@ -33,7 +34,7 @@ from supercc.claude.model_tools import (
 )
 
 
-def get_supercc_mcp_server(include_feishu: bool = True):
+def get_supercc_mcp_server(include_feishu: bool = True, include_wecom: bool = False):
     tools = [
         memory_add_user,
         memory_delete_user,
@@ -58,6 +59,8 @@ def get_supercc_mcp_server(include_feishu: bool = True):
     ]
     if include_feishu:
         tools.extend([feishu_send_file, get_chat_members])
+    if include_wecom:
+        tools.append(wecom_send_file)
     return create_sdk_mcp_server(
         name="SuperCC",
         version="1.0.0",
