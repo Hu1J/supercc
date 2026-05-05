@@ -103,6 +103,12 @@ from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
 from supercc.claude.cron_tools import set_cron_scheduler
 
+# WeCom imports
+from supercc.adapter.wecom.client import WeComClient, WeComIncomingMessage
+from supercc.adapter.wecom.ws_client import WeComWSClient
+from supercc.adapter.wecom.message_handler import MessageHandler as WeComMessageHandler
+from supercc.adapter.wecom.format.reply_formatter import ReplyFormatter as WeComReplyFormatter
+
 logger = logging.getLogger(__name__)
 
 
@@ -338,6 +344,45 @@ def create_handler(config, data_dir: str, config_path: str | None = None) -> Mes
     return handler
 
 
+def create_wecom_handler(config, data_dir: str, config_path: str | None = None) -> WeComMessageHandler:
+    """Create WeCom MessageHandler with all dependencies wired up."""
+    wecom = WeComClient(
+        bot_id=config.channels.wecom.bot_id,
+        bot_secret=config.channels.wecom.bot_secret,
+        bot_name=config.channels.wecom.bot_name,
+        data_dir=data_dir,
+    )
+    authenticator = Authenticator(allowed_users=config.channels.wecom.allowed_users)
+    validator = SecurityValidator(approved_directory=config.claude.approved_directory)
+    claude = ClaudeIntegration(
+        cli_path=config.claude.cli_path,
+        max_turns=config.claude.max_turns,
+        approved_directory=config.claude.approved_directory,
+    )
+    db_path = SESSIONS_DB_PATH
+    session_manager = SessionManager(db_path=db_path)
+    formatter = WeComReplyFormatter()
+
+    from supercc.evolve.skill_nudge import make_nudge
+    skill_nudge = make_nudge(config.skill_nudge)
+
+    handler = WeComMessageHandler(
+        wecom_client=wecom,
+        authenticator=authenticator,
+        validator=validator,
+        claude=claude,
+        session_manager=session_manager,
+        formatter=formatter,
+        approved_directory=config.claude.approved_directory,
+        config=config,
+        data_dir=data_dir,
+        wecom_groups=config.channels.wecom.groups,
+        config_path=config_path,
+        skill_nudge=skill_nudge,
+    )
+    return handler
+
+
 async def handle_message(message: IncomingMessage, handler: MessageHandler) -> None:
     """Callback for incoming Feishu messages — dispatch to handler."""
     # Keep error notifier's chat_id fresh for error reporting
@@ -363,6 +408,34 @@ async def handle_message(message: IncomingMessage, handler: MessageHandler) -> N
     except Exception as e:
         logger.exception(f"Error handling message: {e}")
         # 直接发送飞书错误通知，不依赖 logging handler
+        err_msg = f"❌ 处理消息时出错：{e}"
+        try:
+            await handler._safe_send(message.chat_id, message.message_id, err_msg)
+        except Exception:
+            pass
+
+
+async def handle_wecom_message(message: WeComIncomingMessage, handler: WeComMessageHandler) -> None:
+    """Callback for incoming WeCom messages — dispatch to handler."""
+    session = None
+    if message.user_open_id:
+        session = handler.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="wecom")
+        if session:
+            handler.sessions.update_session(session.session_id, update_last_message=True)
+            handler.sessions.store_message(
+                message_id=message.message_id,
+                session_id=session.session_id,
+                chat_id=message.chat_id,
+                user_open_id=message.user_open_id,
+                message_type=message.message_type,
+                raw_content=message.raw_content,
+                content=message.content,
+                direction="incoming",
+            )
+    try:
+        await handler.handle(message)
+    except Exception as e:
+        logger.exception(f"Error handling WeCom message: {e}")
         err_msg = f"❌ 处理消息时出错：{e}"
         try:
             await handler._safe_send(message.chat_id, message.message_id, err_msg)
@@ -459,6 +532,19 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         config_path=config_path,
     )
 
+    # WeCom setup (if enabled)
+    wecom_ws_client = None
+    if config.channels.wecom.enabled:
+        wecom_handler = create_wecom_handler(config, data_dir, config_path=config_path)
+        wecom_ws_client = WeComWSClient(
+            bot_id=config.channels.wecom.bot_id,
+            bot_secret=config.channels.wecom.bot_secret,
+            bot_name=config.channels.wecom.bot_name,
+            on_message=lambda msg: handle_wecom_message(msg, wecom_handler),
+        )
+        # Bind client so handler can send messages via WS
+        wecom_handler.wecom_client.set_ws_client(wecom_ws_client)
+
     # Write PID file for process management
     pid_file = os.path.join(data_dir, "supercc.pid")
     write_pid(pid_file)
@@ -499,6 +585,8 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     # CLI 进程在第一条消息到达时才会建立连接（_ensure_connected 懒加载）。
     # SDK 通过 continue_conversation=True 自动维护 session，无需手动 fork。
     ws_client.start()
+    if wecom_ws_client:
+        wecom_ws_client.start()
 
 
 def list_bridges() -> None:

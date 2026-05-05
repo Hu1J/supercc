@@ -81,9 +81,28 @@ class DingTalkChannelConfig:
 
 
 @dataclass
+class WeComGroupConfigEntry:
+    """Per-group configuration for WeCom group chat access control."""
+    enabled: bool = True
+    require_mention: bool = True
+    allow_from: list[str] = field(default_factory=list)
+
+
+@dataclass
+class WeComChannelConfig:
+    enabled: bool = False
+    bot_id: str = ""
+    bot_secret: str = ""
+    bot_name: str = "Claude"
+    groups: dict = field(default_factory=dict)  # chat_id -> WeComGroupConfigEntry dict
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ChannelsConfig:
     feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
     dingtalk: DingTalkChannelConfig = field(default_factory=DingTalkChannelConfig)
+    wecom: WeComChannelConfig = field(default_factory=WeComChannelConfig)
 
 
 @dataclass
@@ -216,7 +235,20 @@ def load_config(path: str, data_dir: str = "") -> Config:
     dingtalk_raw["allowed_users"] = dingtalk_allowed_users
     dingtalk_cfg = DingTalkChannelConfig(**dingtalk_raw)
 
-    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
+    # Deserialize WeCom groups
+    _known_wecom_group_keys = {"enabled", "require_mention", "allow_from"}
+    raw_wecom_groups = raw.get("channels", {}).get("wecom", {}).get("groups", {})
+    wecom_groups = {
+        gid: WeComGroupConfigEntry(**{k: v for k, v in gentry.items() if k in _known_wecom_group_keys})
+        for gid, gentry in raw_wecom_groups.items()
+    }
+    wecom_raw = raw.get("channels", {}).get("wecom", {}).copy()
+    wecom_raw["groups"] = wecom_groups
+    wecom_allowed_users = wecom_raw.get("allowed_users", [])
+    wecom_raw["allowed_users"] = wecom_allowed_users
+    wecom_cfg = WeComChannelConfig(**wecom_raw)
+
+    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg, wecom=wecom_cfg)
 
     # Deserialize codex.capture if present
     codex_raw = raw.get("codex") or {}
@@ -300,6 +332,14 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
             "allow_from": entry.allow_from,
         }
 
+    wecom_groups_raw = {}
+    for gid, entry in cfg.channels.wecom.groups.items():
+        wecom_groups_raw[gid] = {
+            "enabled": entry.enabled,
+            "require_mention": entry.require_mention,
+            "allow_from": entry.allow_from,
+        }
+
     raw = {
         "channels": {
             "feishu": {
@@ -317,6 +357,14 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "app_key": cfg.channels.dingtalk.app_key,
                 "app_secret": cfg.channels.dingtalk.app_secret,
                 "allowed_users": cfg.channels.dingtalk.allowed_users,
+            },
+            "wecom": {
+                "enabled": cfg.channels.wecom.enabled,
+                "bot_id": cfg.channels.wecom.bot_id,
+                "bot_secret": cfg.channels.wecom.bot_secret,
+                "bot_name": cfg.channels.wecom.bot_name,
+                "groups": wecom_groups_raw,
+                "allowed_users": cfg.channels.wecom.allowed_users,
             },
         },
         "claude": {

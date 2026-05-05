@@ -30,6 +30,83 @@ class BeginResult:
     user_code: Optional[str] = None
 
 
+@dataclass
+class WeComRegistrationResult:
+    bot_id: str
+    bot_secret: str
+
+
+class WeComInstallAPI:
+    """WeCom AIBot QR-code registration API.
+
+    Endpoints:
+      - generate    : GET /ai/qc/generate
+      - query_result: GET /ai/qc/query_result
+    """
+
+    BASE_URL = "https://work.weixin.qq.com"
+
+    def __init__(self):
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        return self._client
+
+    async def close(self):
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def generate(self) -> dict:
+        """Generate QR code for bot creation.
+
+        Returns dict with at least { scode, auth_url }.
+        """
+        client = await self._get_client()
+        resp = await client.get(
+            f"{self.BASE_URL}/ai/qc/generate",
+            params={"source": "wecom-cli", "plat": "3"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def query_result(self, scode: str) -> dict:
+        """Poll for QR scan result.
+
+        Returns dict with { status, bot_info?: { botid, secret } }.
+        """
+        client = await self._get_client()
+        resp = await client.get(
+            f"{self.BASE_URL}/ai/qc/query_result",
+            params={"scode": scode},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def poll(self, scode: str, timeout: int = 600) -> WeComRegistrationResult:
+        """Poll until user completes QR scan and bot is created."""
+        start = time.monotonic()
+        interval = 3
+        while time.monotonic() - start < timeout:
+            data = await self.query_result(scode)
+            status = data.get("status", "")
+            if status == "success":
+                bot_info = data.get("bot_info") or {}
+                bot_id = bot_info.get("botid") or bot_info.get("bot_id", "")
+                bot_secret = bot_info.get("secret") or bot_info.get("bot_secret", "")
+                if bot_id and bot_secret:
+                    return WeComRegistrationResult(bot_id=bot_id, bot_secret=bot_secret)
+                raise RuntimeError("扫码成功但未返回 bot 凭证")
+            if status in ("expired", "timeout"):
+                raise RuntimeError("二维码已过期，请重新扫码")
+            if status == "cancelled":
+                raise RuntimeError("用户取消了扫码")
+            await asyncio.sleep(interval)
+        raise RuntimeError("扫码超时，请重新运行安装命令")
+
+
 class FeishuInstallAPI:
     """
     Feishu App Registration API using OAuth Device Flow.
