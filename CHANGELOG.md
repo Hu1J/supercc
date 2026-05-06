@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.1] - 2026-05-06
+
+### Added
+
+- **启动时自动配置模型**：`start_bridge` 检查当前项目是否有有效模型配置，没有则自动选择已有 API Key 的供应商
+- **新增 `has_project_model_config()` 和 `ensure_project_model_config()`**：模型配置检查函数
+
+### Changed
+
+- **onboard 供应商列表 UI 优化**：已配置供应商显示"（已配置）"标记排在前面，默认选中；选中后跳过 API Key 输入直接选模型
+
+### Fixed
+
+- **/switch 切换后 /status 显示旧项目路径**：session.project_path 与 config.approved_directory 不同步
+- **switcher 切换前预检查**：目标项目无有效模型配置时提前报错，避免 daemon 进程挂起
+
 ## [0.2.0] - 2026-05-05
 
 ### Added
