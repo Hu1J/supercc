@@ -218,29 +218,55 @@ class SessionManager:
         cost: float = 0,
         message_increment: int = 0,
         update_last_message: bool = False,
+        project_path: str | None = None,
     ):
         """Update session stats after a conversation turn."""
         with sqlite3.connect(self.db_path) as conn:
             if update_last_message:
-                conn.execute(
-                    """UPDATE sessions
-                       SET last_used = ?,
-                           total_cost = total_cost + ?,
-                           message_count = message_count + ?,
-                           last_message_at = ?
-                       WHERE session_id = ?""",
-                    (datetime.utcnow().isoformat(), cost, message_increment,
-                     datetime.utcnow().isoformat(), session_id),
-                )
+                if project_path is not None:
+                    conn.execute(
+                        """UPDATE sessions
+                           SET last_used = ?,
+                               total_cost = total_cost + ?,
+                               message_count = message_count + ?,
+                               last_message_at = ?,
+                               project_path = ?
+                           WHERE session_id = ?""",
+                        (datetime.utcnow().isoformat(), cost, message_increment,
+                         datetime.utcnow().isoformat(), project_path, session_id),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE sessions
+                           SET last_used = ?,
+                               total_cost = total_cost + ?,
+                               message_count = message_count + ?,
+                               last_message_at = ?
+                           WHERE session_id = ?""",
+                        (datetime.utcnow().isoformat(), cost, message_increment,
+                         datetime.utcnow().isoformat(), session_id),
+                    )
             else:
-                conn.execute(
-                    """UPDATE sessions
-                       SET last_used = ?,
-                           total_cost = total_cost + ?,
-                           message_count = message_count + ?
-                       WHERE session_id = ?""",
-                    (datetime.utcnow().isoformat(), cost, message_increment, session_id),
-                )
+                if project_path is not None:
+                    conn.execute(
+                        """UPDATE sessions
+                           SET last_used = ?,
+                               total_cost = total_cost + ?,
+                               message_count = message_count + ?,
+                               project_path = ?
+                           WHERE session_id = ?""",
+                        (datetime.utcnow().isoformat(), cost, message_increment,
+                         project_path, session_id),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE sessions
+                           SET last_used = ?,
+                               total_cost = total_cost + ?,
+                               message_count = message_count + ?
+                           WHERE session_id = ?""",
+                        (datetime.utcnow().isoformat(), cost, message_increment, session_id),
+                    )
 
     def update_sdk_session_id(self, session_id: str, sdk_session_id: str) -> None:
         """Store the SDK's session ID for future continue_session calls."""

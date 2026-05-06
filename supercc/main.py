@@ -440,8 +440,11 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     # Startup: initialize model env singleton with global ~/.supercc/model.json
     # 直接用 Config 单例里的 approved_directory（就是项目根路径）
-    from supercc.claude.model_config import init_model_env
+    from supercc.claude.model_config import init_model_env, ensure_project_model_config
     init_model_env(config.claude.approved_directory)
+
+    # Startup: 如果当前项目没有有效的模型配置，强制配置
+    ensure_project_model_config(config.claude.approved_directory)
 
     # Startup: ensure Claude Code onboarding is complete (幂等，重复调用无影响)
     _ensure_codex_mcp(config)

@@ -452,3 +452,58 @@ def is_configured() -> bool:
         if pcfg.api_key:
             return True
     return False
+
+
+def has_project_model_config(project_path: str) -> bool:
+    """检查指定项目是否有有效的模型配置。
+
+    有效意味着：projects 中有该项目的 entry，且 provider 有 api_key，且 model_id 非空。
+    """
+    pid, mid = get_active_model_for_project(project_path)
+    if not pid or not mid:
+        return False
+    providers = get_all_providers()
+    pcfg = providers.get(pid)
+    if not pcfg or not pcfg.api_key:
+        return False
+    return True
+
+
+def ensure_project_model_config(project_path: str) -> bool:
+    """自动为项目设置模型配置：如果当前项目没有有效模型配置，自动选一个有 API Key 的供应商。
+
+    Returns True if configuration was set, False if no provider had API key.
+    """
+    if has_project_model_config(project_path):
+        return True
+
+    # 找一个已有 API Key 的供应商
+    providers = get_all_providers()
+    configured_provider = None
+    for pid, pcfg in providers.items():
+        if pid == "custom":
+            continue
+        if pcfg.api_key:
+            configured_provider = (pid, pcfg)
+            break
+
+    if not configured_provider:
+        print("\n⚠️  没有已配置 API Key 的模型供应商，请先使用 `supercc config` 配置模型\n")
+        return False
+
+    provider_id, pcfg = configured_provider
+    # 取该供应商的第一个模型
+    model_id = pcfg.models[0] if pcfg.models else ""
+
+    if not model_id:
+        print(f"\n⚠️  供应商 {provider_id} 没有可用模型\n")
+        return False
+
+    ok, err = set_project_model(project_path, provider_id, model_id)
+    if not ok:
+        print(f"\n⚠️  自动配置模型失败: {err}\n")
+        return False
+
+    init_model_env(project_path)
+    print(f"\n✅ 已为当前项目自动配置模型: {provider_id} @ {model_id}\n")
+    return True

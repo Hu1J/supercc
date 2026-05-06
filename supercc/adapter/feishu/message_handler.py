@@ -350,6 +350,11 @@ class SessionWorker:
                     platform="feishu",
                 )
 
+        # 更新 session 的 project_path：如果与当前 approved_directory 不同，说明是切换后的第一次消息，需要同步
+        if session and session.project_path != h.approved_directory:
+            h.sessions.update_session(session.session_id, project_path=h.approved_directory)
+            session.project_path = h.approved_directory
+
         project_path = session.project_path if session else h.approved_directory
         h._current_project_path = project_path  # 供 stream_callback 使用
 
@@ -1281,13 +1286,14 @@ class MessageHandler:
                 model_provider = "未知"
                 model_id = "未知"
 
-            # 获取 Git 分支
+            # 获取 Git 分支（使用 approved_directory 而非 session.project_path，因为切换后 session 可能未更新）
+            current_project_path = self.approved_directory
             try:
                 import subprocess
                 branch = subprocess.check_output(
                     ["git", "branch", "--show-current"],
                     text=True,
-                    cwd=session.project_path,
+                    cwd=current_project_path,
                 ).strip()
                 if not branch:
                     branch = "(无分支)"
@@ -1317,7 +1323,7 @@ class MessageHandler:
                 except Exception:
                     return 0
 
-            project_skills = _count_skills(os.path.join(session.project_path, ".supercc", "skills"))
+            project_skills = _count_skills(os.path.join(current_project_path, ".supercc", "skills"))
             global_skills = _count_skills(os.path.expanduser("~/.claude/skills"))
 
             card = {
@@ -1338,7 +1344,7 @@ class MessageHandler:
                                 f"| 供应商 | {model_provider} |\n"
                                 f"| 模型ID | `{model_id}` |\n"
                                 f"| Git分支 | `{branch}` |\n"
-                                f"| 工作目录 | `{session.project_path}` |\n"
+                                f"| 工作目录 | `{current_project_path}` |\n"
                                 f"| 项目技能数 | {project_skills} |\n"
                                 f"| 全局技能数 | {global_skills} |"
                             ),

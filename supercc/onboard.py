@@ -14,6 +14,7 @@ from supercc.claude.model_config import (
     set_project_model,
     validate_model_env,
     get_all_providers,
+    is_configured,
 )
 from supercc.claude.model_providers import PROVIDERS
 
@@ -143,24 +144,62 @@ def _do_model_config_step() -> None:
     except Exception:
         project_path = os.getcwd()
 
-    # Step 1: 选择供应商
-    provider_choices = [
-        questionary.Choice(
+    # 获取所有供应商及其配置状态
+    all_providers = get_all_providers()
+
+    # 分类：已配置的放前面，未配置的放后面
+    configured = []
+    unconfigured = []
+    for pid, p in PROVIDERS.items():
+        if pid == "custom":
+            continue
+        pdata = all_providers.get(pid)
+        has_key = pdata and pdata.api_key
+        if has_key:
+            configured.append((pid, p))
+        else:
+            unconfigured.append((pid, p))
+
+    # 构建选项：已配置的显示 "(已配置)"，未配置的不显示
+    provider_choices = []
+    default_index = 0
+
+    for i, (pid, p) in enumerate(configured):
+        provider_choices.append(questionary.Choice(
+            f"{p.id}  ({p.base_url or '用户填入'})  \033[90m（已配置）\033[0m",
+            value=pid,
+        ))
+
+    for pid, p in unconfigured:
+        provider_choices.append(questionary.Choice(
             f"{p.id}  ({p.base_url or '用户填入'})",
             value=pid,
-        )
-        for pid, p in PROVIDERS.items()
-    ]
+        ))
+
+    # 自定义供应商单独一列
+    provider_choices.append(questionary.Choice("─" * 40, value="__separator__", disabled=True))
+    provider_choices.append(questionary.Choice(
+        "✨ 自定义  (用户填入)",
+        value="custom",
+    ))
+
+    if configured:
+        provider_choices.append(questionary.Choice("─" * 40, value="__sep2__", disabled=True))
     provider_choices.append(questionary.Choice("⏭  跳过（稍后手动配置）", value="__skip__"))
 
+    # 已配置的数量，作为默认选择
+    default_index = 0 if configured else len(configured)
+
     provider_id = questionary.select(
-        "请选择模型供应商",
+        "请选择模型供应商（已配置的供应商会自动跳过 API Key 输入）",
         choices=provider_choices,
         style=questionary.Style([
             ("selected", "fg:#00AA00 bold"),
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
+            ("separator", "fg:#555555"),
         ]),
+        default=default_index,
     ).ask()
 
     if not provider_id or provider_id == "__skip__":
@@ -254,16 +293,23 @@ def _do_model_config_step() -> None:
     # ── 预置供应商模式 ───────────────────────────────────────────────────────
 
     auth_display = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}.get(provider.auth_type, provider.auth_type)
+    pdata = all_providers.get(provider_id)
+    has_existing_key = pdata and pdata.api_key
 
-    # Step 2: 输入 API Key
-    token = questionary.password(
-        f"API Key（{auth_display}）",
-        style=questionary.Style([("password", "fg:#CCCCCC")]),
-    ).ask()
+    # 如果该供应商已有 API Key，跳过输入步骤
+    if has_existing_key:
+        print(f"\n\033[90m检测到 {provider_id} 已配置 API Key，直接选择模型\033[0m\n")
+        token = pdata.api_key
+    else:
+        # Step 2: 输入 API Key
+        token = questionary.password(
+            f"API Key（{auth_display}）",
+            style=questionary.Style([("password", "fg:#CCCCCC")]),
+        ).ask()
 
-    if not token:
-        print("\n⚠️  未提供 API Key，跳过模型配置\n")
-        return
+        if not token:
+            print("\n⚠️  未提供 API Key，跳过模型配置\n")
+            return
 
     # Step 3: 选择模型
     model_choices = [
@@ -313,7 +359,10 @@ def _do_model_config_step() -> None:
         env.ANTHROPIC_AUTH_TOKEN = token
 
     # 保存配置：更新供应商 API Key + 设置项目激活映射
-    update_provider_api_key(provider_id, token)
+    ok, err = update_provider_api_key(provider_id, token)
+    if not ok:
+        print(f"\n❌ API Key 验证失败: {err}\n")
+        return
     set_project_model(project_path, provider_id, selected_model)
     init_model_env(project_path)  # 刷新全局单例
 

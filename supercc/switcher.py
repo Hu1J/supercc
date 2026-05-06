@@ -225,6 +225,14 @@ def switch_to(target_path: str):
     except Exception as e:
         raise SwitchError(f"无法拷贝配置文件到目标: {e}")
 
+    # Step 2.5: 检查目标项目是否有有效的模型配置
+    from supercc.claude.model_config import has_project_model_config
+    if not has_project_model_config(target_path):
+        raise SwitchError(
+            f"目标项目 {target_path} 没有配置有效的模型。\n"
+            "请先在目标项目目录下运行 `supercc start` 完成模型配置后再切换。"
+        )
+
     # Step 3: Start target SuperCC
     yield SwitchStep(step=3, total=5, label=_CLI_STEP_LABELS[2], status="done")
     target_pid: Optional[int] = None
