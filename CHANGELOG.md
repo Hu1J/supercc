@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.2] - 2026-05-06
+
+### Fixed
+
+- **onboard questionary.select default 报错**：移除错误的索引 default 参数，修复全新环境初始化时的 ValueError
+- **日志模块名乱码**：移除 ANSI 颜色码和子文件名后缀，日志模块名只显示第一级（如 `[feishu]`）
+
 ## [0.2.1] - 2026-05-06
 
 ### Added

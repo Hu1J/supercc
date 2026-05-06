@@ -166,7 +166,7 @@ def _do_model_config_step() -> None:
 
     for i, (pid, p) in enumerate(configured):
         provider_choices.append(questionary.Choice(
-            f"{p.id}  ({p.base_url or '用户填入'})  \033[90m（已配置）\033[0m",
+            f"{p.id}  ({p.base_url or '用户填入'})  （已配置）",
             value=pid,
         ))
 
@@ -187,9 +187,6 @@ def _do_model_config_step() -> None:
         provider_choices.append(questionary.Choice("─" * 40, value="__sep2__", disabled=True))
     provider_choices.append(questionary.Choice("⏭  跳过（稍后手动配置）", value="__skip__"))
 
-    # 已配置的数量，作为默认选择
-    default_index = 0 if configured else len(configured)
-
     provider_id = questionary.select(
         "请选择模型供应商（已配置的供应商会自动跳过 API Key 输入）",
         choices=provider_choices,
@@ -199,7 +196,6 @@ def _do_model_config_step() -> None:
             ("pointer", "fg:#00AA00 bold"),
             ("separator", "fg:#555555"),
         ]),
-        default=default_index,
     ).ask()
 
     if not provider_id or provider_id == "__skip__":

@@ -228,7 +228,7 @@ class _BaseLogFormatter(logging.Formatter):
     def _get_module(self, record: logging.LogRecord) -> str:
         """Derive short module name from logger name.
 
-        'supercc.adapter.feishu.message_handler' -> 'feishu.mh'
+        'supercc.adapter.feishu.message_handler' -> 'feishu'
         'supercc.claude.integration' -> 'claude'
         'supercc' -> 'root'
         """
@@ -236,8 +236,9 @@ class _BaseLogFormatter(logging.Formatter):
         if name == "root" or not name:
             return "root"
         parts = name.split(".")
+        # Skip 'supercc' prefix, return first sub-module name
         if len(parts) >= 2:
-            return f"{parts[-2]}.{parts[-1][0]}"
+            return parts[-2]
         return parts[-1]
 
 
