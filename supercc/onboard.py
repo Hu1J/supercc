@@ -261,12 +261,11 @@ def _do_model_config_step() -> None:
                 return
             env.ANTHROPIC_AUTH_TOKEN = token
 
-        # custom 模型存到 providers["custom"]（特殊处理）
+        # custom 模型存到 providers[provider_name]（直接用用户给的名称作为 key）
         from supercc.claude.model_config import _load_json, _save_json
         raw = _load_json()
         providers_raw = raw.get("providers", {})
-        # custom 用 base_url 作为 key
-        custom_key = f"custom_{hashlib.md5(base_url.encode()).hexdigest()[:8]}"
+        custom_key = provider_name
         providers_raw[custom_key] = {
             "api_key": token,
             "models": [selected_model],
