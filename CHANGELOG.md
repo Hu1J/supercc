@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.5] - 2026-05-07
+
+### Added
+
+- **AddCustomProvider MCP 工具**：专门用于新增自定义模型供应商，支持 provider/api_key/base_url/models 参数
+
+### Fixed
+
+- **自定义供应商 base_url 无法生效**：`_resolve_active_env()` 现在正确从 model.json 读取自定义供应商的 base_url
+- **SetModel 支持自定义供应商**：移除硬编码检查，SetModel 和 ListModels 均支持展示和切换自定义供应商
+- **自定义供应商 key 用用户名称**：onboard 添加自定义供应商时直接用用户输入的名称，而非 hash
+- **供应商名称校验**：只允许大小写英文+数字，防止注入
+- **AddCustomProvider 未注册**：补充导入并注册到 MCP server
+
+### Changed
+
+- **职责分离**：SetModel 只负责切换/更新已有供应商，AddCustomProvider 专门负责新增自定义供应商
+
 ## [0.2.4] - 2026-05-07
 
 ### Fixed
