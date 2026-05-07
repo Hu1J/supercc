@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.6] - 2026-05-08
+
+### Added
+
+- **FeishuChatHistory MCP 工具**：新增飞书群聊历史消息检索工具，支持按时间范围和关键词检索
+
+### Fixed
+
+- **/model 命令显示自定义供应商**：`/model` 飞书命令现在能正确显示自定义供应商及其 base_url
+- **/model switch 支持自定义供应商**：修复 `PROVIDERS.get()` 对自定义供应商返回 None 导致报"未知 provider"的问题
+- **/model switch 自定义供应商模型 ID 校验**：对自定义供应商也进行模型 ID 白名单校验
+- **_handle_model tuple 元素统一**：修复内置和自定义 provider tuple 长度不一致导致的 unpacking 失败
+- **_handle_model 传 approved_directory**：`set_project_model` 调用从 `self.data_dir` 改为 `self.approved_directory`
+- **save_config 保留 skill_nudge**：`save_config` 现在会保留用户配置的 skill_nudge，避免覆盖丢失
+
 ## [0.2.5] - 2026-05-07
 
 ### Added
