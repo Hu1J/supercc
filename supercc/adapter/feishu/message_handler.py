@@ -1982,7 +1982,7 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
-                ok, err = set_project_model(self.data_dir, target_pid, target_model)
+                ok, err = set_project_model(self.approved_directory, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
                         message.chat_id, message.message_id,

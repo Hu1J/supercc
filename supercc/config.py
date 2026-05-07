@@ -255,12 +255,14 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
     """Save a complete config to a JSON file（legacy param-based signature）。"""
-    # 如果文件已存在，保留 codex 配置
+    # 如果文件已存在，保留 codex 和 skill_nudge 配置
     existing_codex = None
+    existing_skill_nudge = None
     if Path(path).exists():
         try:
             existing_cfg = load_config(path)
             existing_codex = existing_cfg.codex
+            existing_skill_nudge = existing_cfg.skill_nudge
         except Exception:
             pass
 
@@ -284,6 +286,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
             approved_directory=claude_approved_directory,
         ),
         codex=existing_codex if existing_codex is not None else CodexMcpConfig(),
+        skill_nudge=existing_skill_nudge if existing_skill_nudge is not None else SkillNudgeConfig(),
         bypass_accepted=bypass_accepted,
     )
     _write_config_to_path(path, cfg)
