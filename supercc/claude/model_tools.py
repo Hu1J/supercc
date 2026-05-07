@@ -119,17 +119,18 @@ async def list_models(args: dict) -> dict:
     """设置/切换模型配置（仅限机器人所有者操作）。
 入参为 JSON 格式：
 {
-  "provider": "volcano",      // 必填，供应商 ID
-  "model": "kimi-k2.6",     // 选填，模型 ID（必须在该 provider 的可用模型列表中）
-  "api_key": "sk-xxx"        // 选填，如需更新 API Key 则传入
+  "provider": "volcano",      // 必填，供应商 ID（内置或自定义均可）
+  "model": "kimi-k2.6",     // 选填，模型 ID（内置供应商会校验，自定义供应商跳过校验）
+  "api_key": "sk-xxx",       // 选填，如需更新 API Key 则传入
+  "base_url": "https://..."   // 选填，自定义供应商需要填写
 }
-说明：provider 必填；model 选填（填了则校验是否在可用列表中）；api_key 选填。
-支持两种场景：
-1. 完整切换：provider + model + api_key（新增供应商配置）
-2. 切换模型：provider + model（只更新当前项目的激活模型）
-3. 更新 API Key：provider + api_key（只更新供应商的 API Key）
+说明：provider 必填；model 选填；api_key 选填；base_url 仅自定义供应商需要。
+支持场景：
+1. 完整切换（新增自定义）：provider + model + api_key + base_url
+2. 切换模型：provider + model
+3. 更新 API Key：provider + api_key
 ```json
-{"provider": "volcano", "model": "kimi-k2.6", "api_key": "sk-xxx"}
+{"provider": "my-provider", "model": "my-model", "api_key": "sk-xxx", "base_url": "https://api.example.com/v1"}
 ```
 """,
     {"config": str},
@@ -158,6 +159,7 @@ async def set_model_tool(args: dict) -> dict:
     provider_id = cfg.get("provider", "").strip()
     model_id = cfg.get("model", "").strip()
     api_key = cfg.get("api_key", "").strip() if cfg.get("api_key") else None
+    base_url = cfg.get("base_url", "").strip() if cfg.get("base_url") else None
 
     if not provider_id:
         return {"content": [{"type": "text", "text": "provider 是必填的"}], "is_error": True}
@@ -175,10 +177,10 @@ async def set_model_tool(args: dict) -> dict:
     project_path = _get_project_path()
     changed = []
 
-    # 如果提供了 api_key，更新供应商配置（带验证）
+    # 如果提供了 api_key，更新或新增供应商配置（带验证）
     if api_key:
         from supercc.claude.model_config import update_provider_api_key
-        ok, err = update_provider_api_key(provider_id, api_key)
+        ok, err = update_provider_api_key(provider_id, api_key, base_url)
         if not ok:
             return {
                 "content": [{"type": "text", "text": f"❌ API Key 更新失败：{err}"}],
