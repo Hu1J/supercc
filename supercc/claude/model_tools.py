@@ -166,6 +166,12 @@ async def set_model_tool(args: dict) -> dict:
     provider = PROVIDERS.get(provider_id)
     is_builtin = provider is not None
 
+    # 自定义供应商名称验证：只允许大小写英文+数字
+    if not is_builtin:
+        import re
+        if not re.fullmatch(r'[a-zA-Z0-9]+', provider_id):
+            return {"content": [{"type": "text", "text": "供应商名称只支持大小写英文字母和数字，不能包含特殊字符"}], "is_error": True}
+
     project_path = _get_project_path()
     changed = []
 
