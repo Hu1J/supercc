@@ -1960,22 +1960,35 @@ class MessageHandler:
                     return HandlerResult(success=True)
 
                 provider = PROVIDERS.get(target_pid)
-                if not provider:
-                    available = " / ".join(f"`{p.id}`" for p in PROVIDERS.values() if p.id != "custom")
-                    await self._safe_send(
-                        message.chat_id, message.message_id,
-                        f"❌ 未知 provider `{target_pid}`。\n可用：\n{available}",
-                    )
-                    return HandlerResult(success=True)
+                is_custom = provider is None
+                if is_custom:
+                    # 自定义供应商：检查是否存在于 model.json
+                    from supercc.claude.model_config import _load_json
+                    raw = _load_json()
+                    if target_pid not in raw.get("providers", {}):
+                        available = " / ".join(f"`{p.id}`" for p in PROVIDERS.values() if p.id != "custom")
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            f"❌ 未知 provider `{target_pid}`。\n可用：\n{available}",
+                        )
+                        return HandlerResult(success=True)
 
                 if not target_model:
-                    await self._safe_send(
-                        message.chat_id, message.message_id,
-                        f"❌ 请指定模型 ID。\n可用模型：\n{' / '.join(f'`{m}`' for m in provider.models)}",
-                    )
+                    if is_custom:
+                        pdata = raw.get("providers", {}).get(target_pid, {})
+                        models = pdata.get("models", [])
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            f"❌ 请指定模型 ID。\n可用模型：\n{' / '.join(f'`{m}`' for m in models)}",
+                        )
+                    else:
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            f"❌ 请指定模型 ID。\n可用模型：\n{' / '.join(f'`{m}`' for m in provider.models)}",
+                        )
                     return HandlerResult(success=True)
 
-                if target_model not in provider.models:
+                if not is_custom and target_model not in provider.models:
                     await self._safe_send(
                         message.chat_id, message.message_id,
                         f"❌ 模型 ID `{target_model}` 不在供应商 `{provider.id}` 的可用模型列表中。\n可用模型：\n{' / '.join(f'`{m}`' for m in provider.models)}",
@@ -1992,7 +2005,7 @@ class MessageHandler:
 
                 await self._safe_send(
                     message.chat_id, message.message_id,
-                    f"✅ 已切换为 `{provider.id}`（模型：`{target_model}`）",
+                    f"✅ 已切换为 `{provider.id if provider else target_pid}`（模型：`{target_model}`）",
                 )
                 return HandlerResult(success=True)
 
