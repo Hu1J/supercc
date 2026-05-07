@@ -1166,6 +1166,17 @@ class MessageHandler:
                     hist[:] = hist[-20:]
                 logger.debug(f"[GROUP_HISTORY][FETCH] chat_id={message.chat_id} fetched {len(raw_messages)} messages, hist_len={len(hist)}")
 
+            # Group file messages: download file before recording to history
+            # This ensures history contains local paths instead of raw JSON
+            if message.is_group_chat and message.message_type == "file":
+                try:
+                    local_path = await self._preprocess_media(message)
+                    if local_path:
+                        message.content = local_path
+                        logger.info(f"[GROUP_HISTORY][FILE_DOWNLOAD] message_id={message.message_id} local_path={local_path}")
+                except Exception as e:
+                    logger.warning(f"[GROUP_HISTORY][FILE_DOWNLOAD] failed for message_id={message.message_id}: {e}")
+
             hist = self._group_history.setdefault(message.chat_id, [])
             hist.append(f"{message.user_open_id}: {message.content}")
             if len(hist) > 20:
