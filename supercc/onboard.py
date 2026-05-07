@@ -238,6 +238,12 @@ def _do_model_config_step() -> None:
         ).ask()
         provider_name = provider_name_raw.strip() or "custom"
 
+        # 验证 provider_name 只允许大小写英文+数字，防止注入
+        import re
+        if not re.fullmatch(r'[a-zA-Z0-9]+', provider_name):
+            print("\n❌ 供应商名称只支持大小写英文字母和数字，不能包含特殊字符\n")
+            return
+
         import hashlib
         model_id = f"custom-{hashlib.md5(selected_model.encode()).hexdigest()[:8]}"
         env = ModelEnv(
