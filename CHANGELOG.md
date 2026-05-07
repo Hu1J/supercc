@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.4] - 2026-05-07
+
+### Fixed
+
+- **model.json provider 同步 base_url**：启动时自动将预置供应商的 base_url 同步到 `~/.supercc/model.json`，避免配置缺失导致 API 调用失败
+
 ## [0.2.3] - 2026-05-07
 
 ### Added

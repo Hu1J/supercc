@@ -168,7 +168,7 @@ def _load_json() -> dict:
         logger.info("迁移完成")
         return raw
 
-    # 同步预置供应商的 models 列表（保留已有 api_key，projects 不变）
+    # 同步预置供应商的 models 列表和 base_url（保留已有 api_key，projects 不变）
     changed = False
     for pid, provider in PROVIDERS.items():
         if pid == "custom":
@@ -176,6 +176,10 @@ def _load_json() -> dict:
         if pid in raw.get("providers", {}):
             if raw["providers"][pid]["models"] != provider.models:
                 raw["providers"][pid]["models"] = provider.models.copy()
+                changed = True
+            # 同步 base_url（如果缺失或为空）
+            if not raw["providers"][pid].get("base_url"):
+                raw["providers"][pid]["base_url"] = provider.base_url
                 changed = True
 
     # 如果有同步变更，保存回去
@@ -210,11 +214,15 @@ def _sync_providers_from_presets() -> dict[str, ProviderConfig]:
 def _create_default_config() -> None:
     """创建默认配置：从预置同步所有供应商，projects 初始化为空。"""
     _ensure_model_dir()
-    # 将 ProviderConfig 对象转换为 dict 以便 JSON 序列化
-    presets = _sync_providers_from_presets()
     providers_raw = {}
-    for pid, pcfg in presets.items():
-        providers_raw[pid] = {"api_key": pcfg.api_key, "models": pcfg.models}
+    for pid, provider in PROVIDERS.items():
+        if pid == "custom":
+            continue
+        providers_raw[pid] = {
+            "api_key": "",
+            "base_url": provider.base_url,
+            "models": provider.models.copy(),
+        }
     raw = {
         "providers": providers_raw,
         "projects": {},
