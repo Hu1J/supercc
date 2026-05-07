@@ -9,6 +9,8 @@
 ╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝
 ```
 
+![SuperCC Banner](supercc_poster_final.png)
+
 **超级 Claude Code** — 多平台 AI 工作搭档，让 Claude Code 在飞书、钉钉等 IM 平台中无缝运行。
 
 > 自进化超级 AI · 越用越懂你

@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.3] - 2026-05-07
+
+### Added
+
+- **群聊文件历史消息下载**：群聊中发送文件时，AI 现在可以访问文件内容。文件会被下载到本地，并在历史记录中存储本地路径而非原始 JSON
+- **README 海报图片**：更新 README.md 顶部海报图片
+
+### Fixed
+
+- **避免群聊文件消息重复下载**：修复群聊文件消息在 handle 和 worker 中被下载两次的问题
+
 ## [0.2.2] - 2026-05-06
 
 ### Fixed
