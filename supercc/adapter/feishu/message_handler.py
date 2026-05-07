@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
+from supercc.adapter.feishu.media import make_file_path, save_bytes
 from supercc.security.auth import Authenticator
 from supercc.security.validator import SecurityValidator
 from supercc.claude.integration import ClaudeIntegration
@@ -1165,7 +1166,31 @@ class MessageHandler:
                     # Get display name and timestamp
                     user_name = await self.feishu.get_user_name(user_id)
                     create_time = getattr(msg, "create_time", "") or ""
+
+                    # Check if this is a file message that needs downloading
+                    msg_type = getattr(msg, "msg_type", "") or ""
+                    msg_id = getattr(msg, "message_id", "") or ""
                     msg_content = self.feishu._extract_content(msg)
+
+                    # For file messages in history, download and store local path
+                    if msg_type == "file" and msg_id:
+                        try:
+                            import json
+                            # Parse content to get file_key
+                            content_dict = json.loads(msg.content) if isinstance(msg.content, str) else {}
+                            file_key = content_dict.get("file_key", "")
+                            orig_name = content_dict.get("file_name", "file")
+                            file_type = content_dict.get("file_type", "bin")
+                            if file_key:
+                                data_dir = self.data_dir or os.getcwd()
+                                save_path = make_file_path(data_dir, msg_id, orig_name, file_type)
+                                data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
+                                save_bytes(save_path, data)
+                                msg_content = f"[File: {save_path}] ({orig_name})"
+                                logger.info(f"[GROUP_HISTORY][FILE] downloaded {msg_id} -> {save_path}")
+                        except Exception as e:
+                            logger.warning(f"[GROUP_HISTORY][FILE] failed to download {msg_id}: {e}")
+
                     if msg_content:
                         hist.append(f"[{create_time}] {user_name}: {msg_content}")
                 if len(hist) > 20:
