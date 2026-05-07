@@ -2010,10 +2010,11 @@ class MessageHandler:
                 continue
             pcfg = providers_cfg.get(pid)
             api_key = pcfg.api_key if pcfg else ""
+            # 7-element tuple: (pid, pname, api_key, current_model, models, is_active, base_url)
             if api_key:
-                configured.append((pid, provider.id, api_key, current_mid or "—", provider.models, pid == current_pid))
+                configured.append((pid, provider.id, api_key, current_mid or "—", provider.models, pid == current_pid, ""))
             else:
-                unconfigured.append((pid, provider.id, provider.models))
+                unconfigured.append((pid, provider.id, "", "—", provider.models, False, ""))
 
         # Custom providers（不在 PROVIDERS 中，从 model.json 读取）
         from supercc.claude.model_config import _load_json
@@ -2107,10 +2108,10 @@ class MessageHandler:
             await self.feishu.send_card(message.chat_id, card)
         except Exception:
             text = [f"🤖 **模型配置**\n"]
-            for pid, pname, api_key, model, all_models, is_active in configured:
+            for pid, pname, api_key, current_model, all_models, is_active, base_url in configured:
                 m = "✅" if is_active else "✴️"
-                text.append(f"{m} {pname}: {model} | {mask_api_key(api_key)}")
-            for pid, pname, all_models in unconfigured:
+                text.append(f"{m} {pname}: {current_model} | {mask_api_key(api_key)}")
+            for pid, pname, api_key, current_model, all_models, _is_active, base_url in unconfigured:
                 avail = ", ".join(all_models[:4])
                 text.append(f"📛 {pname}: {avail}...")
             text.append(f"\n共{len(configured)}个已配置，{len(unconfigured)}个未配置。\n💡 切换：`/model switch <provider_id> <model_id>`\n或直接对我说：帮我切换到<供应商>的<模型id>模型")
