@@ -538,42 +538,48 @@ class SessionWorker:
             logger.debug(f"[_run_query] message_type={message.message_type!r}")
             if message.message_type in ("image", "file"):
                 logger.debug(f"[_run_query] entering media branch for {message.message_type}")
-                try:
-                    media_prompt_prefix = await h._preprocess_media(message)
-                    if media_prompt_prefix:
-                        logger.info(f"Inbound media saved: {media_prompt_prefix}")
+                # Skip if already downloaded in handle() for group chat history
+                if message.content.startswith("[File:") or message.content.startswith("![image]("):
+                    media_prompt_prefix = message.content
+                    logger.info(f"[_run_query] media already downloaded for history, reusing: {media_prompt_prefix}")
+                else:
+                    try:
+                        media_prompt_prefix = await h._preprocess_media(message)
+                    except Exception as e:
+                        logger.warning(f"Failed to process inbound media: {e}")
+                        media_prompt_prefix = ""
 
-                        # Extract orig_name from return string: "[File: /path] (orig_name)"
-                        orig_name = ""
-                        _m = re.search(r"\]\s*\(([^)]+)\)\s*$", media_prompt_prefix)
-                        if _m:
-                            orig_name = _m.group(1)
+                if media_prompt_prefix:
+                    logger.info(f"Inbound media saved: {media_prompt_prefix}")
 
-                        # Check if this is a config file upload — trigger auto-reload
-                        if orig_name and _is_config_file_by_orig_name(orig_name):
-                            logger.info(f"[config-reload] detected config upload: {orig_name}")
-                            try:
-                                from supercc.config import init_config, resolve_config_path
-                                cfg_path, data_dir = resolve_config_path()
-                                init_config(cfg_path, data_dir)
-                                await h._safe_send(
-                                    message.chat_id, message.message_id,
-                                    "⚙️ 配置文件已更新，将在当前查询中生效。"
-                                )
-                            except Exception as cfg_err:
-                                logger.warning(f"[config-reload] failed: {cfg_err}")
-                                await h._safe_send(
-                                    message.chat_id, message.message_id,
-                                    f"⚠️ 配置文件已保存，但重载失败：{cfg_err}"
-                                )
-                        else:
-                            # Notify user in Feishu that media was received (only for non-config files)
-                            icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
-                            media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
-                            await h._safe_send(message.chat_id, message.message_id, media_notify_text)
-                except Exception as e:
-                    logger.warning(f"Failed to process inbound media: {e}")
-                    media_prompt_prefix = ""
+                    # Extract orig_name from return string: "[File: /path] (orig_name)"
+                    orig_name = ""
+                    _m = re.search(r"\]\s*\(([^)]+)\)\s*$", media_prompt_prefix)
+                    if _m:
+                        orig_name = _m.group(1)
+
+                    # Check if this is a config file upload — trigger auto-reload
+                    if orig_name and _is_config_file_by_orig_name(orig_name):
+                        logger.info(f"[config-reload] detected config upload: {orig_name}")
+                        try:
+                            from supercc.config import init_config, resolve_config_path
+                            cfg_path, data_dir = resolve_config_path()
+                            init_config(cfg_path, data_dir)
+                            await h._safe_send(
+                                message.chat_id, message.message_id,
+                                "⚙️ 配置文件已更新，将在当前查询中生效。"
+                            )
+                        except Exception as cfg_err:
+                            logger.warning(f"[config-reload] failed: {cfg_err}")
+                            await h._safe_send(
+                                message.chat_id, message.message_id,
+                                f"⚠️ 配置文件已保存，但重载失败：{cfg_err}"
+                            )
+                    else:
+                        # Notify user in Feishu that media was received (only for non-config files)
+                        icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
+                        media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
+                        await h._safe_send(message.chat_id, message.message_id, media_notify_text)
 
             # Resolve quoted message content
             quoted_content = ""
