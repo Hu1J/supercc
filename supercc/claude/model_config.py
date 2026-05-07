@@ -304,62 +304,77 @@ def get_provider_api_key(provider_id: str) -> str:
     return providers.get(provider_id, ProviderConfig()).api_key
 
 
-def update_provider_api_key(provider_id: str, api_key: str, base_url: str = None) -> tuple[bool, str]:
-    """更新或新增供应商的 API Key。返回 (success, error_message)。
-
-    如果供应商不存在且不是内置供应商，则为新增。
-    base_url 仅对自定义供应商有意义，内置供应商会忽略。
-    """
+def update_provider_api_key(provider_id: str, api_key: str) -> tuple[bool, str]:
+    """更新供应商的 API Key（供应商必须已存在）。返回 (success, error_message)。"""
     raw = _load_json()
     providers: dict[str, dict] = raw.get("providers", {})
-    is_new = provider_id not in providers
-    is_builtin = get_provider(provider_id) is not None
+    if provider_id not in providers:
+        return False, f"未知供应商: {provider_id}"
 
-    if is_new and is_builtin:
-        return False, f"无法添加内置供应商 {provider_id}"
-
-    if is_new and not base_url:
-        return False, f"新增自定义供应商需要提供 base_url"
-
-    pcfg = providers.get(provider_id, {})
+    pcfg = providers[provider_id]
 
     # 验证新 API Key 是否有效
     provider = get_provider(provider_id)
     if provider:
         # 内置供应商：用代码里的 base_url
-        test_url = provider.base_url
+        base_url = provider.base_url
         test_model = provider.models[0] if provider.models else ""
     else:
-        # 自定义供应商：用传入的或已有的 base_url
-        test_url = base_url or pcfg.get("base_url", "")
+        # 自定义供应商：用 model.json 里的 base_url
+        base_url = pcfg.get("base_url", "")
         test_model = pcfg.get("models", [""])[0] if pcfg.get("models") else ""
 
-    if test_url and test_model:
+    if base_url and test_model:
         test_env = ModelEnv(
             ANTHROPIC_AUTH_TOKEN=api_key,
-            ANTHROPIC_BASE_URL=test_url,
+            ANTHROPIC_BASE_URL=base_url,
             ANTHROPIC_MODEL=test_model,
         )
         valid, err = validate_model_env(test_env)
         if not valid:
             return False, f"API Key 验证失败: {err}"
 
-    # 新增或更新
-    if is_new:
-        providers[provider_id] = {
-            "api_key": api_key,
-            "base_url": base_url,
-            "models": [],
-        }
-    else:
-        providers[provider_id]["api_key"] = api_key
-        if base_url:
-            providers[provider_id]["base_url"] = base_url
-
+    providers[provider_id]["api_key"] = api_key
     raw["providers"] = providers
     _save_json(raw)
 
     # 无条件刷新单例（所有更新路径统一通过单例）
+    global _model_env_instance
+    _model_env_instance = _resolve_active_env(_current_project_path)
+    return True, ""
+
+
+def add_custom_provider(provider_id: str, api_key: str, base_url: str, models: list[str]) -> tuple[bool, str]:
+    """新增自定义供应商。返回 (success, error_message)。"""
+    raw = _load_json()
+    providers: dict[str, dict] = raw.get("providers", {})
+
+    if provider_id in providers:
+        return False, f"供应商 {provider_id} 已存在，请使用 SetModel 更新"
+
+    if get_provider(provider_id) is not None:
+        return False, f"无法添加内置供应商 {provider_id}"
+
+    # 验证 API Key 有效
+    if base_url and models:
+        test_env = ModelEnv(
+            ANTHROPIC_AUTH_TOKEN=api_key,
+            ANTHROPIC_BASE_URL=base_url,
+            ANTHROPIC_MODEL=models[0],
+        )
+        valid, err = validate_model_env(test_env)
+        if not valid:
+            return False, f"API Key 验证失败: {err}"
+
+    providers[provider_id] = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "models": models,
+    }
+    raw["providers"] = providers
+    _save_json(raw)
+
+    # 无条件刷新单例
     global _model_env_instance
     _model_env_instance = _resolve_active_env(_current_project_path)
     return True, ""
