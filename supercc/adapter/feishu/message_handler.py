@@ -2092,8 +2092,7 @@ class MessageHandler:
             is_cust = is_custom(pname, pid)
             if is_cust:
                 avail = fmt_models(all_models, current_model)
-                url_note = f"\n({base_url})" if base_url else ""
-                table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail}{url_note} |")
+                table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail} |")
             else:
                 avail = fmt_models(all_models, current_model)
                 table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail} |")
@@ -2101,8 +2100,7 @@ class MessageHandler:
             is_cust = is_custom(pname, pid)
             if is_cust:
                 avail = " / ".join(f"`{m}`" for m in all_models) if all_models else "—"
-                url_note = f" ({base_url})" if base_url else ""
-                table_lines.append(f"| 📛 | `{pid}` | — | {avail}{url_note} |")
+                table_lines.append(f"| 📛 | `{pid}` | — | {avail} |")
             else:
                 avail = " / ".join(f"`{m}`" for m in all_models)
                 table_lines.append(f"| 📛 | `{pid}` | — | {avail} |")
