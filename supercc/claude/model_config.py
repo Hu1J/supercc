@@ -255,7 +255,12 @@ def _resolve_active_env(project_path: str) -> ModelEnv:
         return ModelEnv()
 
     provider = get_provider(provider_id)
-    base_url = provider.base_url if provider else ""
+    if provider:
+        # 内置供应商：用代码里的 base_url（不可覆盖）
+        base_url = provider.base_url
+    else:
+        # 自定义供应商：用 model.json 里的 base_url（用户自定义）
+        base_url = pcfg.get("base_url", "")
 
     return ModelEnv(
         provider_id=provider_id,
