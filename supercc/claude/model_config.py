@@ -311,13 +311,24 @@ def update_provider_api_key(provider_id: str, api_key: str) -> tuple[bool, str]:
     if provider_id not in providers:
         return False, f"未知供应商: {provider_id}"
 
+    pcfg = providers[provider_id]
+
     # 验证新 API Key 是否有效
     provider = get_provider(provider_id)
     if provider:
+        # 内置供应商：用代码里的 base_url
+        base_url = provider.base_url
+        test_model = provider.models[0] if provider.models else ""
+    else:
+        # 自定义供应商：用 model.json 里的 base_url
+        base_url = pcfg.get("base_url", "")
+        test_model = pcfg.get("models", [""])[0] if pcfg.get("models") else ""
+
+    if base_url and test_model:
         test_env = ModelEnv(
             ANTHROPIC_AUTH_TOKEN=api_key,
-            ANTHROPIC_BASE_URL=provider.base_url,
-            ANTHROPIC_MODEL=provider.models[0] if provider.models else "",
+            ANTHROPIC_BASE_URL=base_url,
+            ANTHROPIC_MODEL=test_model,
         )
         valid, err = validate_model_env(test_env)
         if not valid:
@@ -349,7 +360,12 @@ def set_project_model(project_path: str, provider_id: str, model_id: str) -> tup
         return False, f"供应商 {provider_id} 尚未配置 API Key"
 
     provider = get_provider(provider_id)
-    base_url = provider.base_url if provider else ""
+    if provider:
+        # 内置供应商：用代码里的 base_url
+        base_url = provider.base_url
+    else:
+        # 自定义供应商：用 model.json 里的 base_url
+        base_url = pcfg.get("base_url", "")
 
     # 验证配置是否有效
     test_env = ModelEnv(

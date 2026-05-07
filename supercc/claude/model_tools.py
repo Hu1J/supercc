@@ -50,7 +50,7 @@ def _mask_api_key(key: str) -> str:
 
 @tool(
     "ListModels",
-    "列出所有预置供应商及其配置状态，包括供应商名称、API Key、所有可用模型。",
+    "列出所有供应商及其配置状态，包括内置供应商和自定义供应商。",
     {},
 )
 async def list_models(args: dict) -> dict:
@@ -59,10 +59,16 @@ async def list_models(args: dict) -> dict:
     providers = get_all_providers()
     current_pid, current_mid = get_active_model_for_project(project_path)
 
+    # 获取 model.json 原始数据（含自定义供应商）
+    from supercc.claude.model_config import _load_json
+    raw = _load_json()
+    providers_raw = raw.get("providers", {})
+
     lines = ["## 🤖 模型配置\n"]
     lines.append("| 状态 | 供应商 | API Key | 可用模型 |")
     lines.append("|------|--------|---------|----------|")
 
+    # 内置供应商
     for pid, provider in PROVIDERS.items():
         if pid == "custom":
             continue
@@ -76,11 +82,34 @@ async def list_models(args: dict) -> dict:
             avail += f" ... (+{len(provider.models) - 5})"
         lines.append(f"| {mark} | **{provider.id}** | `{masked}` | {avail} |")
 
-    if current_pid:
-        active_provider = PROVIDERS.get(current_pid)
-        if active_provider:
-            lines.append("")
-            lines.append(f"**当前激活：** `{current_pid}` / `{current_mid}`")
+    # 自定义供应商（不在 PROVIDERS 中的）
+    custom_pids = set(providers_raw.keys()) - set(PROVIDERS.keys())
+    if custom_pids:
+        lines.append("")
+        lines.append("**自定义供应商：**")
+        for pid in sorted(custom_pids):
+            pdata = providers_raw.get(pid, {})
+            api_key = pdata.get("api_key", "")
+            masked = _mask_api_key(api_key)
+            models = pdata.get("models", [])
+            base_url = pdata.get("base_url", "")
+            is_active = pid == current_pid
+            mark = "✅" if is_active else "✴️"
+            if models:
+                avail = " / ".join(f"`{m}`" for m in models[:3])
+                if len(models) > 3:
+                    avail += f" ... (+{len(models) - 3})"
+            else:
+                avail = "—"
+            url_note = f" ({base_url})" if base_url else ""
+            lines.append(f"| {mark} | **{pid}**{url_note} | `{masked}` | {avail} |")
+
+    if current_pid and current_pid not in PROVIDERS:
+        lines.append("")
+        lines.append(f"**当前激活：** `{current_pid}` / `{current_mid}`")
+    elif current_pid:
+        lines.append("")
+        lines.append(f"**当前激活：** `{current_pid}` / `{current_mid}`")
 
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
@@ -133,11 +162,9 @@ async def set_model_tool(args: dict) -> dict:
     if not provider_id:
         return {"content": [{"type": "text", "text": "provider 是必填的"}], "is_error": True}
 
-    # 校验 provider 存在
+    # 检查是否为内置供应商
     provider = PROVIDERS.get(provider_id)
-    if not provider:
-        available = ", ".join(f"`{p.id}`" for p in PROVIDERS.values())
-        return {"content": [{"type": "text", "text": f"未知供应商 `{provider_id}`\n可用: {available}"}], "is_error": True}
+    is_builtin = provider is not None
 
     project_path = _get_project_path()
     changed = []
@@ -153,9 +180,9 @@ async def set_model_tool(args: dict) -> dict:
             }
         changed.append("API Key")
 
-    # 切换模型（带验证）
+    # 切换模型（内置供应商带验证，自定义供应商跳过验证）
     if model_id:
-        if provider.models and model_id not in provider.models:
+        if is_builtin and provider.models and model_id not in provider.models:
             models_str = ", ".join(f"`{m}`" for m in provider.models)
             return {
                 "content": [{"type": "text", "text": f"模型 `{model_id}` 不在供应商 `{provider.id}` 的可用模型中。\n可用: {models_str}"}],
@@ -173,15 +200,17 @@ async def set_model_tool(args: dict) -> dict:
         # 只更新了 api_key，没切模型，检查当前项目是否已有激活映射
         current_pid, current_mid = get_active_model_for_project(project_path)
         if not current_pid:
+            provider_name = provider.id if provider else provider_id
             return {
-                "content": [{"type": "text", "text": f"✅ API Key 已更新\n\n供应商：`{provider.id}`\n\n提示：尚未为当前项目设置激活模型，请同时提供 model 参数切换模型。"}],
+                "content": [{"type": "text", "text": f"✅ API Key 已更新\n\n供应商：`{provider_name}`\n\n提示：尚未为当前项目设置激活模型，请同时提供 model 参数切换模型。"}],
                 "is_error": False,
             }
 
     changed_str = "、".join(changed) if changed else "无变更"
+    provider_name = provider.id if provider else provider_id
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider.id}`\n模型：`{model_id or '未切换'}`\n已激活。"
+            "text": f"✅ 已完成：{changed_str}。\n\n供应商：`{provider_name}`\n模型：`{model_id or '未切换'}`\n已激活。"
         }]
     }
