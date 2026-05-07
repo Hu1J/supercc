@@ -1996,6 +1996,16 @@ class MessageHandler:
                     )
                     return HandlerResult(success=True)
 
+                if is_custom:
+                    pdata = raw.get("providers", {}).get(target_pid, {})
+                    custom_models = pdata.get("models", [])
+                    if custom_models and target_model not in custom_models:
+                        await self._safe_send(
+                            message.chat_id, message.message_id,
+                            f"❌ 模型 ID `{target_model}` 不在供应商 `{target_pid}` 的可用模型列表中。\n可用模型：\n{' / '.join(f'`{m}`' for m in custom_models)}",
+                        )
+                        return HandlerResult(success=True)
+
                 ok, err = set_project_model(self.approved_directory, target_pid, target_model)
                 if not ok:
                     await self._safe_send(
