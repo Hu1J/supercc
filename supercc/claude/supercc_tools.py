@@ -28,6 +28,7 @@ from supercc.claude.cron_tools import (
 )
 from supercc.claude.skill_search_tools import skill_search
 from supercc.claude.model_tools import (
+    add_custom_provider_tool,
     list_models,
     set_model_tool,
 )
@@ -55,6 +56,7 @@ def get_supercc_mcp_server(include_feishu: bool = True):
         skill_search,
         list_models,
         set_model_tool,
+        add_custom_provider_tool,
     ]
     if include_feishu:
         tools.extend([feishu_send_file, get_chat_members])
