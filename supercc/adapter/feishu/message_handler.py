@@ -2015,6 +2015,23 @@ class MessageHandler:
             else:
                 unconfigured.append((pid, provider.id, provider.models))
 
+        # Custom providers（不在 PROVIDERS 中，从 model.json 读取）
+        from supercc.claude.model_config import _load_json
+        raw = _load_json()
+        providers_raw = raw.get("providers", {})
+        custom_pids = set(providers_raw.keys()) - set(PROVIDERS.keys())
+        for pid in sorted(custom_pids):
+            pdata = providers_raw.get(pid, {})
+            api_key = pdata.get("api_key", "")
+            models = pdata.get("models", [])
+            base_url = pdata.get("base_url", "")
+            is_active = pid == current_pid
+            # 7-element tuple: (pid, pname, api_key, current_model, models, is_active, base_url)
+            if api_key:
+                configured.append((pid, pid, api_key, current_mid or "—", models, is_active, base_url))
+            else:
+                unconfigured.append((pid, pid, "", "—", models, False, ""))
+
         def mask_api_key(key: str) -> str:
             if not key:
                 return "—"
@@ -2034,22 +2051,37 @@ class MessageHandler:
         # 当前激活的条目放最前面
         configured.sort(key=lambda x: 0 if x[5] else 1)
 
-        table_header = "| 状态 | Provider | API Key | 所有可用模型 |"
-        table_sep = "|------|----------|---------|------------|"
+        table_header = "| 状态 | Provider | API Key | 模型 / Base URL |"
+        table_sep = "|------|----------|---------|----------------|"
 
         active_name = "未设置"
         if current_pid:
             p = PROVIDERS.get(current_pid)
             active_name = p.id if p else current_pid
 
+        def is_custom(pname, pid):
+            return pname == pid  # built-in: pname != pid in Provider objects; custom: pname == pid
+
         table_lines = [table_header, table_sep]
-        for pid, pname, api_key, model, all_models, is_active in configured:
+        for pid, pname, api_key, current_model, all_models, is_active, base_url in configured:
             mark = "✅" if is_active else "✴️"
-            avail = fmt_models(all_models, model)
-            table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail} |")
-        for pid, pname, all_models in unconfigured:
-            avail = " / ".join(f"`{m}`" for m in all_models)
-            table_lines.append(f"| 📛 | `{pid}` | — | {avail} |")
+            is_cust = is_custom(pname, pid)
+            if is_cust:
+                avail = fmt_models(all_models, current_model)
+                url_note = f"\n({base_url})" if base_url else ""
+                table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail}{url_note} |")
+            else:
+                avail = fmt_models(all_models, current_model)
+                table_lines.append(f"| {mark} | `{pid}` | `{mask_api_key(api_key)}` | {avail} |")
+        for pid, pname, api_key, current_model, all_models, _is_active, base_url in unconfigured:
+            is_cust = is_custom(pname, pid)
+            if is_cust:
+                avail = " / ".join(f"`{m}`" for m in all_models) if all_models else "—"
+                url_note = f" ({base_url})" if base_url else ""
+                table_lines.append(f"| 📛 | `{pid}` | — | {avail}{url_note} |")
+            else:
+                avail = " / ".join(f"`{m}`" for m in all_models)
+                table_lines.append(f"| 📛 | `{pid}` | — | {avail} |")
         table_content = "\n".join(table_lines)
 
         elements = [
