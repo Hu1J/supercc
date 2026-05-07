@@ -1935,6 +1935,7 @@ class MessageHandler:
         - /model switch <provider_id> <model_id> — 切换到指定供应商的模型
         """
         from supercc.claude.model_config import (
+            _load_json,
             get_all_providers,
             get_model_env,
             set_project_model,
@@ -2030,7 +2031,6 @@ class MessageHandler:
                 unconfigured.append((pid, provider.id, "", "—", provider.models, False, ""))
 
         # Custom providers（不在 PROVIDERS 中，从 model.json 读取）
-        from supercc.claude.model_config import _load_json
         raw = _load_json()
         providers_raw = raw.get("providers", {})
         custom_pids = set(providers_raw.keys()) - set(PROVIDERS.keys())
