@@ -171,10 +171,10 @@ class MemoryManager:
             elif "platform" not in proj_cols:
                 conn.execute("ALTER TABLE project_memories ADD COLUMN platform TEXT NOT NULL DEFAULT 'feishu'")
                 logger.info("migrated project_memories: added platform column")
-            if "user_open_id" not in proj_cols:
+            elif "user_open_id" not in proj_cols:
                 conn.execute("ALTER TABLE project_memories ADD COLUMN user_open_id TEXT NOT NULL DEFAULT ''")
                 logger.info("migrated project_memories: added user_open_id column")
-            if "chat_id" not in proj_cols:
+            elif "chat_id" not in proj_cols:
                 conn.execute("ALTER TABLE project_memories ADD COLUMN chat_id TEXT NOT NULL DEFAULT ''")
                 logger.info("migrated project_memories: added chat_id column")
 
