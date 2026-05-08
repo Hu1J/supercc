@@ -154,7 +154,6 @@ class MemoryManager:
 
             # ── project_memories ─────────────────────────────────────────────────
             proj_cols = [r[1] for r in conn.execute("PRAGMA table_info(project_memories)")]
-            table_created = False
             if not proj_cols:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS project_memories (
@@ -169,8 +168,7 @@ class MemoryManager:
                         updated_at   TEXT NOT NULL
                     )
                 """)
-                table_created = True
-                # CREATE TABLE 后重新获取列信息，避免误判
+                # CREATE TABLE 后重新获取列信息，避免 ALTER 基于空列表误判
                 proj_cols = [r[1] for r in conn.execute("PRAGMA table_info(project_memories)")]
             if "platform" not in proj_cols:
                 conn.execute("ALTER TABLE project_memories ADD COLUMN platform TEXT NOT NULL DEFAULT 'feishu'")
