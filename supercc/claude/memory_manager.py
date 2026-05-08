@@ -138,7 +138,9 @@ class MemoryManager:
                         updated_at   TEXT NOT NULL
                     )
                 """)
-            elif "platform" not in pref_cols:
+                # CREATE TABLE 后重新获取列信息，避免 ALTER 基于空列表误判
+                pref_cols = [r[1] for r in conn.execute("PRAGMA table_info(user_preferences)")]
+            if "platform" not in pref_cols:
                 conn.execute("ALTER TABLE user_preferences ADD COLUMN platform TEXT NOT NULL DEFAULT 'feishu'")
                 logger.info("migrated user_preferences: added platform column")
             # 旧表可能缺少 user_open_id（platform 新增前），补充迁移
