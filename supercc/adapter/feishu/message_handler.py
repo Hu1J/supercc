@@ -609,7 +609,8 @@ class SessionWorker:
                     logger.warning(f"Failed to fetch quoted message {message.parent_id}")
 
             # Inject group chat history so the bot has context of recent messages.
-            # 文件/图片暂时存原始 JSON，等这里统一下载 + 解析 user_name → 注入 prompt。
+            # 文件/图片已在 handle() 阶段预下载，resolve loop 直接读本地路径。
+            # 预下载失败（异常、API 超时等）的条目保留原始 JSON，作为 fallback 二次尝试下载。
             group_history_prefix = ""
             if message.is_group_chat and message.chat_id:
                 hist = h._group_history.get(message.chat_id, [])
@@ -1181,13 +1182,26 @@ class MessageHandler:
 
         # Group chat: 滚动内存记录所有消息
         # 格式: "{user_open_id}:{message_id}:{content}"，注入时解析 user_open_id → user_name
-        # 文件/图片不立即下载，等 @CC 触发 worker 时统一在 history resolve loop 中下载
+        # 文件/图片立即下载（即使没有 @CC），把本地路径存入 history。
+        # resolve loop 直接读已解析的路径，不再二次调用 _preprocess_media。
         if message.is_group_chat and message.content:
+            content_for_history = message.content
+            # 文件/图片消息：立即下载，把本地路径存入 history，同时更新 message.content
+            # 这样 worker 收到后也能复用（_run_query 第 543 行检查 startswith("[File:")）
+            if message.message_type in ("file", "image", "post"):
+                try:
+                    media_path = await self._preprocess_media(message)
+                    if media_path:
+                        content_for_history = media_path
+                        message.content = media_path  # 更新原消息，worker 可直接复用
+                        logger.info(f"[GROUP_HISTORY] pre-downloaded media for msg_id={message.message_id}: {media_path}")
+                except Exception as e:
+                    logger.warning(f"[GROUP_HISTORY] pre-download failed for msg_id={message.message_id}: {e}")
+                    # 下载失败：保留原始 content，resolve loop 会尝试二次下载
             hist = self._group_history.setdefault(message.chat_id, [])
-            hist.append(f"{message.user_open_id}:{message.message_id}:{message.content}")
+            hist.append(f"{message.user_open_id}:{message.message_id}:{content_for_history}")
             if len(hist) > self._MAX_GROUP_HISTORY:
                 hist[:] = hist[-self._MAX_GROUP_HISTORY:]
-            logger.debug(f"[GROUP_HISTORY] stored chat_id={message.chat_id} msg_id={message.message_id} content={message.content!r} len={len(hist)}")
 
         # Commands are handled immediately — do not queue
         # BUT in group chat, require @CC mention (skip if some other bot was mentioned)
