@@ -275,6 +275,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **yaml.safe_load 空文件返回 None**：所有加载点加 or {}
 - **/model switch 错误消息**：通过 base_url 匹配 PROVIDER ID，不再依赖 models.yaml 的 key
 
+## [0.2.9] - 2026-05-08
+
+### Fixed
+
+- **群聊文件 AI 看不到**：文件/图片消息不再因无 @CC mention 被跳过，改为延迟下载（lazy download）。群聊历史改为滚动内存（最近 10 条），文件消息暂存原始 JSON，仅在 @CC 触发时才下载并同步到历史记录。避免群聊发文件时 AI 看不到的问题。
+- **群聊历史注入 message_id 错误**：修复 `fake_msg.message_id = ""` 导致 `_preprocess_media` 调用 `get_message("")` API 失败的问题
+
+### Changed
+
+- **群聊历史架构重构**：移除 Feishu API 批量拉取，改为实时追加 + 固定容量滚动数组。减少 API 调用，避免同步间隙，按需下载媒体文件。
+
 ## [Unreleased]
 
 ## [0.1.8] - 2026-04-27

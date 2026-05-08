@@ -609,16 +609,60 @@ class SessionWorker:
                     logger.warning(f"Failed to fetch quoted message {message.parent_id}")
 
             # Inject group chat history so the bot has context of recent messages.
-            # History was recorded for ALL group messages (including non-@mention ones).
+            # 文件/图片暂时存原始 JSON，等这里统一下载 + 解析 user_name → 注入 prompt。
             group_history_prefix = ""
             if message.is_group_chat and message.chat_id:
                 hist = h._group_history.get(message.chat_id, [])
                 if hist:
-                    history_text = "\n".join(hist)
+                    resolved_hist = []
+                    for i, entry in enumerate(hist):
+                        # 格式: "{user_open_id}:{message_id}:{content}"，content 可能含冒号，maxsplit=2
+                        parts = entry.split(":", 2)
+                        if len(parts) < 3:
+                            continue
+                        user_open_id, msg_id, content = parts[0], parts[1], parts[2]
+                        user_name = await h.feishu.get_user_name(user_open_id)
+
+                        # 如果已经是本地路径，直接用
+                        if content.startswith("/") or content.startswith("![image](") or content.startswith("[File:"):
+                            resolved_hist.append(f"{user_name}: {content}")
+                            continue
+
+                        # 尝试解析 JSON，看是否是未下载的文件/图片
+                        try:
+                            parsed = json.loads(content)
+                            file_key = parsed.get("file_key", "")
+                            image_key = parsed.get("image_key", "")
+                        except Exception:
+                            file_key = ""
+                            image_key = ""
+
+                        if file_key or image_key:
+                            fake_msg = IncomingMessage(
+                                message_id=msg_id,
+                                chat_id=message.chat_id,
+                                user_open_id=user_open_id,
+                                content=content,
+                                message_type="image" if image_key else "file",
+                                create_time="",
+                            )
+                            local_path = await h._preprocess_media(fake_msg)
+                            if local_path:
+                                # 直接修改 hist 中的原始 entry，保持列表同步
+                                hist[i] = f"{user_open_id}:{msg_id}:{local_path}"
+                                resolved_hist.append(f"{user_name}: {local_path}")
+                                logger.info(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {local_path}")
+                                # 如果是当前消息，同步更新 message.content 供后续 _preprocess_media 使用
+                                if msg_id == message.message_id:
+                                    message.content = local_path
+                            else:
+                                resolved_hist.append(f"{user_name}: {content}")
+                        else:
+                            resolved_hist.append(f"{user_name}: {content}")
+
+                    history_text = "\n".join(resolved_hist)
                     group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
-                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} history_len={len(hist)} entries={hist!r}")
-                else:
-                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} NO_HISTORY (empty)")
+                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} entries={len(hist)}")
 
             prefix_parts = [p for p in [group_history_prefix, media_prompt_prefix, quoted_content] if p]
             prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
@@ -1021,10 +1065,10 @@ class MessageHandler:
         self.memory_manager = get_memory_manager()
         self.memory_manager.set_system_prompt_stale_callback(self._noop_mark_stale)
         self._skill_nudge = skill_nudge
-        # Group chat history: chat_id -> list of recent message contents (max 20)
+        # Group chat history: chat_id -> list of recent message contents (max 10)
+        # 滚动内存：每条群聊消息实时追加，自动淘汰最旧的
         self._group_history: dict[str, list[str]] = {}
-        # Track which group chats we've already fetched history for (from Feishu API)
-        self._fetched_group_chats: set[str] = set()
+        self._MAX_GROUP_HISTORY = 10
         # Per-chat-id worker pool
         self._session_workers: dict[str, SessionWorker] = {}
         self._workers_lock = asyncio.Lock()
@@ -1138,85 +1182,20 @@ class MessageHandler:
     async def handle(self, message: IncomingMessage) -> HandlerResult:
         """Route message to command handler or per-chat-id worker pool."""
 
-        # Group chat: record ALL messages to history FIRST, before any branching.
-        # This ensures commands (/stop, /new, etc.) also get stored so that
-        # when someone finally @mentions the bot, the full context is available.
-        # On first seeing a chat, proactively fetch recent history from Feishu API
-        # since WebSocket only delivers @mention messages.
+        # Group chat: 滚动内存记录所有消息
+        # 格式: "{user_open_id}:{message_id}:{content}"，注入时解析 user_open_id → user_name
+        # 文件/图片不立即下载，等 @CC 触发 worker 时统一在 history resolve loop 中下载
         if message.is_group_chat and message.content:
-            if message.chat_id not in self._fetched_group_chats:
-                self._fetched_group_chats.add(message.chat_id)
-                # Fetch last 20 messages from Feishu (descending = newest first, reversed for chronological)
-                raw_messages = await self.feishu.get_chat_history(
-                    message.chat_id, limit=20, sort_type="ByCreateTimeDesc"
-                )
-                hist = self._group_history.setdefault(message.chat_id, [])
-                # Reverse to chronological order (oldest first) for context injection
-                for msg in reversed(raw_messages):
-                    sender = msg.sender
-                    if sender is None:
-                        user_id = ""
-                    elif isinstance(sender, dict):
-                        sender_id = sender.get("sender_id", {}) or {}
-                        user_id = sender_id.get("open_id", "") if isinstance(sender_id, dict) else ""
-                    else:
-                        # lark-oapi Sender object — has sender_id (UserID object) and sender_type
-                        sid = getattr(sender, "sender_id", None)
-                        user_id = getattr(sid, "open_id", "") if sid is not None else ""
-                    # Get display name and timestamp
-                    user_name = await self.feishu.get_user_name(user_id)
-                    create_time = getattr(msg, "create_time", "") or ""
-
-                    # Check if this is a file message that needs downloading
-                    msg_type = getattr(msg, "msg_type", "") or ""
-                    msg_id = getattr(msg, "message_id", "") or ""
-                    msg_content = self.feishu._extract_content(msg)
-
-                    # For file messages in history, download and store local path
-                    if msg_type == "file" and msg_id:
-                        try:
-                            import json
-                            # Parse content to get file_key
-                            content_dict = json.loads(msg.content) if isinstance(msg.content, str) else {}
-                            file_key = content_dict.get("file_key", "")
-                            orig_name = content_dict.get("file_name", "file")
-                            file_type = content_dict.get("file_type", "bin")
-                            if file_key:
-                                data_dir = self.data_dir or os.getcwd()
-                                save_path = make_file_path(data_dir, msg_id, orig_name, file_type)
-                                data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
-                                save_bytes(save_path, data)
-                                msg_content = f"[File: {save_path}] ({orig_name})"
-                                logger.info(f"[GROUP_HISTORY][FILE] downloaded {msg_id} -> {save_path}")
-                        except Exception as e:
-                            logger.warning(f"[GROUP_HISTORY][FILE] failed to download {msg_id}: {e}")
-
-                    if msg_content:
-                        hist.append(f"[{create_time}] {user_name}: {msg_content}")
-                if len(hist) > 20:
-                    hist[:] = hist[-20:]
-                logger.debug(f"[GROUP_HISTORY][FETCH] chat_id={message.chat_id} fetched {len(raw_messages)} messages, hist_len={len(hist)}")
-
-            # Group file messages: download file before recording to history
-            # This ensures history contains local paths instead of raw JSON
-            if message.is_group_chat and message.message_type == "file":
-                try:
-                    local_path = await self._preprocess_media(message)
-                    if local_path:
-                        message.content = local_path
-                        logger.info(f"[GROUP_HISTORY][FILE_DOWNLOAD] message_id={message.message_id} local_path={local_path}")
-                except Exception as e:
-                    logger.warning(f"[GROUP_HISTORY][FILE_DOWNLOAD] failed for message_id={message.message_id}: {e}")
-
             hist = self._group_history.setdefault(message.chat_id, [])
-            hist.append(f"{message.user_open_id}: {message.content}")
-            if len(hist) > 20:
-                hist[:] = hist[-20:]
-            logger.debug(f"[GROUP_HISTORY][STORE] chat_id={message.chat_id} user={message.user_open_id} content={message.content!r} history_len={len(hist)}")
+            hist.append(f"{message.user_open_id}:{message.message_id}:{message.content}")
+            if len(hist) > self._MAX_GROUP_HISTORY:
+                hist[:] = hist[-self._MAX_GROUP_HISTORY:]
+            logger.debug(f"[GROUP_HISTORY] stored chat_id={message.chat_id} msg_id={message.message_id} content={message.content!r} len={len(hist)}")
 
         # Commands are handled immediately — do not queue
         # BUT in group chat, require @CC mention (skip if some other bot was mentioned)
-        if message.is_group_chat and not message.mention_bot:
+        # 文件/图片消息例外：即使没有 @CC 也要下载和处理
+        if message.is_group_chat and not message.mention_bot and message.message_type not in ("file", "image"):
             logger.info(f"Group command without @CC mention in {message.chat_id}, skipping")
             return HandlerResult(success=True)
         # Strip @mention prefix so '@_user_1 /git' is recognized as /git command
