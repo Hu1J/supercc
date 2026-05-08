@@ -324,7 +324,7 @@ class SessionWorker:
         if not await h._check_group_access(message):
             return
 
-        if message.message_type not in ("text", "image", "file"):
+        if message.message_type not in ("text", "image", "file", "post"):
             await h._safe_send(message.chat_id, message.message_id, "暂不支持该消息类型，请发送文字消息。")
             return
 
@@ -621,6 +621,11 @@ class SessionWorker:
                         if len(parts) < 3:
                             continue
                         user_open_id, msg_id, content = parts[0], parts[1], parts[2]
+
+                        # 跳过当前消息：它已经在 _run_query 中通过 media_prompt_prefix 注入，无需重复
+                        if msg_id == message.message_id:
+                            continue
+
                         user_name = await h.feishu.get_user_name(user_open_id)
 
                         # 如果已经是本地路径，直接用
@@ -652,9 +657,6 @@ class SessionWorker:
                                 hist[i] = f"{user_open_id}:{msg_id}:{local_path}"
                                 resolved_hist.append(f"{user_name}: {local_path}")
                                 logger.info(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {local_path}")
-                                # 如果是当前消息，同步更新 message.content 供后续 _preprocess_media 使用
-                                if msg_id == message.message_id:
-                                    message.content = local_path
                             else:
                                 resolved_hist.append(f"{user_name}: {content}")
                         else:
@@ -664,21 +666,16 @@ class SessionWorker:
                     group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
                     logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} entries={len(hist)}")
 
-            prefix_parts = [p for p in [group_history_prefix, media_prompt_prefix, quoted_content] if p]
-            prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
-            # For text messages: prepend prefix to actual text content.
-            # For media messages (image/file): message.content may contain user text
-            # (mixed image+text case). Use media prefix + user text.
             is_media = message.message_type in ("image", "file")
             if is_media and media_prompt_prefix:
-                # Media messages: prepend prefix to any user text
-                user_text = message.content.strip()
-                if user_text:
-                    full_prompt = (prefix + user_text).strip()
-                else:
-                    full_prompt = prefix.strip()
+                # _preprocess_media 已返回完整 markdown（图片路径 + caption）
+                # media_prompt_prefix 本身就是 prompt 主体，不放入 prefix_parts 避免重复
+                prefix_parts = [p for p in [group_history_prefix, quoted_content] if p]
+                prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
+                full_prompt = (prefix + media_prompt_prefix).strip()
             else:
-                # Text messages: prepend prefix to actual text content
+                prefix_parts = [p for p in [group_history_prefix, media_prompt_prefix, quoted_content] if p]
+                prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
                 full_prompt = (prefix + message.content).strip()
 
             # Retry loop: SDK 有时会返回空结果（cost > 0 但无任何内容），
@@ -1194,8 +1191,8 @@ class MessageHandler:
 
         # Commands are handled immediately — do not queue
         # BUT in group chat, require @CC mention (skip if some other bot was mentioned)
-        # 文件/图片消息例外：即使没有 @CC 也要下载和处理
-        if message.is_group_chat and not message.mention_bot and message.message_type not in ("file", "image"):
+        # 文件/图片/post 消息例外：即使没有 @CC 也要下载和处理
+        if message.is_group_chat and not message.mention_bot and message.message_type not in ("file", "image", "post"):
             logger.info(f"Group command without @CC mention in {message.chat_id}, skipping")
             return HandlerResult(success=True)
         # Strip @mention prefix so '@_user_1 /git' is recognized as /git command
@@ -2269,6 +2266,9 @@ class MessageHandler:
         content_str = msg_data.get("content", "{}")
         logger.debug(f"[media] got content: {content_str[:200]!r}")
 
+        # DEBUG: Log message content to trace duplicate issue
+        logger.warning(f"[media] _preprocess_media called for msg_id={msg_id}, message.content={message.content!r}, message_type={message.message_type}")
+
         try:
             content = json.loads(content_str)
         except Exception:
@@ -2277,34 +2277,118 @@ class MessageHandler:
 
         data_dir = self.data_dir or os.getcwd()
 
-        def _find_first_image_key(parsed: dict) -> str | None:
-            """Find first image_key in simple or rich post content format."""
-            # Simple: {"image_key": "..."}
-            if "image_key" in parsed:
-                return parsed.get("image_key")
-            # Rich post: {"content": [[{"tag": "img", "image_key": "..."}]]}
-            for block in parsed.get("content", []):
-                if not isinstance(block, list):
-                    continue
-                for item in block:
-                    if isinstance(item, dict) and item.get("tag") == "img":
-                        return item.get("image_key")
-            return None
+        def _iter_documents(post: dict) -> list:
+            """返回 post 中的文档列表。支持两种格式：
+            - 扁平：{"title": "", "content": [[...]]} → [post]
+            - locale 包裹：{"zh_cn": {"title": "", "content": [...]}} → [{"title": "", ...}]
+            来自 lark SDK channel/normalize/converters/post.py。
+            """
+            if not isinstance(post, dict) or not post:
+                return []
+            if "content" in post:
+                return [post]
+            return [doc for doc in post.values() if isinstance(doc, dict)]
+
+        async def _post_to_markdown(post: dict) -> str:
+            """将飞书 post content 转为 markdown。图片/文件下载到本地。
+
+            基于 lark SDK channel/normalize/converters/post.py 的 _post_to_markdown，
+            仅修改 img 和 media 分支为本地下载。
+            """
+            docs = _iter_documents(post)
+            if not docs:
+                return ""
+            locale = docs[0]
+            lines = []
+            title = locale.get("title")
+            if title:
+                lines.append(f"# {title}")
+            for block in locale.get("content") or []:
+                chunks = []
+                for el in block or []:
+                    if not isinstance(el, dict):
+                        continue
+                    tag = el.get("tag")
+                    if tag == "text":
+                        t = el.get("text") or ""
+                        styles = el.get("style") or []
+                        if "bold" in styles:
+                            t = f"**{t}**"
+                        if "italic" in styles:
+                            t = f"*{t}*"
+                        if "code" in styles:
+                            t = f"`{t}`"
+                        if "strikethrough" in styles:
+                            t = f"~~{t}~~"
+                        chunks.append(t)
+                    elif tag == "img":
+                        image_key = el.get("image_key", "")
+                        if image_key:
+                            base_path = make_image_path(data_dir, msg_id, image_key)
+                            data = await self.feishu.download_media(msg_id, image_key, msg_type="image")
+                            save_path = base_path + ".png"
+                            save_bytes(save_path, data)
+                            logger.info(f"[media] saved image to {save_path}")
+                            chunks.append(f"![image]({save_path})")
+                    elif tag == "media":
+                        file_key = el.get("file_key", "")
+                        if file_key:
+                            orig_name = el.get("file_name", "file")
+                            file_type = el.get("file_type", "bin")
+                            save_path = make_file_path(data_dir, msg_id, orig_name, file_type)
+                            data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
+                            save_bytes(save_path, data)
+                            logger.info(f"[media] saved file to {save_path}")
+                            chunks.append(f"[File: {save_path}] ({orig_name})")
+                    elif tag == "a":
+                        chunks.append(f"[{el.get('text') or ''}]({el.get('href') or ''})")
+                    elif tag == "at":
+                        chunks.append(f"@{el.get('user_name') or el.get('user_id') or ''}")
+                    elif tag == "emotion":
+                        chunks.append(f":{el.get('emoji_type') or ''}:")
+                    elif tag == "code_block":
+                        lang = (el.get("language") or "").lower()
+                        text = el.get("text") or ""
+                        chunks.append(f"```{lang}\n{text}\n```")
+                    elif tag == "hr":
+                        chunks.append("---")
+                    elif tag == "md":
+                        chunks.append(el.get("text") or "")
+                    # 其他未知 tag：忽略
+                line = "".join(chunks)
+                if line:
+                    lines.append(line)
+            return "\n\n".join(lines).strip()
 
         if message.message_type == "image":
-            file_key = _find_first_image_key(content)
-            if not file_key:
-                logger.warning(f"[media] no image_key in message {msg_id}")
+            # 支持 simple {"image_key": "..."} 和 rich post 两种格式
+            if "image_key" in content:
+                # Simple 格式：只有一张图片，没有文字
+                file_key = content.get("image_key", "")
+                base_path = make_image_path(data_dir, msg_id, file_key)
+                data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
+                save_path = base_path + ".png"
+                save_bytes(save_path, data)
+                logger.info(f"[media] saved image to {save_path}")
+                return f"![image]({save_path})"
+            elif "content" in content:
+                # Rich post 格式：可能是多图+文字混合
+                result = await _post_to_markdown(content)
+                # 去重：同一张图片可能出现在多个 block 中（飞书客户端 bug），只保留第一个
+                lines = result.split("\n")
+                seen = set()
+                deduped = []
+                for line in lines:
+                    if line.startswith("![image]("):
+                        path = line[line.index("(") + 1:line.index(")")]
+                        if path in seen:
+                            continue
+                        seen.add(path)
+                    deduped.append(line)
+                return "\n".join(deduped)
+            else:
+                logger.warning(f"[media] unknown image content structure: {content_str[:200]!r}")
                 return ""
-            logger.info(f"[media] downloading image, key={file_key}")
-            base_path = make_image_path(data_dir, msg_id)
-            data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
-            save_path = base_path + ".png"
-            save_bytes(save_path, data)
-            logger.info(f"[media] saved image to {save_path}")
-            # Use standard markdown image syntax so Claude CLI's detectAndLoadPromptImages
-            # recognizes the local path. The SDK scans for "![alt](path)" with an image extension.
-            return f"![image]({save_path})"
 
         elif message.message_type == "file":
             file_key = content.get("file_key", "")
@@ -2318,8 +2402,6 @@ class MessageHandler:
             data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
             save_bytes(save_path, data)
             logger.info(f"[media] saved file to {save_path}")
-            # [File: /path] 告知 AI 收到了文件，AI 会用 Read 工具读取。
-            # 包含原始文件名方便 AI 判断文件类型和内容。
             return f"[File: {save_path}] ({orig_name})"
 
         return ""

@@ -74,10 +74,11 @@ def sanitize_filename(name: str) -> str:
     return cleaned
 
 
-def make_image_path(data_dir: str, message_id: str) -> str:
-    """生成图片本地存储路径（不含扩展名）。"""
+def make_image_path(data_dir: str, message_id: str, image_key: str = "") -> str:
+    """生成图片本地存储路径（不含扩展名）。多图时用完整 image_key 区分，避免前缀碰撞。"""
     ts = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"img_{ts}_{message_id}"
+    key_part = f"_{image_key}" if image_key else ""
+    filename = f"img_{ts}_{message_id}{key_part}"
     images_dir = os.path.join(data_dir, "received_images")
     os.makedirs(images_dir, exist_ok=True)
     return os.path.join(images_dir, filename)
