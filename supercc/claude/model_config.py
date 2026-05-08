@@ -32,6 +32,7 @@ class ProviderConfig:
     """单个供应商的配置"""
     api_key: str = ""
     models: list[str] = field(default_factory=list)
+    base_url: str = ""
 
 
 @dataclass
@@ -171,8 +172,6 @@ def _load_json() -> dict:
     # 同步预置供应商的 models 列表和 base_url（保留已有 api_key，projects 不变）
     changed = False
     for pid, provider in PROVIDERS.items():
-        if pid == "custom":
-            continue
         if pid in raw.get("providers", {}):
             if raw["providers"][pid]["models"] != provider.models:
                 raw["providers"][pid]["models"] = provider.models.copy()
@@ -202,8 +201,6 @@ def _sync_providers_from_presets() -> dict[str, ProviderConfig]:
     """从 model_providers.py 同步预置供应商配置到 providers dict。"""
     providers: dict[str, ProviderConfig] = {}
     for pid, provider in PROVIDERS.items():
-        if pid == "custom":
-            continue
         providers[pid] = ProviderConfig(
             api_key="",
             models=provider.models.copy(),
@@ -216,8 +213,6 @@ def _create_default_config() -> None:
     _ensure_model_dir()
     providers_raw = {}
     for pid, provider in PROVIDERS.items():
-        if pid == "custom":
-            continue
         providers_raw[pid] = {
             "api_key": "",
             "base_url": provider.base_url,
@@ -294,6 +289,7 @@ def get_all_providers() -> dict[str, ProviderConfig]:
         result[pid] = ProviderConfig(
             api_key=pdata.get("api_key", ""),
             models=pdata.get("models", []),
+            base_url=pdata.get("base_url", ""),
         )
     return result
 
@@ -442,8 +438,6 @@ def get_providers_for_display() -> list[tuple[str, str, str, list[str], bool]]:
 
     result = []
     for pid, provider in PROVIDERS.items():
-        if pid == "custom":
-            continue
         pdata = providers_raw.get(pid, {})
         masked_key = _mask_api_key(pdata.get("api_key", ""))
         is_active = pid == current_pid
@@ -546,8 +540,6 @@ def ensure_project_model_config(project_path: str) -> bool:
     providers = get_all_providers()
     configured_provider = None
     for pid, pcfg in providers.items():
-        if pid == "custom":
-            continue
         if pcfg.api_key:
             configured_provider = (pid, pcfg)
             break

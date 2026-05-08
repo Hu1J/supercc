@@ -28,15 +28,6 @@ class Provider:
 
 PROVIDERS: dict[str, Provider] = {
 
-    # ── 用户自定义 ────────────────────────────────────────────────────────────
-    "custom": Provider(
-        id="custom",
-        base_url="",
-        auth_type="bearer",
-        models=[],
-        description="用户自定义模型（需填入 base_url + model_id）",
-    ),
-
     # ── 国内常用 ──────────────────────────────────────────────────────────────
 
     "minimax": Provider(

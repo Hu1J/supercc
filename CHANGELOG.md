@@ -4,7 +4,20 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.2.6] - 2026-05-08
+## [0.2.8] - 2026-05-08
+
+### Fixed
+
+- **onboard 自定义供应商不显示**：已配置的自定义供应商现在会正确显示在 onboard 选择列表中
+- **onboard 支持更新 API Key**：已配置 API Key 的供应商不再强制跳过，改为询问用户是否需要更新
+- **ProviderConfig 新增 base_url 字段**：支持获取自定义供应商的 base_url
+
+### Changed
+
+- **移除 PROVIDERS["custom"] 占位条目**：自定义供应商统一通过 onboard "✨ 新增自定义供应商" 选项或 AddCustomProvider MCP 工具添加
+- **自定义供应商名称冲突检查**：新增自定义供应商时检查名称是否与预置供应商冲突
+
+## [0.2.7] - 2026-05-08
 
 ### Added
 

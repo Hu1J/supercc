@@ -150,15 +150,36 @@ def _do_model_config_step() -> None:
     # 分类：已配置的放前面，未配置的放后面
     configured = []
     unconfigured = []
+
+    # 预置供应商
     for pid, p in PROVIDERS.items():
-        if pid == "custom":
-            continue
         pdata = all_providers.get(pid)
         has_key = pdata and pdata.api_key
         if has_key:
             configured.append((pid, p))
         else:
             unconfigured.append((pid, p))
+
+    # 自定义供应商（存在于 all_providers 但不在 PROVIDERS 中）
+    from dataclasses import dataclass
+
+    @dataclass
+    class _CustomProvider:
+        id: str
+        base_url: str
+        models: list
+        auth_type: str = "bearer"
+
+    for pid in all_providers:
+        if pid in PROVIDERS:
+            continue
+        pdata = all_providers.get(pid)
+        if pdata and pdata.api_key:
+            configured.append((pid, _CustomProvider(
+                id=pid,
+                base_url=pdata.base_url or "",
+                models=pdata.models or [],
+            )))
 
     # 构建选项：已配置的显示 "(已配置)"，未配置的不显示
     provider_choices = []
@@ -176,11 +197,11 @@ def _do_model_config_step() -> None:
             value=pid,
         ))
 
-    # 自定义供应商单独一列
+    # 新增自定义供应商
     provider_choices.append(questionary.Choice("─" * 40, value="__separator__", disabled=True))
     provider_choices.append(questionary.Choice(
-        "✨ 自定义  (用户填入)",
-        value="custom",
+        "✨ 新增自定义供应商",
+        value="__add_custom__",
     ))
 
     if configured:
@@ -202,10 +223,8 @@ def _do_model_config_step() -> None:
         print("\n⚠️  跳过模型配置（后续可使用 `supercc config` 添加）\n")
         return
 
-    provider = PROVIDERS[provider_id]
-
-    # ── custom 模式 ──────────────────────────────────────────────────────────
-    if provider_id == "custom":
+    # ── 新增自定义供应商模式 ───────────────────────────────────────────────
+    if provider_id == "__add_custom__":
         base_url = questionary.text(
             "Base URL（例如 https://api.example.com/v1）",
             style=questionary.Style([("input", "fg:#CCCCCC")]),
@@ -233,10 +252,10 @@ def _do_model_config_step() -> None:
             return
 
         provider_name_raw = questionary.text(
-            "供应商名称（可选，回车跳过使用默认 'custom'）",
+            "供应商名称（例如 myProvider）",
             style=questionary.Style([("input", "fg:#CCCCCC")]),
         ).ask()
-        provider_name = provider_name_raw.strip() or "custom"
+        provider_name = provider_name_raw.strip() if provider_name_raw else "custom"
 
         # 验证 provider_name 只允许大小写英文+数字，防止注入
         import re
@@ -244,8 +263,11 @@ def _do_model_config_step() -> None:
             print("\n❌ 供应商名称只支持大小写英文字母和数字，不能包含特殊字符\n")
             return
 
-        import hashlib
-        model_id = f"custom-{hashlib.md5(selected_model.encode()).hexdigest()[:8]}"
+        # 验证不能与预置供应商名称冲突
+        if provider_name in PROVIDERS:
+            print(f"\n❌ 供应商名称 '{provider_name}' 是内置供应商名称，请使用其他名称\n")
+            return
+
         env = ModelEnv(
             ANTHROPIC_AUTH_TOKEN=token,
             ANTHROPIC_BASE_URL=base_url,
@@ -267,12 +289,11 @@ def _do_model_config_step() -> None:
                 return
             env.ANTHROPIC_AUTH_TOKEN = token
 
-        # custom 模型存到 providers[provider_name]（直接用用户给的名称作为 key）
+        # 自定义供应商存到 model.json
         from supercc.claude.model_config import _load_json, _save_json
         raw = _load_json()
         providers_raw = raw.get("providers", {})
-        custom_key = provider_name
-        providers_raw[custom_key] = {
+        providers_raw[provider_name] = {
             "api_key": token,
             "models": [selected_model],
             "base_url": base_url,
@@ -282,25 +303,50 @@ def _do_model_config_step() -> None:
         _save_json(raw)
 
         # 设置项目激活映射
-        set_project_model(project_path, custom_key, selected_model)
-        init_model_env(project_path)  # 刷新全局单例
+        set_project_model(project_path, provider_name, selected_model)
+        init_model_env(project_path)
 
-        print(f"\n✅ 自定义模型配置已保存")
+        print(f"\n✅ 自定义供应商配置已保存")
         print(f"   供应商: {provider_name}")
         print(f"   Base URL: {base_url}")
         print(f"   模型: `{selected_model}`\n")
         return
 
-    # ── 预置供应商模式 ───────────────────────────────────────────────────────
+    # 获取 provider 对象（预置供应商从 PROVIDERS，自定义供应商从 all_providers）
+    provider = PROVIDERS.get(provider_id) if provider_id in PROVIDERS else None
+    if not provider:
+        # 自定义供应商（存在于 all_providers 但不在 PROVIDERS 中）
+        pdata = all_providers.get(provider_id)
+        if pdata:
+            provider = _CustomProvider(
+                id=provider_id,
+                base_url=pdata.base_url or "",
+                models=pdata.models or [],
+            )
+
+    # ── 预置/自定义供应商模式 ───────────────────────────────────────────────
 
     auth_display = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}.get(provider.auth_type, provider.auth_type)
     pdata = all_providers.get(provider_id)
     has_existing_key = pdata and pdata.api_key
 
-    # 如果该供应商已有 API Key，跳过输入步骤
+    # 如果该供应商已有 API Key，询问用户是否需要更新
     if has_existing_key:
-        print(f"\n\033[90m检测到 {provider_id} 已配置 API Key，直接选择模型\033[0m\n")
-        token = pdata.api_key
+        update_key = questionary.confirm(
+            f"检测到 {provider_id} 已配置 API Key，是否要更新？",
+            default=False,
+            style=questionary.Style([("selected", "fg:#00AA00 bold")]),
+        ).ask()
+        if update_key:
+            token = questionary.password(
+                f"新的 API Key（{auth_display}）",
+                style=questionary.Style([("password", "fg:#CCCCCC")]),
+            ).ask()
+            if not token:
+                print("\n⚠️  未提供 API Key，跳过模型配置\n")
+                return
+        else:
+            token = pdata.api_key
     else:
         # Step 2: 输入 API Key
         token = questionary.password(
