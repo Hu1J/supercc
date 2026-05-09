@@ -257,7 +257,7 @@ class ColoredFormatter(_BaseLogFormatter):
         "CRITICAL": "\033[35m",  # magenta
     }
     MODULE_COLORS = {
-        "supercc": "\033[34m",      # blue
+        "supercc": "\033[38;5;214m",  # bright gold
         "evolve": "\033[32m",       # green
         "feishu": "\033[36m",       # cyan
         "adapter": "\033[33m",      # yellow
