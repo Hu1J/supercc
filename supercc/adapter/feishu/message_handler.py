@@ -1829,7 +1829,11 @@ class MessageHandler:
             status.append(f"- 🧠 记忆自优化：`{'开' if entry.mem else '关'}`")
             status.append(f"- ⚙️ 过程消息：`{'开' if entry.step else '关'}`")
             status.append("")
-            status.append("调整：`/verbose on|off|skill on|mem off|step on`")
+            status.append("调整：")
+            status.append("/verbose on|off — 全部开启/关闭")
+            status.append("/verbose skill on|off — 🧰 Skill 自进化")
+            status.append("/verbose mem on|off — 🧠 记忆自优化")
+            status.append("/verbose step on|off — ⚙️ 过程消息")
             return HandlerResult(success=True, response_text="\n".join(status))
 
         cmd = parts[0]
@@ -1855,12 +1859,12 @@ class MessageHandler:
             entry.step = sub_cmd == "on"
             msg = f"⚙️ 过程消息已{'开启' if entry.step else '关闭'}"
         else:
-            msg = "❓ 用法错误。可用命令：\n" \
-                  "`/verbose` — 显示配置\n" \
-                  "`/verbose on|off` — 开启/关闭所有\n" \
-                  "`/verbose skill on|off`\n" \
-                  "`/verbose mem on|off`\n" \
-                  "`/verbose step on|off`"
+            msg = "❓ 用法不对。正确用法：\n" \
+                  "/verbose — 查看当前配置\n" \
+                  "/verbose on|off — 全部开启/关闭\n" \
+                  "/verbose skill on|off — 🧰 Skill 自进化\n" \
+                  "/verbose mem on|off — 🧠 记忆自优化\n" \
+                  "/verbose step on|off — ⚙️ 过程消息"
 
         # Persist to config
         if self._config_path:
