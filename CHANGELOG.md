@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.11] - 2026-05-09
+
+### Added
+
+- **Git 改为可选依赖**：未安装 git 时优雅降级，所有 git 相关功能（/git 命令、Skill 自进化）自动跳过，不影响主体功能
+- **/verbose 指令**：控制消息推送开关，支持分别控制 Skill 自进化通知、记忆自优化通知、过程消息（工具调用/中间步骤）的开启/关闭
+- **启动时自动创建 AGENTS.md**：项目目录无 AGENTS.md 时自动创建默认内容，移除 CLAUDE.md 相关代码
+
+### Changed
+
+- **CLAUDE.md 迁移为 AGENTS.md**：SuperCC Agent 默认行为规范文件统一命名为 AGENTS.md
+- **Banner 日志颜色**：supercc 模块日志配色从蓝色改为亮金色
+
 ## [0.2.8] - 2026-05-08
 
 ### Fixed

@@ -134,6 +134,16 @@ supercc update
 |------|------|
 | `/git` | 查看当前项目 git 状态 |
 
+### 消息推送控制
+
+| 指令 | 说明 |
+|------|------|
+| `/verbose` | 查看当前消息推送配置 |
+| `/verbose on\|off` | 开启/关闭全部消息推送 |
+| `/verbose skill on\|off` | 🧰 Skill 自进化通知 |
+| `/verbose mem on\|off` | 🧠 记忆自优化通知 |
+| `/verbose step on\|off` | ⚙️ 过程消息（工具调用/中间步骤） |
+
 ---
 
 ## 工作原理
@@ -212,7 +222,6 @@ SuperCC/
 │   ├── config.json          # 主配置（飞书/钉钉）
 │   ├── model.json           # 模型配置
 │   └── cron_jobs.json      # 定时任务
-└── README.md
 └── README.md
 ```
 
