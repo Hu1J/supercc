@@ -37,6 +37,20 @@ SUPERCC_LOGO = """[bold #FFD700]███████╗██╗  ██╗█�
 
 
 
+def _check_git_available() -> bool:
+    """Check if git is installed on the system."""
+    try:
+        result = subprocess.run(
+            ["git", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def _resolve_repo_dir() -> Optional[Path]:
     """Return the active SuperCC git checkout, or None if not a git install."""
     repo_dir = Path(__file__).parent.parent.resolve()

@@ -2070,6 +2070,14 @@ class MessageHandler:
     async def _handle_git(self, message: IncomingMessage) -> HandlerResult:
         """执行 git status 和 log，返回精美卡片。"""
         import subprocess
+        from supercc.banner import _check_git_available
+        if not _check_git_available():
+            await self._safe_send(
+                message.chat_id, message.message_id,
+                "⚠️ 检测到系统中尚未安装 git，无法使用 /git 命令。\n\n"
+                "💡 跟我说: \"安装 git\", 即可启用 Git 相关功能。"
+            )
+            return HandlerResult(success=True)
 
         def run_git(args: list[str]) -> str:
             try:

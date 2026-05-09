@@ -479,6 +479,11 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     logger.info(f"Starting SuperCC (WS mode) — data: {data_dir}")
 
+    # Warn if git is not available (不影响启动，只是提示)
+    from supercc.banner import _check_git_available
+    if not _check_git_available():
+        logger.warning("[SuperCC] 未检测到 git，跳过 Git 相关功能。如需使用 /git 命令，请安装 git；或跟SuperCC说: \"安装 git\"")
+
     # Create media subdirectories
     for sub in ("received_images", "received_files"):
         sub_dir = os.path.join(data_dir, sub)

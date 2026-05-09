@@ -53,6 +53,20 @@ def _ensure_skills_git_repo(skills_dir: Path) -> None:
     if not skills_dir.exists():
         skills_dir.mkdir(parents=True, exist_ok=True)
 
+    # Check if git is available
+    try:
+        result = subprocess.run(
+            ["git", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        git_available = result.returncode == 0
+    except Exception:
+        git_available = False
+
+    if not git_available:
+        logger.debug("[skill_nudge] git not available, skipping git repo initialization")
+        return
+
     # Check if skills_dir itself is a git repo (not a parent repo)
     git_path = skills_dir / ".git"
     is_git = git_path.exists()
@@ -189,6 +203,16 @@ def _get_skill_git_state(skills_dir: Path) -> dict[str, str | None]:
     """Get current git state: {skill_name: latest_commit_sha or None}."""
     state: dict[str, str | None] = {}
     if not skills_dir.exists():
+        return state
+    # Quick check if git is available at all
+    try:
+        result = subprocess.run(
+            ["git", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return state
+    except Exception:
         return state
     for skill_path in skills_dir.iterdir():
         if not skill_path.is_dir():
