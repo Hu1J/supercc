@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.13] - 2026-05-09
+
+### Fixed
+
+- **media_md 变量作用域错误**：修复群聊历史 resolve loop 中 `logger.debug` 引用了只在 image/file 分支内定义的 `media_md` 变量的问题
+
 ## [0.2.12] - 2026-05-09
 
 ### Fixed

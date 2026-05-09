@@ -614,6 +614,7 @@ class SessionWorker:
                             except Exception as e:
                                 logger.warning(f"[GROUP_HISTORY][RESOLVE] download failed for msg_id={msg_id}: {e}")
                                 media_md = None
+                            logger.debug(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {media_md}")
                             if media_md:
                                 # 直接修改 hist 中的原始message, 避免反复下载。
                                 hist[i].content = media_md
@@ -622,7 +623,6 @@ class SessionWorker:
                                 resolved_hist.append(f"{user_name}: {content} (媒体下载失败)")
                         else:
                             resolved_hist.append(f"{user_name}: {content}")
-                        logger.debug(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {media_md}")
 
                     history_text = "\n".join(resolved_hist)
                     group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
