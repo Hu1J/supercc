@@ -551,36 +551,10 @@ class SessionWorker:
                         media_prompt_prefix = ""
 
                 if media_prompt_prefix:
-                    logger.info(f"Inbound media saved: {media_prompt_prefix}")
-
-                    # Extract orig_name from return string: "[File: /path] (orig_name)"
-                    orig_name = ""
-                    _m = re.search(r"\]\s*\(([^)]+)\)\s*$", media_prompt_prefix)
-                    if _m:
-                        orig_name = _m.group(1)
-
-                    # Check if this is a config file upload — trigger auto-reload
-                    if orig_name and _is_config_file_by_orig_name(orig_name):
-                        logger.info(f"[config-reload] detected config upload: {orig_name}")
-                        try:
-                            from supercc.config import init_config, resolve_config_path
-                            cfg_path, data_dir = resolve_config_path()
-                            init_config(cfg_path, data_dir)
-                            await h._safe_send(
-                                message.chat_id, message.message_id,
-                                "⚙️ 配置文件已更新，将在当前查询中生效。"
-                            )
-                        except Exception as cfg_err:
-                            logger.warning(f"[config-reload] failed: {cfg_err}")
-                            await h._safe_send(
-                                message.chat_id, message.message_id,
-                                f"⚠️ 配置文件已保存，但重载失败：{cfg_err}"
-                            )
-                    else:
-                        # Notify user in Feishu that media was received (only for non-config files)
-                        icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
-                        media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
-                        await h._safe_send(message.chat_id, message.message_id, media_notify_text)
+                    # Notify user in Feishu that media was received (only for non-config files)
+                    icon = {"image": "🖼️", "file": "🗃"}.get(message.message_type, "🗃")
+                    media_notify_text = f"{icon} 收到 {message.message_type}，正在分析..."
+                    await h._safe_send(message.chat_id, message.message_id, media_notify_text)
 
             # Resolve quoted message content
             quoted_content = ""
@@ -608,64 +582,43 @@ class SessionWorker:
                     quoted_content = f"[引用消息不可用: {message.parent_id}]"
                     logger.warning(f"Failed to fetch quoted message {message.parent_id}")
 
-            # Inject group chat history so the bot has context of recent messages.
-            # 文件/图片已在 handle() 阶段预下载，resolve loop 直接读本地路径。
-            # 预下载失败（异常、API 超时等）的条目保留原始 JSON，作为 fallback 二次尝试下载。
+            # 注入群聊历史上下文，发现图片、文件时下载到本地。注入格式为：[{用户名}:{内容}, ...]
             group_history_prefix = ""
             if message.is_group_chat and message.chat_id:
                 hist = h._group_history.get(message.chat_id, [])
                 if hist:
+                    has_media = False  # 标记是否有图片、文件消息
                     resolved_hist = []
-                    for i, entry in enumerate(hist):
-                        # 格式: "{user_open_id}:{message_id}:{content}"，content 可能含冒号，maxsplit=2
-                        parts = entry.split(":", 2)
-                        if len(parts) < 3:
-                            continue
-                        user_open_id, msg_id, content = parts[0], parts[1], parts[2]
+                    for i, _hmsg in enumerate(hist):
+                        user_open_id, msg_id = _hmsg.user_open_id, _hmsg.message_id
+                        # 重要问题！当消息是非 text 类型时，message.content 的值会为空""  ! 因此需要使用原始raw_content
+                        content = _hmsg.content if _hmsg.message_type == "text" else _hmsg.raw_content
 
                         # 跳过当前消息：它已经在 _run_query 中通过 media_prompt_prefix 注入，无需重复
                         if msg_id == message.message_id:
                             continue
 
                         user_name = await h.feishu.get_user_name(user_open_id)
-
-                        # 如果已经是本地路径，直接用
-                        if content.startswith("/") or content.startswith("![image](") or content.startswith("[File:"):
-                            resolved_hist.append(f"{user_name}: {content}")
-                            continue
-
-                        # 尝试解析 JSON，看是否是未下载的文件/图片
-                        try:
-                            parsed = json.loads(content)
-                            file_key = parsed.get("file_key", "")
-                            image_key = parsed.get("image_key", "")
-                        except Exception:
-                            file_key = ""
-                            image_key = ""
-
-                        if file_key or image_key:
-                            fake_msg = IncomingMessage(
-                                message_id=msg_id,
-                                chat_id=message.chat_id,
-                                user_open_id=user_open_id,
-                                content=content,
-                                message_type="image" if image_key else "file",
-                                create_time="",
-                            )
-                            local_path = await h._preprocess_media(fake_msg)
-                            if local_path:
-                                # 直接修改 hist 中的原始 entry，保持列表同步
-                                hist[i] = f"{user_open_id}:{msg_id}:{local_path}"
-                                resolved_hist.append(f"{user_name}: {local_path}")
-                                logger.info(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {local_path}")
+                        if _hmsg.message_type in ("image", "file"):
+                            has_media = True
+                            try:
+                                media_md = await h._preprocess_media(_hmsg)
+                            except Exception as e:
+                                logger.warning(f"[GROUP_HISTORY][RESOLVE] download failed for msg_id={msg_id}: {e}")
+                                media_md = None
+                            if media_md:
+                                # 直接修改 hist 中的原始message, 避免反复下载。
+                                hist[i].content = media_md
+                                resolved_hist.append(f"{user_name}: {media_md}")
                             else:
-                                resolved_hist.append(f"{user_name}: {content}")
+                                resolved_hist.append(f"{user_name}: {content} (媒体下载失败)")
                         else:
                             resolved_hist.append(f"{user_name}: {content}")
+                        logger.debug(f"[GROUP_HISTORY][RESOLVE] msg_id={msg_id} -> {media_md}")
 
                     history_text = "\n".join(resolved_hist)
                     group_history_prefix = f"[群聊上下文]\n{history_text}\n\n"
-                    logger.debug(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} entries={len(hist)}")
+                    logger.info(f"[GROUP_HISTORY][INJECT] chat_id={message.chat_id} entries={len(hist)} has_media={has_media}")
 
             is_media = message.message_type in ("image", "file")
             if is_media and media_prompt_prefix:
@@ -1065,7 +1018,7 @@ class MessageHandler:
         self._skill_nudge = skill_nudge
         # Group chat history: chat_id -> list of recent message contents (max 10)
         # 滚动内存：每条群聊消息实时追加，自动淘汰最旧的
-        self._group_history: dict[str, list[str]] = {}
+        self._group_history: dict[str, list[IncomingMessage]] = {}
         self._MAX_GROUP_HISTORY = 10
         # Per-chat-id worker pool
         self._session_workers: dict[str, SessionWorker] = {}
@@ -1180,35 +1133,19 @@ class MessageHandler:
     async def handle(self, message: IncomingMessage) -> HandlerResult:
         """Route message to command handler or per-chat-id worker pool."""
 
+        # Commands are handled immediately — do not queue
+        # BUT in group chat, require @CC mention
         # Group chat: 滚动内存记录所有消息
-        # 格式: "{user_open_id}:{message_id}:{content}"，注入时解析 user_open_id → user_name
-        # 文件/图片立即下载（即使没有 @CC），把本地路径存入 history。
-        # resolve loop 直接读已解析的路径，不再二次调用 _preprocess_media。
-        if message.is_group_chat and message.content:
-            content_for_history = message.content
-            # 文件/图片消息：立即下载，把本地路径存入 history，同时更新 message.content
-            # 这样 worker 收到后也能复用（_run_query 第 543 行检查 startswith("[File:")）
-            if message.message_type in ("file", "image", "post"):
-                try:
-                    media_path = await self._preprocess_media(message)
-                    if media_path:
-                        content_for_history = media_path
-                        message.content = media_path  # 更新原消息，worker 可直接复用
-                        logger.info(f"[GROUP_HISTORY] pre-downloaded media for msg_id={message.message_id}: {media_path}")
-                except Exception as e:
-                    logger.warning(f"[GROUP_HISTORY] pre-download failed for msg_id={message.message_id}: {e}")
-                    # 下载失败：保留原始 content，resolve loop 会尝试二次下载
+        # 懒下载：resolve loop 被 @CC 触发时按需下载，不预下载文件
+        if message.is_group_chat and not message.mention_bot:
             hist = self._group_history.setdefault(message.chat_id, [])
-            hist.append(f"{message.user_open_id}:{message.message_id}:{content_for_history}")
+            hist.append(message)  # 直接存储message对象
+            logger.info(f"Group media without @CC in {message.chat_id}, stored in history only")
+            # 控制历史长度，超过则淘汰最旧的
             if len(hist) > self._MAX_GROUP_HISTORY:
                 hist[:] = hist[-self._MAX_GROUP_HISTORY:]
-
-        # Commands are handled immediately — do not queue
-        # BUT in group chat, require @CC mention (skip if some other bot was mentioned)
-        # 文件/图片/post 消息例外：即使没有 @CC 也要下载和处理
-        if message.is_group_chat and not message.mention_bot and message.message_type not in ("file", "image", "post"):
-            logger.info(f"Group command without @CC mention in {message.chat_id}, skipping")
             return HandlerResult(success=True)
+
         # Strip @mention prefix so '@_user_1 /git' is recognized as /git command
         content = _strip_mention_prefix(message.content)
         if content.startswith("/") and _is_command(content):
@@ -2267,6 +2204,11 @@ class MessageHandler:
 
         if message.message_type not in ("image", "file"):
             return ""
+        
+        # 避免重复下载
+        if "![image]" in message.content or "[File:" in message.content:
+            logger.info(f"[media] message {message.message_id} already processed, skipping download")
+            return message.content  # 已经包含下载后的文本，直接返回原内容避免重复处理
 
         msg_id = message.message_id
         logger.info(f"[media] preprocessing {message.message_type} message {msg_id}")
@@ -2278,7 +2220,7 @@ class MessageHandler:
             logger.warning(f"[media] failed to fetch message {msg_id}")
             return ""
         content_str = msg_data.get("content", "{}")
-        logger.debug(f"[media] got content: {content_str[:200]!r}")
+        logger.info(f"[media] got content: {content_str[:200]!r}")
 
         # DEBUG: Log message content to trace duplicate issue
         logger.warning(f"[media] _preprocess_media called for msg_id={msg_id}, message.content={message.content!r}, message_type={message.message_type}")
@@ -2388,18 +2330,19 @@ class MessageHandler:
             elif "content" in content:
                 # Rich post 格式：可能是多图+文字混合
                 result = await _post_to_markdown(content)
-                # 去重：同一张图片可能出现在多个 block 中（飞书客户端 bug），只保留第一个
-                lines = result.split("\n")
-                seen = set()
-                deduped = []
-                for line in lines:
-                    if line.startswith("![image]("):
-                        path = line[line.index("(") + 1:line.index(")")]
-                        if path in seen:
-                            continue
-                        seen.add(path)
-                    deduped.append(line)
-                return "\n".join(deduped)
+                return result
+                # # 去重：同一张图片可能出现在多个 block 中（飞书客户端 bug），只保留第一个
+                # lines = result.split("\n")
+                # seen = set()
+                # deduped = []
+                # for line in lines:
+                #     if line.startswith("![image]("):
+                #         path = line[line.index("(") + 1:line.index(")")]
+                #         if path in seen:
+                #             continue
+                #         seen.add(path)
+                #     deduped.append(line)
+                # return "\n".join(deduped)
             else:
                 logger.warning(f"[media] unknown image content structure: {content_str[:200]!r}")
                 return ""
