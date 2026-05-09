@@ -2265,6 +2265,7 @@ class MessageHandler:
 
         Uses Interactive Card for content with fenced code blocks or tables,
         falls back to rich text post for plain markdown.
+        Falls back to post if card sending fails (e.g. 11310 card table limit).
         """
         try:
             # Optimize and decide format — skip if already formatted to avoid double-processing
@@ -2272,7 +2273,12 @@ class MessageHandler:
             if not formatted.strip():
                 return
             if self.formatter.should_use_card(formatted):
-                await self.feishu.send_interactive_reply(chat_id, formatted, reply_to_message_id, log_reply=log_reply)
+                try:
+                    await self.feishu.send_interactive_reply(chat_id, formatted, reply_to_message_id, log_reply=log_reply)
+                except Exception as card_error:
+                    # 卡片发送失败，降级到 post
+                    logger.warning(f"Card failed ({card_error}), falling back to post")
+                    await self.feishu.send_post_reply(chat_id, formatted, reply_to_message_id, log_reply=log_reply)
             else:
                 await self.feishu.send_post_reply(chat_id, formatted, reply_to_message_id, log_reply=log_reply)
         except Exception as e:

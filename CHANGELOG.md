@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.12] - 2026-05-09
+
+### Fixed
+
+- **飞书卡片发送失败降级**：卡片因表格限制（错误码 11310）导致发送失败时，自动降级到 post 格式，确保消息能正常送达
+
 ## [0.2.11] - 2026-05-09
 
 ### Added
