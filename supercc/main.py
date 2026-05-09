@@ -15,15 +15,26 @@ import signal
 import sys
 from pathlib import Path
 
-CLAUDE_MD_CONTENT = """\
-# 编码原则
 
+AGENTS_MD_CONTENT = """你是龙王 SuperCC，你是基于 claude code 的顶级智能体 Agent，你的任务是配合用户完成相关任务。
+
+# 浏览器自动化
+当用户需要浏览器自动化、阅读链接、搜索资料（打开本地浏览器使用百度搜索）相关的操作时，优先考虑使用：
+- web access ( https://github.com/eze-is/web-access )
+- browser harness ( https://github.com/browser-use/browser-harness.git )
+- agent reach ( https://github.com/Panniantong/Agent-Reach )
+
+# 编码工具
+当用户需要写代码开发项目时，优先考虑使用两个技能：
+- gstack ( https://github.com/garrytan/gstack )
+- superpower ( https://github.com/obra/superpowers )
+
+# 编码原则
 ## 四个原则详解
 
 ### 1. 编码前思考
 不要假设。不要隐藏困惑。呈现权衡。
 
-LLM 经常默默选择一种解释然后执行。这个原则强制明确推理：
 - 明确说明假设 — 如果不确定，询问而不是猜测
 - 呈现多种解释 — 当存在歧义时，不要默默选择
 - 适时提出异议 — 如果存在更简单的方法，说出来
@@ -32,10 +43,9 @@ LLM 经常默默选择一种解释然后执行。这个原则强制明确推理�
 ### 2. 简洁优先
 用最少的代码解决问题。不要过度推测。
 
-对抗过度工程的倾向：
 - 不要添加要求之外的功能
 - 不要为一次性代码创建抽象
-- 不要添加未要求的"灵活性"或"可配置性"
+- 不要为未要求的"灵活性"或"可配置性"
 - 不要为不可能发生的场景做错误处理
 - 如果 200 行代码可以写成 50 行，重写它
 
@@ -75,16 +85,13 @@ LLM 经常默默选择一种解释然后执行。这个原则强制明确推理�
 """
 
 
-def _ensure_claude_md(project_dir: str) -> None:
-    """Ensure CLAUDE.md exists in project_dir; prepend content if it already exists."""
-    claude_md = Path(project_dir) / "CLAUDE.md"
-    if claude_md.exists():
-        existing = claude_md.read_text(encoding="utf-8")
-        if CLAUDE_MD_CONTENT.strip() in existing:
-            return  # already present
-        claude_md.write_text(CLAUDE_MD_CONTENT + "\n" + existing, encoding="utf-8")
-    else:
-        claude_md.write_text(CLAUDE_MD_CONTENT, encoding="utf-8")
+
+def _ensure_agents_md(project_dir: str) -> None:
+    """Ensure AGENTS.md exists in project_dir; create with default content if missing."""
+    agents_md = Path(project_dir) / "AGENTS.md"
+    if not agents_md.exists():
+        agents_md.write_text(AGENTS_MD_CONTENT, encoding="utf-8")
+
 
 import filelock
 
@@ -451,7 +458,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     _ensure_codex_mcp(config)
 
     handler = create_handler(config, data_dir, config_path=config_path)
-    _ensure_claude_md(config.claude.approved_directory)
+    _ensure_agents_md(config.claude.approved_directory)
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,
