@@ -286,7 +286,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **群聊历史架构重构**：移除 Feishu API 批量拉取，改为实时追加 + 固定容量滚动数组。减少 API 调用，避免同步间隙，按需下载媒体文件。
 
-## [Unreleased]
+## [0.2.10] - 2026-05-09
+
+### Fixed
+
+- **群聊图片/文件懒下载最终方案**：`_group_history` 改存 `IncomingMessage` 对象，`handle()` 不再预下载，resolve loop 被 @CC 触发时才按需下载。解决群聊先发文件/图片再 @CC 时 AI 看不到的问题
+- **图片+文字混合消息完整解析**：基于 lark SDK `_iter_documents` 重写 `_post_to_markdown`，兼容扁平格式和 locale 包裹格式，支持单图+文字、多图+文字（rich post）混合消息
+- **图片路径碰撞 bug**：修复 `make_image_path()` 用 `image_key[:8]` 区分多图导致所有图片存到同一路径的问题，改为完整 `image_key`
+- **_preprocess_media 避免重复下载**：增加检查已处理消息的逻辑，防止重复下载同一媒体文件
 
 ## [0.1.8] - 2026-04-27
 
