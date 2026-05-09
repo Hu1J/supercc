@@ -125,6 +125,12 @@ def _strip_mention_prefix(content: str) -> str:
     return re.sub(r"^@_user_\d+\s*", "", content)
 
 
+def _is_verbose_enabled(handler, platform: str, chat_id: str, msg_type: str) -> bool:
+    """检查该 chat_id 是否开启了某类消息。默认全开（未设置的 chat_id 返回 True）。"""
+    entry = handler.config.verbose.get(platform, {}).get(chat_id)
+    return getattr(entry, msg_type, True) if entry else True
+
+
 @dataclass
 class HandlerResult:
     success: bool
@@ -244,6 +250,8 @@ class SessionWorker:
 
             async def stream_callback(claude_msg):
                 if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                    if not _is_verbose_enabled(h, "feishu", message.chat_id, "mem"):
+                        return
                     result = h.formatter.format_tool_call(
                         claude_msg.tool_name, claude_msg.tool_input,
                         memory_manager=h.memory_manager,
@@ -657,6 +665,9 @@ class SessionWorker:
                 async def stream_callback(stream_item):
                     # Handle Codex internal events — flush Claude accumulator and render Codex event
                     if isinstance(stream_item, CodexStreamEvent):
+                        if not _is_verbose_enabled(h, "feishu", message.chat_id, "step"):
+                            await accumulator.flush()
+                            return
                         await accumulator.flush()
                         text = _format_codex_event(stream_item)
                         if text:
@@ -678,6 +689,9 @@ class SessionWorker:
                     claude_msg = stream_item
                     # Codex MCP 工具调用 → 渲染成与 Agent card 一致的卡片
                     if _is_codex_tool_name(claude_msg.tool_name):
+                        if not _is_verbose_enabled(h, "feishu", message.chat_id, "step"):
+                            await accumulator.flush()
+                            return
                         await accumulator.flush()
                         card = format_agent_card(claude_msg.tool_input or "", title="## 🤖 Codex")
                         try:
@@ -687,6 +701,9 @@ class SessionWorker:
                         return
 
                     if claude_msg.tool_name:
+                        if not _is_verbose_enabled(h, "feishu", message.chat_id, "step"):
+                            await accumulator.flush()
+                            return
                         await accumulator.flush()
                         # 记忆工具传入 memory_manager 和默认 project_path
                         kwargs = {}
@@ -960,7 +977,9 @@ class SessionWorker:
                             make_claude_query=lambda p: self.claude_skill.query(prompt=p),
                             nudge=nudge,
                             chat_id=message.chat_id,
-                            send_to_feishu=lambda cid, text: h._safe_send(cid, message.message_id, text),
+                            send_to_feishu=(lambda cid, text: h._safe_send(cid, message.message_id, text))
+                            if _is_verbose_enabled(h, "feishu", message.chat_id, "skill")
+                            else None,
                             skills_dir=Path(h.data_dir) / "skills",
                         )
                     )
@@ -1048,6 +1067,8 @@ class MessageHandler:
 
             async def stream_callback(claude_msg):
                 if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                    if not _is_verbose_enabled(self, "feishu", message.chat_id, "mem"):
+                        return
                     result = self.formatter.format_tool_call(
                         claude_msg.tool_name, claude_msg.tool_input,
                         memory_manager=self.memory_manager,
@@ -1343,7 +1364,8 @@ class MessageHandler:
                     "• /update — 检查并更新到最新版本\n"
                     "• /help — 显示本帮助\n"
                     "• /memory — 查看/管理记忆\n"
-                    "• /skill [all] — 查看技能列表（/skill all 查看全局）"
+                    "• /skill [all] — 查看技能列表（/skill all 查看全局）\n"
+                    "• /verbose — 控制消息推送（技能自进化/记忆优化/过程消息）"
                 ),
             )
 
@@ -1369,6 +1391,9 @@ class MessageHandler:
 
         elif cmd == "/skill":
             return await self._handle_skill(message)
+
+        elif cmd == "/verbose":
+            return await self._handle_verbose(message, arg)
 
         else:
             return HandlerResult(
@@ -1777,6 +1802,74 @@ class MessageHandler:
             lines.append(f"| `{dirname}` | {name} | {desc_short} |")
 
         return HandlerResult(success=True, response_text="\n".join(lines))
+
+    async def _handle_verbose(self, message: IncomingMessage, arg: str) -> HandlerResult:
+        """Handle /verbose [on|off|skill on|skill off|mem on|mem off|step on|step off] command."""
+        from supercc.config import VerboseChannelEntry, _write_config_to_path
+
+        platform = "feishu"
+        chat_id = message.chat_id
+
+        # Ensure platform entry exists
+        if platform not in self.config.verbose:
+            self.config.verbose[platform] = {}
+
+        # Get or create entry for this chat_id
+        if chat_id not in self.config.verbose[platform]:
+            self.config.verbose[platform][chat_id] = VerboseChannelEntry()
+
+        entry = self.config.verbose[platform][chat_id]
+        parts = arg.strip().lower().split() if arg.strip() else []
+
+        if not parts:
+            # /verbose — show current config
+            status = []
+            status.append(f"**消息推送配置**（chat: `{chat_id}`）")
+            status.append(f"- 🧰 Skill 自进化：`{'开' if entry.skill else '关'}`")
+            status.append(f"- 🧠 记忆自优化：`{'开' if entry.mem else '关'}`")
+            status.append(f"- ⚙️ 过程消息：`{'开' if entry.step else '关'}`")
+            status.append("")
+            status.append("调整：`/verbose on|off|skill on|mem off|step on`")
+            return HandlerResult(success=True, response_text="\n".join(status))
+
+        cmd = parts[0]
+        sub_cmd = parts[1] if len(parts) > 1 else ""
+
+        if cmd == "on":
+            entry.skill = True
+            entry.mem = True
+            entry.step = True
+            msg = "✅ 已开启所有消息推送（Skill 自进化、记忆自优化、过程消息）"
+        elif cmd == "off":
+            entry.skill = False
+            entry.mem = False
+            entry.step = False
+            msg = "🔇 已关闭所有消息推送"
+        elif cmd == "skill" and sub_cmd in ("on", "off"):
+            entry.skill = sub_cmd == "on"
+            msg = f"🧰 Skill 自进化已{'开启' if entry.skill else '关闭'}"
+        elif cmd == "mem" and sub_cmd in ("on", "off"):
+            entry.mem = sub_cmd == "on"
+            msg = f"🧠 记忆自优化已{'开启' if entry.mem else '关闭'}"
+        elif cmd == "step" and sub_cmd in ("on", "off"):
+            entry.step = sub_cmd == "on"
+            msg = f"⚙️ 过程消息已{'开启' if entry.step else '关闭'}"
+        else:
+            msg = "❓ 用法错误。可用命令：\n" \
+                  "`/verbose` — 显示配置\n" \
+                  "`/verbose on|off` — 开启/关闭所有\n" \
+                  "`/verbose skill on|off`\n" \
+                  "`/verbose mem on|off`\n" \
+                  "`/verbose step on|off`"
+
+        # Persist to config
+        if self._config_path:
+            try:
+                _write_config_to_path(self._config_path, self.config)
+            except Exception as e:
+                logger.warning(f"[_handle_verbose] failed to write config: {e}")
+
+        return HandlerResult(success=True, response_text=msg)
 
     async def _handle_switch(self, message: IncomingMessage) -> HandlerResult:
         """Handle /switch <target-path> command."""

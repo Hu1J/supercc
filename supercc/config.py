@@ -122,12 +122,21 @@ class SkillNudgeConfig:
 
 
 @dataclass
+class VerboseChannelEntry:
+    """Per-chat-id verbose settings for a specific platform."""
+    skill: bool = True
+    mem: bool = True
+    step: bool = True
+
+
+@dataclass
 class Config:
     channels: ChannelsConfig
     auth: AuthConfig
     claude: ClaudeConfig
     codex: CodexMcpConfig = field(default_factory=CodexMcpConfig)
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
+    verbose: dict[str, dict[str, VerboseChannelEntry]] = field(default_factory=dict)
     data_dir: str = ""
     bypass_accepted: bool = False
 
@@ -230,12 +239,24 @@ def load_config(path: str, data_dir: str = "") -> Config:
         ) if capture_raw else CodexCaptureConfig(),
     )
 
+    # Deserialize verbose: platform -> chat_id -> VerboseChannelEntry
+    _known_verbose_keys = {"skill", "mem", "step"}
+    verbose_raw = raw.get("verbose") or {}
+    verbose: dict[str, dict[str, VerboseChannelEntry]] = {}
+    for platform, chat_entries in verbose_raw.items():
+        verbose[platform] = {}
+        for chat_id, entry in (chat_entries or {}).items():
+            verbose[platform][chat_id] = VerboseChannelEntry(
+                **{k: v for k, v in entry.items() if k in _known_verbose_keys}
+            )
+
     return Config(
         channels=channels_cfg,
         auth=AuthConfig(),
         claude=ClaudeConfig(**{k: v for k, v in raw.get("claude", {}).items() if k in {"cli_path", "max_turns", "approved_directory"}}),
         codex=codex_cfg,
         skill_nudge=SkillNudgeConfig(**raw.get("skill_nudge", {})),
+        verbose=verbose,
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
     )
@@ -255,14 +276,16 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
                 bypass_accepted: bool = False,
                 groups: dict | None = None) -> None:
     """Save a complete config to a JSON file（legacy param-based signature）。"""
-    # 如果文件已存在，保留 codex 和 skill_nudge 配置
+    # 如果文件已存在，保留 codex、skill_nudge 和 verbose 配置
     existing_codex = None
     existing_skill_nudge = None
+    existing_verbose = None
     if Path(path).exists():
         try:
             existing_cfg = load_config(path)
             existing_codex = existing_cfg.codex
             existing_skill_nudge = existing_cfg.skill_nudge
+            existing_verbose = existing_cfg.verbose
         except Exception:
             pass
 
@@ -287,6 +310,7 @@ def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
         ),
         codex=existing_codex if existing_codex is not None else CodexMcpConfig(),
         skill_nudge=existing_skill_nudge if existing_skill_nudge is not None else SkillNudgeConfig(),
+        verbose=existing_verbose if existing_verbose is not None else {},
         bypass_accepted=bypass_accepted,
     )
     _write_config_to_path(path, cfg)
@@ -342,6 +366,13 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
             "enabled": cfg.skill_nudge.enabled,
             "interval": cfg.skill_nudge.interval,
             "current_user": cfg.skill_nudge.current_user,
+        },
+        "verbose": {
+            platform: {
+                chat_id: {"skill": e.skill, "mem": e.mem, "step": e.step}
+                for chat_id, e in chat_entries.items()
+            }
+            for platform, chat_entries in cfg.verbose.items()
         },
         "bypass_accepted": cfg.bypass_accepted,
     }
