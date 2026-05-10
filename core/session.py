@@ -99,6 +99,7 @@ class SessionManager:
             self._migrate_add_column(conn, "sessions", "project_path", "TEXT NOT NULL DEFAULT ''")
             self._migrate_add_column(conn, "sessions", "user_open_id", "TEXT")
             self._migrate_add_column(conn, "sessions", "group_members", "TEXT")
+            self._migrate_add_column(conn, "sessions", "user_id", "TEXT")
 
             # 索引
             conn.execute("""
