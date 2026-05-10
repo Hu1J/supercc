@@ -100,13 +100,6 @@ _active_lock: "filelock.FileLock | None" = None
 from supercc.config import init_config, get_config, resolve_config_path, SESSIONS_DB_PATH
 from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.adapter.feishu.ws_client import FeishuWSClient
-from supercc.adapter.feishu.message_handler import MessageHandler
-from supercc.adapter.feishu.error_notifier import setup as setup_error_notifier, update_chat_id as notifier_update_chat_id
-from supercc.security.auth import Authenticator
-from supercc.security.validator import SecurityValidator
-from supercc.claude.integration import ClaudeIntegration
-from supercc.claude.session_manager import SessionManager
-from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
 from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
 from supercc.claude.cron_tools import set_cron_scheduler
 
@@ -303,79 +296,6 @@ class PlainFormatter(_BaseLogFormatter):
         level = record.levelname
         module = self._get_module(record)
         return f"{ts} {level:>5} [{module}] {record.getMessage()}"
-
-
-def create_handler(config, data_dir: str, config_path: str | None = None) -> MessageHandler:
-    """Create MessageHandler with all dependencies wired up."""
-    feishu = FeishuClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
-        bot_name=config.channels.feishu.bot_name,
-        data_dir=data_dir,
-    )
-    setup_error_notifier(feishu)
-    authenticator = Authenticator(allowed_users=config.channels.feishu.allowed_users)
-    validator = SecurityValidator(approved_directory=config.claude.approved_directory)
-    claude = ClaudeIntegration(
-        cli_path=config.claude.cli_path,
-        max_turns=config.claude.max_turns,
-        approved_directory=config.claude.approved_directory,
-    )
-    db_path = SESSIONS_DB_PATH
-    session_manager = SessionManager(db_path=db_path)
-    formatter = ReplyFormatter()
-
-    # Initialize Hermes-style skill nudge
-    from supercc.evolve.skill_nudge import make_nudge
-    skill_nudge = make_nudge(config.skill_nudge)
-
-    handler = MessageHandler(
-        feishu_client=feishu,
-        authenticator=authenticator,
-        validator=validator,
-        claude=claude,
-        session_manager=session_manager,
-        formatter=formatter,
-        approved_directory=config.claude.approved_directory,
-        config=config,
-        data_dir=data_dir,
-        feishu_groups=config.channels.feishu.groups,
-        config_path=config_path,
-        skill_nudge=skill_nudge,
-    )
-    return handler
-
-
-async def handle_message(message: IncomingMessage, handler: MessageHandler) -> None:
-    """Callback for incoming Feishu messages — dispatch to handler."""
-    # Keep error notifier's chat_id fresh for error reporting
-    notifier_update_chat_id(message.chat_id)
-    # Store raw message for memory enhancement
-    session = None
-    if message.user_open_id:
-        session = handler.sessions.get_active_session_for_chat(message.user_open_id, message.chat_id, platform="feishu")
-        if session:
-            handler.sessions.update_session(session.session_id, update_last_message=True)
-            handler.sessions.store_message(
-                message_id=message.message_id,
-                session_id=session.session_id,
-                chat_id=message.chat_id,
-                user_open_id=message.user_open_id,
-                message_type=message.message_type,
-                raw_content=message.raw_content,
-                content=message.content,
-                direction="incoming",
-            )
-    try:
-        await handler.handle(message)
-    except Exception as e:
-        logger.exception(f"Error handling message: {e}")
-        # 直接发送飞书错误通知，不依赖 logging handler
-        err_msg = f"❌ 处理消息时出错：{e}"
-        try:
-            await handler._safe_send(message.chat_id, message.message_id, err_msg)
-        except Exception:
-            pass
 
 
 def write_pid(pid_file: str) -> None:
