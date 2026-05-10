@@ -24,5 +24,5 @@ class NewSessionHandler(CommandHandler):
         session = sm.get_or_create_session(session_key, user_open_id)
 
         return CommandResult(
-            content=f"✅ 会话已创建/获取\n会话ID: {session.session_id}\n工作目录: {session.project_path}"
+            content=f"✅ 新会话已创建\n会话ID: {session.session_id}\n工作目录: {session.project_path}"
         )
