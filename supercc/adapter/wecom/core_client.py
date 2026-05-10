@@ -81,11 +81,71 @@ class WeComCoreWSClient:
         chat_id = params.get("chat_id", "")
         card = params.get("extra", {}).get("card")
 
-        if not content:
+        if not content and not card:
             return
 
-        # WeCom 原生支持 Markdown；Command card 降级为 markdown 发送（无卡片的平台）
-        await self.wecom.send_markdown(chat_id, content)
+        if card:
+            # Command card → WeCom 模板卡片
+            template_card = self._cardkit_to_wecom_card(card, content)
+            await self.wecom.send_template_card(chat_id, template_card)
+        else:
+            # 普通消息 → Markdown
+            await self.wecom.send_markdown(chat_id, content)
+
+    def _cardkit_to_wecom_card(self, card: dict, fallback_content: str) -> dict:
+        """将 CardKit JSON 转换为 WeCom template_card 格式。
+
+        支持 text_notice 模板：提取 markdown 内容中的标题作为 main_title，
+        其余内容作为 sub_title_text。
+        """
+        card_type = card.get("type", "markdown")
+        data = card.get("data", {})
+
+        # 尝试从 CardKit body.elements 中提取 markdown 内容
+        markdown_content = ""
+        body = data.get("body", {})
+        elements = body.get("elements", [])
+        for el in elements:
+            if el.get("tag") == "markdown":
+                markdown_content = el.get("content", "")
+                break
+            elif el.get("tag") == "note":
+                continue
+            else:
+                # 其他 tag 尝试直接取 content
+                el_content = el.get("content", "")
+                if el_content:
+                    markdown_content += el_content + "\n"
+
+        # 如果没有提取到，用 fallback content
+        if not markdown_content.strip():
+            markdown_content = fallback_content
+
+        # 提取标题（第一个 # 开头的行）
+        import re
+        title = ""
+        desc = ""
+        lines = markdown_content.strip().split("\n")
+        title_lines = []
+        desc_lines = []
+        in_desc = False
+        for line in lines:
+            if line.startswith("#"):
+                title_lines.append(line.lstrip("#").strip())
+                in_desc = True
+            elif in_desc:
+                desc_lines.append(line)
+
+        title = " ".join(title_lines) or "SuperCC"
+        desc = "\n".join(desc_lines).strip()
+
+        # 构建 WeCom text_notice 模板卡片
+        template = {
+            "card_type": "text_notice",
+            "main_title": {"title": title, "desc": ""},
+            "sub_title_text": desc or markdown_content[:200],
+        }
+        return template
 
     async def send_message(self, msg: dict) -> dict:
         """将 WeCom 消息转发给核心，并等待响应。"""

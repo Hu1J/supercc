@@ -115,3 +115,19 @@ class WeComClient:
         if data.get("errcode") != 0:
             raise RuntimeError(f"WeCom send image failed: {data}")
         return data.get("msgid", "")
+
+    async def send_template_card(self, chat_id: str, card: dict) -> str:
+        """发送模板卡片消息（text_notice / news_notice / button_interaction）。"""
+        token = await self._get_token()
+        url = f"{self.BASE_URL}/cgi-bin/message/send"
+        params = {"access_token": token}
+        body = {
+            "touser": chat_id,
+            "msgtype": "template_card",
+            "agentid": self.agent_id,
+            "template_card": card,
+        }
+        data = await _call_api("POST", url, params, body)
+        if data.get("errcode") != 0:
+            raise RuntimeError(f"WeCom send template_card failed: {data}")
+        return data.get("msgid", "")

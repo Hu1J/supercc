@@ -46,6 +46,7 @@ class FeishuCoreWSClient:
         self._ws: Any = None
         self._running = False
         self._pending_responses: dict[str, asyncio.Future] = {}
+        self._pending_message_ids: dict[str, str] = {}  # req_id → incoming message_id
         self._id_counter = 0
 
     async def connect(self):
@@ -75,10 +76,16 @@ class FeishuCoreWSClient:
     async def _handle_core_message(self, data: dict):
         """处理核心发来的消息（Response 或 Event）。"""
         if "id" in data:
-            # Response：唤醒等待的 Future
-            req_id = data.get("id")
-            if str(req_id) in self._pending_responses:
-                fut = self._pending_responses.pop(str(req_id))
+            # JSON-RPC Response：唤醒 Future，同时清理 typing mapping
+            req_id = str(data.get("id"))
+            msg_id = self._pending_message_ids.pop(req_id, None)
+            if msg_id:
+                try:
+                    await self.feishu.add_typing_reaction(msg_id, emoji_type="DONE")
+                except Exception:
+                    pass
+            if req_id in self._pending_responses:
+                fut = self._pending_responses.pop(req_id)
                 if data.get("error"):
                     fut.set_result(data)
                 else:
@@ -89,7 +96,10 @@ class FeishuCoreWSClient:
         method = data.get("method", "")
         params = data.get("params", {})
 
-        if method == Event.RESPONSE or method == Event.STREAM_CHUNK:
+        if method == Event.RESPONSE:
+            await self._render_and_send(params)
+        elif method == Event.STREAM_CHUNK:
+            # 流式输出中
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
@@ -147,6 +157,12 @@ class FeishuCoreWSClient:
             project_path=self.project_path,
         )
 
+        # 添加 typing indicator: OK reaction 表示 AI 开始处理
+        try:
+            await self.feishu.add_typing_reaction(incoming.message_id, emoji_type="OK")
+        except Exception:
+            pass  # 失败不影响主流程
+
         req = JsonRpcRequest(
             id=self._next_id(),
             method="feishu.message",
@@ -169,7 +185,9 @@ class FeishuCoreWSClient:
         )
 
         future = asyncio.Future()
-        self._pending_responses[str(req.id)] = future
+        req_id = str(req.id)
+        self._pending_responses[req_id] = future
+        self._pending_message_ids[req_id] = incoming.message_id
 
         await self._ws.send(json.dumps(req.to_dict()))
 

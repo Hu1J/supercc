@@ -58,6 +58,48 @@ class CoreExecutor:
         from core.commands.router import CommandRouter
         self._router = CommandRouter()
 
+        # 安全组件初始化
+        self._init_security(config)
+
+    def _init_security(self, config: Any):
+        """根据 config 初始化 SecurityValidator（Authenticator 按 platform 懒加载）。"""
+        self._config = config
+        if config is None:
+            self._security_validator = None
+            return
+
+        # SecurityValidator（与平台无关，全局一份）
+        claude_cfg = getattr(config, "claude", None)
+        approved_dir = ""
+        if claude_cfg:
+            approved_dir = getattr(claude_cfg, "approved_directory", "")
+        if approved_dir:
+            from supercc.security.validator import SecurityValidator
+            self._security_validator = SecurityValidator(approved_dir)
+        else:
+            self._security_validator = None
+
+    def _get_authenticator_for_platform(self, platform: str):
+        """按 platform 获取对应的 Authenticator。"""
+        config = self._config
+        if config is None:
+            return None
+        channels = getattr(config, "channels", None)
+        if channels is None:
+            return None
+        from supercc.security.auth import Authenticator
+        if platform == "wecom":
+            wecom_cfg = getattr(channels, "wecom", None)
+            if wecom_cfg:
+                allowed = list(getattr(wecom_cfg, "allowed_users", []))
+                return Authenticator(allowed) if allowed else None
+        # 默认用飞书
+        feishu_cfg = getattr(channels, "feishu", None)
+        if feishu_cfg:
+            allowed = list(getattr(feishu_cfg, "allowed_users", []))
+            return Authenticator(allowed) if allowed else None
+        return None
+
     async def execute(
         self,
         inbound: InboundMessage,
@@ -70,7 +112,35 @@ class CoreExecutor:
         """
         key = inbound.session_key
 
-        # 检测斜杠命令
+        # ── 安全检查 ───────────────────────────────────────────────────────
+
+        # 1) Authenticator: P2P 白名单检查（按 platform 查找 allowed_users）
+        authenticator = self._get_authenticator_for_platform(key.platform)
+        if authenticator and inbound.user_open_id:
+            auth_result = authenticator.authenticate(inbound.user_open_id)
+            if not auth_result.authorized:
+                return OutboundMessage(
+                    event="command",
+                    session_key=key,
+                    message_id=inbound.message_id,
+                    content="⛔ 抱歉，你不在允许使用列表中。",
+                    message_type=MessageType.TEXT,
+                )
+
+        # 2) SecurityValidator: 内容安全检查（命令和普通消息都检查）
+        if self._security_validator and inbound.content:
+            ok, err_msg = self._security_validator.validate(inbound.content)
+            if not ok:
+                return OutboundMessage(
+                    event="command",
+                    session_key=key,
+                    message_id=inbound.message_id,
+                    content=f"⛔ 内容安全检查失败: {err_msg}",
+                    message_type=MessageType.TEXT,
+                )
+
+        # ── 斜杠命令检测 ───────────────────────────────────────────────────
+
         if _is_command(inbound.content):
             cmd_name, cmd_args = _parse_command(inbound.content)
             context = {
