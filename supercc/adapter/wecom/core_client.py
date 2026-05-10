@@ -79,11 +79,12 @@ class WeComCoreWSClient:
         """渲染 OutboundMessage 为企业微信格式并发送。"""
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
+        card = params.get("extra", {}).get("card")
 
         if not content:
             return
 
-        # WeCom 原生支持 Markdown，直接发送
+        # WeCom 原生支持 Markdown；Command card 降级为 markdown 发送（无卡片的平台）
         await self.wecom.send_markdown(chat_id, content)
 
     async def send_message(self, msg: dict) -> dict:

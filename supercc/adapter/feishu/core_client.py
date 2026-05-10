@@ -103,14 +103,20 @@ class FeishuCoreWSClient:
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
+        card = params.get("extra", {}).get("card")
 
-        if not content:
+        if not content and not card:
             return
 
-        if should_use_card(content):
+        if card:
+            # Command result with card - send as interactive card
             await self.feishu.send_interactive_card(chat_id, content)
         else:
-            await self.feishu.send_post_reply(chat_id, content, message_id)
+            # Normal message - use existing content-based heuristic
+            if should_use_card(content):
+                await self.feishu.send_interactive_card(chat_id, content)
+            else:
+                await self.feishu.send_post_reply(chat_id, content, message_id)
 
     async def _handle_tool_call(self, params: dict):
         """处理核心发来的工具调用请求。"""
