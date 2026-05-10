@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Callable, Awaitable
 
 from core.protocol import (
@@ -17,6 +18,19 @@ from core.session import SessionManager
 from core.worker import WorkerPool
 
 logger = logging.getLogger(__name__)
+
+_COMMAND_RE = re.compile(r"^/[a-zA-Z][a-zA-Z0-9_-]*(?:\s.*)?$")
+
+
+def _is_command(text: str) -> bool:
+    return bool(_COMMAND_RE.match(text))
+
+
+def _parse_command(text: str) -> tuple[str, str]:
+    parts = text.split(maxsplit=1)
+    cmd = parts[0][1:]  # strip leading /
+    args = parts[1] if len(parts) > 1 else ""
+    return cmd, args
 
 
 class CoreExecutor:
@@ -32,9 +46,15 @@ class CoreExecutor:
         self,
         session_manager: SessionManager,
         worker_pool: WorkerPool,
+        config: Any = None,
+        data_dir: str = "",
     ):
         self.sessions = session_manager
         self.pool = worker_pool
+        self._config = config
+        self._data_dir = data_dir
+        from core.commands.router import CommandRouter
+        self._router = CommandRouter()
 
     async def execute(
         self,
@@ -47,6 +67,29 @@ class CoreExecutor:
         on_stream: 流式输出的回调（每收到一个 chunk 调用一次）
         """
         key = inbound.session_key
+
+        # 检测斜杠命令
+        if _is_command(inbound.content):
+            cmd_name, cmd_args = _parse_command(inbound.content)
+            context = {
+                "session_key": key,
+                "user_open_id": inbound.user_open_id or "",
+                "chat_id": key.chat_id,
+                "platform": key.platform,
+                "config": self._config,
+                "data_dir": self._data_dir,
+                "worker_pool": self.pool,
+            }
+            cmd_result = await self._router.dispatch(cmd_name, cmd_args, context)
+            return OutboundMessage(
+                event="command",
+                session_key=key,
+                message_id=inbound.message_id,
+                content=cmd_result.content,
+                message_type=MessageType.TEXT,
+                extra={"card": cmd_result.card.to_dict() if cmd_result.card else None},
+            )
+
         user_open_id = inbound.user_open_id or ""
 
         # 获取或创建 Session
