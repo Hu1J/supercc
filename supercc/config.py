@@ -77,13 +77,26 @@ class DingTalkChannelConfig:
     enabled: bool = False
     app_key: str = ""
     app_secret: str = ""
-    allowed_users: List[str] = field(default_factory=list)  # 企微 P2P 白名单
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WeComChannelConfig:
+    """企业微信（WeCom）插件配置。Phase 3 新增。"""
+    enabled: bool = False
+    corp_id: str = ""
+    agent_id: str = ""
+    agent_secret: str = ""
+    bot_name: str = "Claude"
+    groups: dict = field(default_factory=dict)
+    allowed_users: list = field(default_factory=list)
 
 
 @dataclass
 class ChannelsConfig:
     feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
     dingtalk: DingTalkChannelConfig = field(default_factory=DingTalkChannelConfig)
+    wecom: WeComChannelConfig = field(default_factory=WeComChannelConfig)
 
 
 @dataclass
