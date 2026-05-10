@@ -17,6 +17,61 @@ from supercc.adapter.feishu.core_protocol import incoming_to_inbound
 logger = logging.getLogger(__name__)
 
 
+class StreamAccumulator:
+    """Buffers streaming text chunks and flushes to Feishu in batches.
+
+    Feishu message updates are expensive (one API call per message), so we buffer
+    chunks and flush when a tool call arrives or after a short idle period.
+    """
+
+    def __init__(self, chat_id: str, message_id: str, send_fn, flush_timeout: float = 1.5):
+        self.chat_id = chat_id
+        self._message_id = message_id
+        self._send = send_fn
+        self._flush_timeout = flush_timeout
+        self._buffer = ""
+        self._lock = asyncio.Lock()
+        self._timer_task: asyncio.Task | None = None
+        self.sent_something = False
+
+    async def add_text(self, text: str) -> None:
+        """Append text chunk and (re)start the flush timer."""
+        if not text:
+            return
+        async with self._lock:
+            self._buffer += text
+            if self._timer_task:
+                self._timer_task.cancel()
+            self._timer_task = asyncio.create_task(self._flush_after(self._flush_timeout))
+
+    async def flush(self) -> None:
+        """Send accumulated text immediately."""
+        async with self._lock:
+            if self._timer_task:
+                self._timer_task.cancel()
+                self._timer_task = None
+            if self._buffer:
+                text = self._buffer
+                self._buffer = ""
+                if text.strip():
+                    await self._send(self.chat_id, self._message_id, text)
+                    self.sent_something = True
+
+    async def _flush_after(self, delay: float) -> None:
+        """Flush after a delay, but cancel if more text arrives."""
+        try:
+            await asyncio.sleep(delay)
+            async with self._lock:
+                if self._buffer:
+                    text = self._buffer
+                    self._buffer = ""
+                    if text.strip():
+                        await self._send(self.chat_id, self._message_id, text)
+                        self.sent_something = True
+        except asyncio.CancelledError:
+            pass
+
+
 class FeishuCoreWSClient:
     """
     飞书插件的 Thin Client。
@@ -48,6 +103,8 @@ class FeishuCoreWSClient:
         self._pending_responses: dict[str, asyncio.Future] = {}
         self._pending_message_ids: dict[str, str] = {}  # req_id → incoming message_id
         self._id_counter = 0
+        # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
+        self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -84,6 +141,10 @@ class FeishuCoreWSClient:
                     await self.feishu.add_typing_reaction(msg_id, emoji_type="DONE")
                 except Exception:
                     pass
+                # Flush and clean up the stream accumulator for this message
+                if msg_id in self._accumulator_by_msg_id:
+                    acc = self._accumulator_by_msg_id.pop(msg_id)
+                    await acc.flush()
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 if data.get("error"):
@@ -99,7 +160,7 @@ class FeishuCoreWSClient:
         if method == Event.RESPONSE:
             await self._render_and_send(params)
         elif method == Event.STREAM_CHUNK:
-            # 流式输出中
+            # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
@@ -119,14 +180,34 @@ class FeishuCoreWSClient:
             return
 
         if card:
-            # Command result with card - send as interactive card
+            # Command result with card - flush any pending text, then send as interactive card
+            if message_id and message_id in self._accumulator_by_msg_id:
+                await self._accumulator_by_msg_id[message_id].flush()
             await self.feishu.send_interactive_card(chat_id, content)
         else:
-            # Normal message - use existing content-based heuristic
-            if should_use_card(content):
-                await self.feishu.send_interactive_card(chat_id, content)
+            # Buffer text chunks for efficient batched sending
+            if message_id:
+                if message_id not in self._accumulator_by_msg_id:
+                    self._accumulator_by_msg_id[message_id] = StreamAccumulator(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
+                    )
+                await self._accumulator_by_msg_id[message_id].add_text(content)
             else:
-                await self.feishu.send_post_reply(chat_id, content, message_id)
+                # No message_id (e.g. final RESPONSE without streaming) - send directly
+                if should_use_card(content):
+                    await self.feishu.send_interactive_card(chat_id, content)
+                else:
+                    await self.feishu.send_post_reply(chat_id, content, message_id)
+
+    async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
+        """Send text to Feishu (called by StreamAccumulator after buffering)."""
+        from supercc.adapter.feishu.format.reply_formatter import should_use_card
+        if should_use_card(text):
+            await self.feishu.send_interactive_card(chat_id, text)
+        else:
+            await self.feishu.send_post_reply(chat_id, text, message_id)
 
     async def _handle_tool_call(self, params: dict):
         """处理核心发来的工具调用请求。"""
@@ -134,6 +215,12 @@ class FeishuCoreWSClient:
         tool_input = params.get("tool_input", {})
         tool_call_id = params.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
+        msg_id = params.get("message_id", "")
+
+        # Flush any pending streaming text for this message before handling tool call
+        if msg_id and msg_id in self._accumulator_by_msg_id:
+            acc = self._accumulator_by_msg_id[msg_id]
+            await acc.flush()
 
         # 执行工具（通过 FeishuClient 的 MCP 工具）
         result_content = f"[{tool_name}] executed"
