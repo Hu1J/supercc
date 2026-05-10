@@ -61,6 +61,14 @@ class CoreExecutor:
         # 安全组件初始化
         self._init_security(config)
 
+        # 后台任务通知回调（由插件在初始化时注入，用于推送 SkillNudge/Memory Review 结果）
+        # 签名: Callable[[str, str], Awaitable[None]] = (chat_id, content) -> None
+        self._background_callback: Callable[[str, str], Awaitable[None]] | None = None
+
+    def set_background_callback(self, cb: Callable[[str, str], Awaitable[None]] | None):
+        """插件设置后台任务完成通知回调，用于推送 SkillNudge/Memory Review 结果。"""
+        self._background_callback = cb
+
     def _init_security(self, config: Any):
         """根据 config 初始化 SecurityValidator（Authenticator 按 platform 懒加载）。"""
         self._config = config

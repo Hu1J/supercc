@@ -279,3 +279,4 @@ class Event:
     ERROR = "error"
     PONG = "pong"
     WORKER_STATUS = "worker_status"
+    BACKGROUND_COMPLETE = "background_complete"  # SkillNudge/Memory Review 等后台任务完成通知

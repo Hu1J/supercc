@@ -81,8 +81,9 @@ class FeishuCoreWSClient:
     - 将 IncomingMessage（来自飞书）转换为 InboundMessage，发给核心
     - 接收核心的 OutboundMessage，渲染为飞书格式并发送
     - 处理 tool_call 事件（委托给 FeishuClient 执行）
+    - 管理 SkillNudge 和 Memory Review 后台任务
 
-    不负责：Session 管理、AI 推理、记忆操作
+    不负责：Session 管理、AI 推理（但持有专用的 ClaudeIntegration 实例供后台任务使用）
     """
 
     def __init__(
@@ -92,6 +93,7 @@ class FeishuCoreWSClient:
         bot_id: str,
         project_path: str,
         on_message: Callable[[IncomingMessage], Awaitable[None]] | None = None,
+        data_dir: str = "",
     ):
         self.core_url = core_url
         self.feishu = feishu_client
@@ -105,6 +107,13 @@ class FeishuCoreWSClient:
         self._id_counter = 0
         # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
+        # SkillNudge tracking: message_id → tool call count
+        self._tool_call_counts: dict[str, int] = {}
+        # Claude instances for background tasks (lazy init)
+        self._claude_skill: Any = None
+        self._claude_memory: Any = None
+        self._data_dir = data_dir
+        self._skills_dir: Any = None
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -159,6 +168,11 @@ class FeishuCoreWSClient:
 
         if method == Event.RESPONSE:
             await self._render_and_send(params)
+            # Trigger SkillNudge and Memory Review after main response
+            chat_id = params.get("chat_id", "")
+            msg_id = params.get("message_id", "")
+            content = params.get("content", "") or ""
+            self._trigger_background_tasks(chat_id, msg_id, content)
         elif method == Event.STREAM_CHUNK:
             # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)
@@ -221,6 +235,10 @@ class FeishuCoreWSClient:
         if msg_id and msg_id in self._accumulator_by_msg_id:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
+
+        # Track tool call for SkillNudge (increment count for this message)
+        if msg_id:
+            self._tool_call_counts[msg_id] = self._tool_call_counts.get(msg_id, 0) + 1
 
         # 执行工具（通过 FeishuClient 的 MCP 工具）
         result_content = f"[{tool_name}] executed"
@@ -353,3 +371,130 @@ class FeishuCoreWSClient:
         self._running = False
         if self._ws:
             await self._ws.close()
+
+    # ── Background Tasks (SkillNudge + Memory Review) ───────────────────────
+
+    def _trigger_background_tasks(self, chat_id: str, msg_id: str, response_content: str) -> None:
+        """主响应完成后触发 SkillNudge 和 Memory Review 后台任务。"""
+        tool_count = self._tool_call_counts.pop(msg_id, 0)
+
+        # SkillNudge: after RESPONSE, check if threshold hit
+        if tool_count > 0:
+            asyncio.create_task(self._do_skill_nudge(chat_id, msg_id, tool_count))
+
+        # Memory Review: always trigger after main query completes
+        asyncio.create_task(self._do_memory_review(chat_id, msg_id, response_content))
+
+    async def _do_skill_nudge(self, chat_id: str, msg_id: str, tool_count: int) -> None:
+        """检查 SkillNudge 阈值，达到后触发 skill review。"""
+        try:
+            # Lazy init ClaudeIntegration for skill review
+            if self._claude_skill is None:
+                from pathlib import Path
+                from supercc.claude.integration import ClaudeIntegration
+                self._claude_skill = ClaudeIntegration(
+                    cli_path="claude",
+                    max_turns=5,
+                    approved_directory=self.project_path,
+                )
+                self._skills_dir = Path(self._data_dir) / "skills" if self._data_dir else None
+
+            # Load or create SkillNudge
+            nudge = self._load_or_create_nudge()
+
+            # Increment counter for each tool call
+            if nudge.increment():
+                # Threshold hit - trigger review
+                from supercc.evolve.skill_nudge import trigger_skill_review
+                logger.info("[SkillNudge] threshold hit, starting background review")
+
+                def send_to_feishu(cid: str, text: str) -> None:
+                    asyncio.create_task(self.feishu.send_text(cid, text))
+
+                await trigger_skill_review(
+                    make_claude_query=lambda p: self._claude_skill.query(prompt=p),
+                    nudge=nudge,
+                    chat_id=chat_id,
+                    send_to_feishu=send_to_feishu,
+                    skills_dir=self._skills_dir,
+                )
+                # Mark review done to reset counter
+                nudge.mark_review_done()
+        except Exception as e:
+            logger.warning(f"[SkillNudge] background review failed: {e}")
+
+    def _load_or_create_nudge(self):
+        """Load existing SkillNudge state or create new one."""
+        from pathlib import Path
+        from supercc.evolve.skill_nudge import SkillNudge, SkillNudgeConfig, make_nudge
+        import json
+
+        nudge_file = self._skills_dir / "skill_nudge.json" if self._skills_dir else None
+        if nudge_file and nudge_file.exists():
+            try:
+                with open(nudge_file) as f:
+                    data = json.load(f)
+                config = SkillNudgeConfig(
+                    enabled=data.get("enabled", True),
+                    interval=data.get("interval", 10),
+                )
+                nudge = make_nudge(config)
+                # Restore count if any
+                nudge._count = data.get("count", 0)
+                return nudge
+            except Exception:
+                pass
+        return make_nudge(SkillNudgeConfig())
+
+    async def _do_memory_review(self, chat_id: str, msg_id: str, response_content: str) -> None:
+        """运行 Memory Review 后台任务。"""
+        try:
+            # Lazy init ClaudeIntegration for memory review
+            if self._claude_memory is None:
+                from supercc.claude.integration import ClaudeIntegration
+                self._claude_memory = ClaudeIntegration(
+                    cli_path="claude",
+                    max_turns=5,
+                    approved_directory=self.project_path,
+                    memory_only=True,
+                )
+
+            from supercc.memory.manager import get_memory_manager
+            memory_manager = get_memory_manager()
+
+            prompt = (
+                "根据之前的对话，判断是否有值得记住的信息。需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，不需要问我任何问题。\n"
+            )
+
+            async def stream_callback(claude_msg):
+                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                    result = self._format_memory_tool_result(claude_msg.tool_name, claude_msg.tool_input)
+                    if result:
+                        await self.feishu.send_text(chat_id, result)
+                    logger.info(f"[memory_review] tool: {claude_msg.tool_name}")
+
+            await self._claude_memory.query(prompt=prompt, on_stream=stream_callback)
+            logger.info("[MemoryReview] background review done")
+        except Exception as e:
+            logger.warning(f"[MemoryReview] background review failed: {e}")
+
+    def _format_memory_tool_result(self, tool_name: str, tool_input: str) -> str | None:
+        """Format memory MCP tool result for display."""
+        if not tool_input:
+            return None
+        try:
+            import json
+            data = json.loads(tool_input) if isinstance(tool_input, str) else tool_input
+            action = ""
+            if "add" in tool_name.lower():
+                action = "📝 记忆已新增"
+            elif "update" in tool_name.lower():
+                action = "✏️ 记忆已更新"
+            elif "delete" in tool_name.lower():
+                action = "🗑️ 记忆已删除"
+            else:
+                return None
+            title = data.get("title", "") if isinstance(data, dict) else ""
+            return f"{action}: {title}" if title else action
+        except Exception:
+            return None
