@@ -494,6 +494,57 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         config_path=config_path,
     )
 
+    # ── Phase 3: 企业微信插件（WeCom Thin Client）────────────────────────────
+    # Check if WeCom is configured (look for wecom.corp_id in config)
+    _wecom_cfg = getattr(config.channels, "wecom", None)
+    if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "corp_id", ""):
+        from supercc.adapter.wecom.client import WeComClient
+        from supercc.adapter.wecom.ws_client import WeComWSClient
+        from supercc.adapter.wecom.core_client import WeComCoreWSClient
+
+        wecom_client = WeComClient(
+            corp_id=_wecom_cfg.corp_id,
+            agent_id=_wecom_cfg.agent_id,
+            corp_secret=_wecom_cfg.corp_secret,
+        )
+
+        wecom_core_client = WeComCoreWSClient(
+            core_url="ws://127.0.0.1:8765",
+            wecom_client=wecom_client,
+            bot_id=_wecom_cfg.agent_id,
+            project_path=config.claude.approved_directory,
+        )
+
+        def on_wecom_message(msg: dict):
+            """WeComWSClient 收到消息后，转发给 WeComCoreWSClient。"""
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(wecom_core_client.send_message(msg))
+                loop.close()
+                return
+            asyncio.ensure_future(wecom_core_client.send_message(msg))
+
+        wecom_ws = WeComWSClient(
+            bot_id=_wecom_cfg.agent_id,
+            bot_secret=getattr(_wecom_cfg, "agent_secret", ""),
+            on_message=on_wecom_message,
+        )
+
+        def run_wecom_core_client():
+            import asyncio
+            asyncio.run(wecom_core_client.connect())
+
+        wecom_core_thread = threading.Thread(target=run_wecom_core_client, daemon=True)
+        wecom_core_thread.start()
+        logger.info("[Phase3] WeComCoreWSClient connecting to core...")
+
+        wecom_ws.start()
+        logger.info("[Phase3] WeCom WS client started")
+    else:
+        logger.info("[Phase3] WeCom not configured (skipping)")
+
     # ── Cron scheduler（如有任务需要 AI 推理，依赖 core_client）─────────────────
     cron_scheduler = CronScheduler(config, data_dir)
     set_cron_scheduler(cron_scheduler, config)
