@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -42,6 +42,16 @@ class SessionKey:
         return f"{self.bot_id}×{self.platform}×{self.chat_id}×{self.project_path}"
 
 
+# ── Helper functions ──────────────────────────────────────────────────────────
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def default_session_key() -> SessionKey:
+    return SessionKey(bot_id="", project_path="", platform="", chat_id="")
+
+
 # ── Inbound (plugin -> core) ──────────────────────────────────────────────────
 
 @dataclass
@@ -60,7 +70,7 @@ class InboundMessage:
     media_path: Optional[str] = None  # 本地媒体路径（图片/文件）
     user_open_id: Optional[str] = None  # 发送者平台 open_id
     thread_id: Optional[str] = None  # 平台 thread_id（消息流）
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utcnow)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -102,7 +112,7 @@ class OutboundMessage:
     message_type: MessageType = MessageType.TEXT
     media_path: Optional[str] = None  # 本地媒体路径
     thread_id: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utcnow)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -118,12 +128,8 @@ class ToolCallRequest:
     message_id: str = ""
     tool_call: ToolCall = field(default_factory=ToolCall)
     thread_id: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utcnow)
     extra: dict[str, Any] = field(default_factory=dict)
-
-
-def default_session_key() -> SessionKey:
-    return SessionKey(bot_id="", project_path="", platform="", chat_id="")
 
 
 # ── JSON-RPC 2.0 Frames ──────────────────────────────────────────────────────
