@@ -60,4 +60,14 @@ class VerboseHandler(CommandHandler):
         else:
             msg = "❓ 用法：/verbose [on|off|skill on|off|mem on|off|step on|off]"
 
+        # 持久化到磁盘
+        config_path = context.get("config_path", "")
+        if config_path:
+            try:
+                from supercc.config import _write_config_to_path
+                _write_config_to_path(config_path, config)
+            except Exception as e:
+                import logging
+                logging.warning(f"[/verbose] failed to write config: {e}")
+
         return CommandResult(content=msg)

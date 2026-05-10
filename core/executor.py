@@ -48,11 +48,13 @@ class CoreExecutor:
         worker_pool: WorkerPool,
         config: Any = None,
         data_dir: str = "",
+        config_path: str = "",
     ):
         self.sessions = session_manager
         self.pool = worker_pool
         self._config = config
         self._data_dir = data_dir
+        self._config_path = config_path
         from core.commands.router import CommandRouter
         self._router = CommandRouter()
 
@@ -78,11 +80,12 @@ class CoreExecutor:
                 "platform": key.platform,
                 "config": self._config,
                 "data_dir": self._data_dir,
+                "config_path": self._config_path,
                 "worker_pool": self.pool,
             }
             cmd_result = await self._router.dispatch(cmd_name, cmd_args, context)
             return OutboundMessage(
-                event="command",
+                event=cmd_result.event,
                 session_key=key,
                 message_id=inbound.message_id,
                 content=cmd_result.content,
@@ -126,10 +129,21 @@ class CoreExecutor:
 
         # 执行查询
         try:
+            # 创建 ClaudeIntegration（每个 Worker 独立实例，由 pool.acquire 只在创建时注入）
+            from supercc.claude.integration import ClaudeIntegration
+            cli_path = "claude"
+            if self._config and hasattr(self._config, "claude"):
+                cli_path = getattr(self._config.claude, "cli_path", "claude")
+            integration = ClaudeIntegration(
+                cli_path=cli_path,
+                max_turns=50,
+                approved_directory=key.project_path,
+            )
+
             result, cost = await self.pool.execute(
                 key=key,
                 session_id=session.session_id,
-                integration=None,  # 实际由 pool.acquire 内部创建
+                integration=integration,
                 prompt=prompt,
                 on_stream=_stream_callback,
             )
