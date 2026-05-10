@@ -10,6 +10,7 @@ from core.commands.skill import SkillHandler
 from core.commands.status import StatusHandler
 from core.commands.stop import StopHandler
 from core.commands.verbose import VerboseHandler
+from core.commands.router import CommandRouter
 
 __all__ = [
     "CommandHandler",
@@ -25,4 +26,5 @@ __all__ = [
     "StatusHandler",
     "StopHandler",
     "VerboseHandler",
+    "CommandRouter",
 ]
