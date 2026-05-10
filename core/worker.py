@@ -45,6 +45,7 @@ class Worker:
     stats: WorkerStats = field(default_factory=lambda: WorkerStats(session_id=""))
     integration: Any = field(default=None)  # ClaudeIntegration 实例
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _current_task: asyncio.Task | None = None  # 当前执行中的 Task
 
     def __post_init__(self):
         if self.stats.session_id == "":
@@ -120,3 +121,34 @@ class WorkerPool:
                 "idle": sum(1 for w in self._workers.values() if w.state == WorkerState.IDLE),
                 "busy": sum(1 for w in self._workers.values() if w.state == WorkerState.BUSY),
             }
+
+    async def execute(
+        self,
+        key: SessionKey,
+        session_id: str,
+        integration: Any,
+        prompt: str,
+        on_stream: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> tuple[str, float]:
+        """
+        为单个消息执行 Claude 查询。
+
+        每个消息创建独立 asyncio.Task，支持并发。
+        Worker 永久绑定 key，同一 key 的消息串行处理。
+        """
+        worker = await self.acquire(key, session_id, integration)
+        async with worker._lock:
+            worker.state = WorkerState.BUSY
+
+        try:
+            # 每个消息创建独立 task，在 worker 锁内等待完成
+            task = asyncio.create_task(
+                worker.integration.query(prompt=prompt, on_stream=on_stream)
+            )
+            worker._current_task = task
+            result, sdk_sid, cost = await task
+            return result, cost
+        finally:
+            worker.state = WorkerState.IDLE
+            worker._current_task = None
+            await self.release(key)

@@ -99,13 +99,15 @@ class WsServer:
     - Event:    {"jsonrpc": "2.0", "method": "...", "params": {...}}  (无 id)
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8765,
+                 executor: Any | None = None):
         self.host = host
         self.port = port
         self.router = Router()
         self._connections: dict[str, Connection] = {}  # connection_id -> Connection
         self._server: Optional[Any] = None
         self._running = asyncio.Event()
+        self._executor = executor
 
         # 注册核心方法
         self._setup_core_methods()
@@ -116,6 +118,7 @@ class WsServer:
         self.router.add("core.unsubscribe", self._handle_unsubscribe)
         self.router.add("core.worker_status", self._handle_worker_status)
         self.router.add("core.ping", self._handle_ping)
+        self.router.add("feishu.message", self._handle_message)
 
     # ── 核心方法处理 ────────────────────────────────────────────────────────
 
@@ -164,6 +167,62 @@ class WsServer:
     async def _handle_ping(self, req: JsonRpcRequest) -> dict:
         """Ping-pong。"""
         return {"pong": True}
+
+    async def _handle_message(self, req: JsonRpcRequest) -> dict:
+        """处理来自飞书插件的消息。"""
+        from core.protocol import InboundMessage, SessionKey, MessageRole, MessageType, _cst_now
+
+        params = req.params
+
+        # 重建 SessionKey
+        key = SessionKey(
+            bot_id=params.get("bot_id", ""),
+            project_path=params.get("project_path", ""),
+            platform=params.get("platform", "feishu"),
+            chat_id=params.get("chat_id", ""),
+        )
+
+        # 转换 params → InboundMessage
+        msg_type_str = params.get("message_type", "text")
+        msg_type_map = {
+            "text": MessageType.TEXT,
+            "image": MessageType.IMAGE,
+            "file": MessageType.FILE,
+            "audio": MessageType.FILE,
+        }
+        msg_type = msg_type_map.get(msg_type_str, MessageType.TEXT)
+
+        inbound = InboundMessage(
+            event="message",
+            session_key=key,
+            message_id=params.get("message_id", ""),
+            role=MessageRole.USER,
+            content=params.get("content", ""),
+            message_type=msg_type,
+            media_path=None,
+            user_open_id=params.get("user_open_id") or None,
+            thread_id=params.get("thread_id") or None,
+            timestamp=_cst_now(),
+            extra={
+                "raw": params.get("raw", ""),
+                "is_group_chat": params.get("is_group_chat", False),
+                "mention_bot": params.get("mention_bot", False),
+                "mention_ids": params.get("mention_ids", []),
+                "group_name": params.get("group_name", ""),
+                "chat_type": params.get("chat_type", "p2p"),
+            },
+        )
+
+        # 通过 executor 处理
+        if self._executor is None:
+            raise RuntimeError("No executor configured")
+
+        result_outbound = await self._executor.execute(inbound)
+        return {
+            "message_id": result_outbound.message_id,
+            "content": result_outbound.content,
+            "event": result_outbound.event,
+        }
 
     # ── 连接管理 ──────────────────────────────────────────────────────────
 
