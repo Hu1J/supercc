@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import secrets
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
 from core.protocol import (
@@ -79,9 +80,6 @@ class Connection:
 
 
 # ── WebSocket Server ────────────────────────────────────────────────────────
-
-from dataclasses import dataclass, field
-
 
 class WsServer:
     """
