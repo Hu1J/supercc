@@ -10,6 +10,9 @@ from core.commands.codex import CodexHandler
 from core.commands.verbose import VerboseHandler
 from core.commands.memory import MemoryHandler
 from core.commands.skill import SkillHandler
+from core.commands.restart import RestartHandler
+from core.commands.update import UpdateHandler
+from core.commands.switch import SwitchHandler
 
 
 class CommandRouter:
@@ -29,6 +32,9 @@ class CommandRouter:
             VerboseHandler(),
             MemoryHandler(),
             SkillHandler(),
+            RestartHandler(),
+            UpdateHandler(),
+            SwitchHandler(),
         ]:
             self._handlers[h.name] = h
 

@@ -84,13 +84,15 @@ class CoreExecutor:
                 "worker_pool": self.pool,
             }
             cmd_result = await self._router.dispatch(cmd_name, cmd_args, context)
+            extra = {"card": cmd_result.card.to_dict() if cmd_result.card else None}
+            extra.update(cmd_result.extra)
             return OutboundMessage(
                 event=cmd_result.event,
                 session_key=key,
                 message_id=inbound.message_id,
                 content=cmd_result.content,
                 message_type=MessageType.TEXT,
-                extra={"card": cmd_result.card.to_dict() if cmd_result.card else None},
+                extra=extra,
             )
 
         user_open_id = inbound.user_open_id or ""

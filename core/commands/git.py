@@ -23,8 +23,18 @@ class GitHandler(CommandHandler):
             return ""
 
     async def execute(self, args: str, context: dict) -> CommandResult:
+        from supercc.banner import _check_git_available
+
         session_key: SessionKey = context.get("session_key")
         project_path = session_key.project_path if session_key else ""
+
+        if not _check_git_available():
+            return CommandResult(
+                content=(
+                    "⚠️ 检测到系统中尚未安装 git，无法使用 /git 命令。\n\n"
+                    "💡 跟我说: \"安装 git\", 即可启用 Git 相关功能。"
+                )
+            )
 
         branch = self._run_git(["branch", "--show-current"], project_path) or "(无分支)"
         status_output = self._run_git(["status", "--porcelain"], project_path)

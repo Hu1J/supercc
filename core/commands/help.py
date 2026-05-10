@@ -23,6 +23,9 @@ class HelpHandler(CommandHandler):
             "• /verbose — 控制消息推送\n"
             "• /memory — 查看/管理记忆\n"
             "• /skill — 查看技能列表\n"
+            "• /switch <路径> — 切换到另一个项目\n"
+            "• /restart — 重启当前 SuperCC\n"
+            "• /update — 检查并更新到最新版本\n"
             "• /help — 显示本帮助"
         )
         return CommandResult(content=text)

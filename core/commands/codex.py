@@ -30,11 +30,16 @@ class CodexHandler(CommandHandler):
             return CommandResult(content=format_codex_availability(status))
         if first in ("models", "model"):
             return CommandResult(content=format_codex_models())
+        if first == "setup":
+            from supercc.claude.codex_mcp import ensure_codex_mcp_configured
+            status = ensure_codex_mcp_configured(context.get("config"))
+            return CommandResult(content=format_codex_status(status))
         return CommandResult(
             content=(
                 "Codex 命令：\n"
                 "• /codex status — 查看 Codex MCP 状态\n"
                 "• /codex available — 快速判断 Codex 当前是否可用\n"
-                "• /codex models — 查看 Codex 可选模型"
+                "• /codex models — 查看 Codex 可选模型\n"
+                "• /codex setup — 立即写入/刷新 Claude Code 的 Codex MCP 配置"
             )
         )
