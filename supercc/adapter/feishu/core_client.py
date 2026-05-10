@@ -157,6 +157,9 @@ class FeishuCoreWSClient:
             project_path=self.project_path,
         )
 
+        # 群聊上下文 enrichment（历史、成员列表、引用消息）
+        await self._enrich_group_context(inbound, incoming)
+
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
             await self.feishu.add_typing_reaction(incoming.message_id, emoji_type="OK")
@@ -193,6 +196,60 @@ class FeishuCoreWSClient:
 
         result = await future
         return result or {}
+
+    async def _enrich_group_context(self, inbound, incoming):
+        """为群聊消息收集并注入上下文：历史、成员列表、引用消息。"""
+        if not inbound.extra.get("is_group_chat"):
+            return
+
+        chat_id = inbound.session_key.chat_id
+        extra = inbound.extra
+
+        # 1) 群历史（最近10条）
+        try:
+            history = await self.feishu.get_chat_history(chat_id, limit=10)
+            if history:
+                history_lines = []
+                for msg in history:
+                    # sender.id: 发送者 open_id；body.content: 消息内容
+                    sender = msg.get("sender", {})
+                    user = getattr(sender, "id", "?") if hasattr(sender, "id") else sender.get("id", "?")
+                    body = msg.get("body", {})
+                    text = body.get("content", "") if isinstance(body, dict) else ""
+                    if text:
+                        history_lines.append(f"{user}: {text[:200]}")
+                extra["group_history"] = history_lines
+        except Exception as e:
+            logger.warning(f"[FeishuCore] failed to fetch group history: {e}")
+
+        # 2) 群成员列表
+        try:
+            members = await self.feishu.get_chat_members(chat_id)
+            if members:
+                names = []
+                for m in members[:50]:
+                    if hasattr(m, "name"):
+                        names.append(getattr(m, "name", "?"))
+                    elif isinstance(m, dict):
+                        names.append(m.get("bot_name", m.get("name", "?")))
+                    else:
+                        names.append(str(m))
+                extra["group_members"] = names
+        except Exception as e:
+            logger.warning(f"[FeishuCore] failed to fetch group members: {e}")
+
+        # 3) 引用消息内容（parent_id → get_message）
+        parent_id = getattr(incoming, "parent_id", "") or ""
+        if parent_id:
+            try:
+                quoted_msg = await self.feishu.get_message(parent_id)
+                if quoted_msg:
+                    body = quoted_msg.get("body", {})
+                    quoted_text = body.get("content", "") if isinstance(body, dict) else ""
+                    if quoted_text:
+                        extra["quoted_content"] = quoted_text[:500]
+            except Exception as e:
+                logger.warning(f"[FeishuCore] failed to fetch quoted message {parent_id}: {e}")
 
     async def _send_event(self, method: str, params: dict):
         """发送 Event notification 到核心。"""

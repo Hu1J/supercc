@@ -199,30 +199,38 @@ class CoreExecutor:
                 )
                 await on_stream(tool_msg)
 
-        # 执行查询
-        try:
-            # 创建 ClaudeIntegration（每个 Worker 独立实例，由 pool.acquire 只在创建时注入）
-            from supercc.claude.integration import ClaudeIntegration
-            cli_path = "claude"
-            if self._config and hasattr(self._config, "claude"):
-                cli_path = getattr(self._config.claude, "cli_path", "claude")
-            integration = ClaudeIntegration(
-                cli_path=cli_path,
-                max_turns=50,
-                approved_directory=key.project_path,
-            )
+        # 执行查询（最多重试3次，SDK 空响应时重试）
+        result = ""
+        cost = 0.0
+        for attempt in range(3):
+            try:
+                from supercc.claude.integration import ClaudeIntegration
+                cli_path = "claude"
+                if self._config and hasattr(self._config, "claude"):
+                    cli_path = getattr(self._config.claude, "cli_path", "claude")
+                integration = ClaudeIntegration(
+                    cli_path=cli_path,
+                    max_turns=50,
+                    approved_directory=key.project_path,
+                )
 
-            result, cost = await self.pool.execute(
-                key=key,
-                session_id=session.session_id,
-                integration=integration,
-                prompt=prompt,
-                on_stream=_stream_callback,
-            )
-        except Exception as e:
-            logger.exception(f"[CoreExecutor] execute error for {key}")
-            result = f"错误: {e}"
-            cost = 0.0
+                result, cost = await self.pool.execute(
+                    key=key,
+                    session_id=session.session_id,
+                    integration=integration,
+                    prompt=prompt,
+                    on_stream=_stream_callback,
+                )
+                if result and result.strip():
+                    break  # 成功，非空
+                if attempt < 2:
+                    logger.info(f"[CoreExecutor] empty response, retry {attempt + 2}/3")
+                    await asyncio.sleep(0.5 * (attempt + 1))
+            except Exception as e:
+                logger.exception(f"[CoreExecutor] execute error for {key}")
+                result = f"错误: {e}"
+                cost = 0.0
+                break
 
         # 更新 Session 统计
         self.sessions.update_session(
@@ -253,12 +261,32 @@ class CoreExecutor:
         )
 
     def _build_prompt(self, inbound: InboundMessage) -> str:
-        """从 inbound 构建发送给 Claude 的 prompt。"""
-        content = inbound.content
-
-        # 注入平台信息
+        """从 inbound 构建发送给 Claude 的 prompt，含群聊上下文。"""
         extra = inbound.extra
-        if extra.get("is_group_chat"):
-            content = f"[群聊 {extra.get('group_name', '')}] {content}"
+        parts = []
 
-        return content
+        # 群聊：注入群名、成员、引用消息、历史
+        if extra.get("is_group_chat"):
+            group_name = extra.get("group_name", "")
+            parts.append(f"[群聊: {group_name}]")
+
+            # 群成员列表
+            members = extra.get("group_members", [])
+            if members:
+                member_list = ", ".join(members[:50])
+                parts.append(f"[群成员] {member_list}")
+
+            # 引用消息内容
+            quoted = extra.get("quoted_content", "")
+            if quoted:
+                parts.append(f"[引用消息] {quoted}")
+
+            # 群历史（最近10条）
+            history = extra.get("group_history", [])
+            if history:
+                parts.append("[最近消息]")
+                for h in history[-10:]:
+                    parts.append(f"  {h}")
+
+        parts.append(inbound.content)
+        return "\n\n".join(parts)
