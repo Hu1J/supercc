@@ -457,18 +457,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     # Startup: ensure Claude Code onboarding is complete (幂等，重复调用无影响)
     _ensure_codex_mcp(config)
 
-    handler = create_handler(config, data_dir, config_path=config_path)
     _ensure_agents_md(config.claude.approved_directory)
-
-    ws_client = FeishuWSClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
-        bot_name=config.channels.feishu.bot_name,
-        bot_open_id=config.channels.feishu.bot_open_id,
-        domain=config.channels.feishu.domain,
-        on_message=lambda msg: handle_message(msg, handler),
-        config_path=config_path,
-    )
 
     # Write PID file for process management
     pid_file = os.path.join(data_dir, "supercc.pid")
@@ -476,8 +465,15 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     # Clean up PID file and lock on exit
     cron_scheduler = None
+    core_server = None
+
     def cleanup(signum, frame):
-        cron_scheduler.stop()
+        nonlocal cron_scheduler, core_server
+        if cron_scheduler:
+            cron_scheduler.stop()
+        if core_server:
+            import asyncio
+            asyncio.run(core_server.stop())
         remove_pid(pid_file)
         lock.release()
         sys.exit(0)
@@ -496,7 +492,89 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         sub_dir = os.path.join(data_dir, sub)
         os.makedirs(sub_dir, exist_ok=True)
 
-    # Start cron scheduler (定时任务后台调度器)
+    # ── Phase 2: 启动核心服务 + 飞书 Thin Client ──────────────────────────────
+
+    # 1. 创建 FeishuClient（用于发送消息）
+    feishu = FeishuClient(
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        data_dir=data_dir,
+    )
+
+    # 2. 启动核心服务（异步，在后台线程运行）
+    def run_core_server():
+        import asyncio
+        from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+        from core.worker import WorkerPool
+        from core.executor import CoreExecutor
+        from core.server import WsServer
+
+        session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
+        worker_pool = WorkerPool()
+        executor = CoreExecutor(
+            session_manager=session_manager,
+            worker_pool=worker_pool,
+        )
+        nonlocal core_server
+        core_server = WsServer(
+            host="127.0.0.1",
+            port=8765,
+            executor=executor,
+        )
+        asyncio.run(core_server.start())
+
+    import threading
+    core_thread = threading.Thread(target=run_core_server, daemon=True)
+    core_thread.start()
+    logger.info("[Phase2] Core WsServer started in background thread")
+
+    # 3. 创建 FeishuCoreWSClient（Thin Client，连接核心）
+    from supercc.adapter.feishu.core_client import FeishuCoreWSClient
+    core_url = "ws://127.0.0.1:8765"
+    core_client = FeishuCoreWSClient(
+        core_url=core_url,
+        feishu_client=feishu,
+        bot_id=config.channels.feishu.bot_open_id,
+        project_path=config.claude.approved_directory,
+    )
+
+    # 4. 在后台连接核心（等待连接建立）
+    def run_core_client():
+        import asyncio
+        asyncio.run(core_client.connect())
+
+    core_client_thread = threading.Thread(target=run_core_client, daemon=True)
+    core_client_thread.start()
+    logger.info("[Phase2] FeishuCoreWSClient connecting to core...")
+
+    # 5. 创建 FeishuWSClient（接收飞书消息，转发给核心）
+    async def on_feishu_message_async(msg: IncomingMessage):
+        """FeishuWSClient 收到消息后，转发给 FeishuCoreWSClient。"""
+        await core_client.send_message(msg)
+
+    def on_feishu_message(msg: IncomingMessage):
+        """同步包装：获取运行中的事件循环后调度异步版本。"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(on_feishu_message_async(msg))
+            loop.close()
+            return
+        asyncio.ensure_future(on_feishu_message_async(msg))
+
+    ws_client = FeishuWSClient(
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        bot_open_id=config.channels.feishu.bot_open_id,
+        domain=config.channels.feishu.domain,
+        on_message=on_feishu_message,
+        config_path=config_path,
+    )
+
+    # ── Cron scheduler（如有任务需要 AI 推理，依赖 core_client）─────────────────
     cron_scheduler = CronScheduler(config, data_dir)
     set_cron_scheduler(cron_scheduler, config)
     cron_scheduler.start()
