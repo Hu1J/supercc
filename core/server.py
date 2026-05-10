@@ -117,6 +117,7 @@ class WsServer:
         self.router.add("core.worker_status", self._handle_worker_status)
         self.router.add("core.ping", self._handle_ping)
         self.router.add("feishu.message", self._handle_message)
+        self.router.add("wecom.message", self._handle_wecom_message)
 
     # ── 核心方法处理 ────────────────────────────────────────────────────────
 
@@ -221,6 +222,10 @@ class WsServer:
             "content": result_outbound.content,
             "event": result_outbound.event,
         }
+
+    async def _handle_wecom_message(self, req: JsonRpcRequest) -> dict:
+        """处理来自企业微信插件的消息（复用 feishu.message 逻辑）。"""
+        return await self._handle_message(req)
 
     # ── 连接管理 ──────────────────────────────────────────────────────────
 
