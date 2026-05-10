@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Any, Optional
 
@@ -42,10 +42,14 @@ class SessionKey:
         return f"{self.bot_id}×{self.platform}×{self.chat_id}×{self.project_path}"
 
 
-# ── Helper functions ──────────────────────────────────────────────────────────
+# ── Timezone (Beijing Time, UTC+8) ───────────────────────────────────────────
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+_CST = timezone(timedelta(hours=8))
+
+
+def _cst_now() -> datetime:
+    """北京时间（UTC+8）。"""
+    return datetime.now(_CST)
 
 
 def default_session_key() -> SessionKey:
@@ -70,7 +74,7 @@ class InboundMessage:
     media_path: Optional[str] = None  # 本地媒体路径（图片/文件）
     user_open_id: Optional[str] = None  # 发送者平台 open_id
     thread_id: Optional[str] = None  # 平台 thread_id（消息流）
-    timestamp: datetime = field(default_factory=_utcnow)
+    timestamp: datetime = field(default_factory=_cst_now)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -112,7 +116,7 @@ class OutboundMessage:
     message_type: MessageType = MessageType.TEXT
     media_path: Optional[str] = None  # 本地媒体路径
     thread_id: Optional[str] = None
-    timestamp: datetime = field(default_factory=_utcnow)
+    timestamp: datetime = field(default_factory=_cst_now)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -128,7 +132,7 @@ class ToolCallRequest:
     message_id: str = ""
     tool_call: ToolCall = field(default_factory=ToolCall)
     thread_id: Optional[str] = None
-    timestamp: datetime = field(default_factory=_utcnow)
+    timestamp: datetime = field(default_factory=_cst_now)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

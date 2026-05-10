@@ -7,11 +7,13 @@ import sqlite3
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 from core.protocol import SessionKey
+
+_CST = timezone(timedelta(hours=8))
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +34,8 @@ class Session:
     platform: str
     chat_id: str
     user_open_id: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_used: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(_CST))
+    last_used: datetime = field(default_factory=lambda: datetime.now(_CST))
     total_cost: float = 0.0
     message_count: int = 0
     # 平台特定字段
@@ -150,7 +152,7 @@ class SessionManager:
         return self._create_session(key, user_open_id)
 
     def _create_session(self, key: SessionKey, user_open_id: str) -> Session:
-        now = datetime.utcnow()
+        now = datetime.now(_CST)
         session = Session(
             session_id=f"session_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}",
             bot_id=key.bot_id,
@@ -204,9 +206,9 @@ class SessionManager:
                            last_message_at = ?
                        WHERE session_id = ?""",
                     (
-                        datetime.utcnow().isoformat(),
+                        datetime.now(_CST).isoformat(),
                         cost, message_increment,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(_CST).isoformat(),
                         session_id,
                     ),
                 )
@@ -217,7 +219,7 @@ class SessionManager:
                            total_cost = total_cost + ?,
                            message_count = message_count + ?
                        WHERE session_id = ?""",
-                    (datetime.utcnow().isoformat(), cost, message_increment, session_id),
+                    (datetime.now(_CST).isoformat(), cost, message_increment, session_id),
                 )
 
     def delete_session(self, session_id: str):
@@ -260,7 +262,7 @@ class SessionManager:
         direction: str = "incoming",
     ):
         """存储一条消息（用于记忆提取）。"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(_CST).isoformat()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT OR IGNORE INTO messages
