@@ -144,3 +144,15 @@ class TestEvent:
         assert Event.TOOL_CALL == "tool_call"
         assert Event.ERROR == "error"
         assert Event.PONG == "pong"
+
+
+def test_command_result_types():
+    from core.protocol import CommandResult, CommandCard
+    # text result
+    r = CommandResult(content="hello")
+    assert r.content == "hello"
+    assert r.card is None
+    # card result
+    card = CommandCard(type="markdown", data={"elements": []})
+    r2 = CommandResult(content="", card=card)
+    assert r2.card is not None
