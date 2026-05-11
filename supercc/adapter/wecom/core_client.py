@@ -158,7 +158,6 @@ class WeComCoreWSClient:
     async def _handle_tool_call(self, params: dict):
         """tool_call 事件：先 flush accumulator，再处理工具调用。"""
         tool_name = params.get("tool_name", "")
-        tool_input = params.get("tool_input", {})
         tool_call_id = params.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
