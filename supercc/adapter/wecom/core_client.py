@@ -151,7 +151,7 @@ class WeComCoreWSClient:
 
     async def _do_send_markdown(self, chat_id: str, message_id: str, text: str) -> None:
         """实际发送 Markdown 到企业微信（带幂等性）。"""
-        if message_id in self._sent_message_ids:
+        if message_id and message_id in self._sent_message_ids:
             logger.info(f"[WeComCore] message {message_id} already sent, skipping")
             return
         try:
