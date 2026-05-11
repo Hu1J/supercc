@@ -86,7 +86,7 @@ def incoming_to_inbound(
             "chat_type": msg.get("chattype", "single"),
             # 企业微信特有字段
             "room_id": msg.get("roomid", ""),
-            "user_id": msg.get("from", {}).get("userid", ""),
+            "sender_id": msg.get("from", {}).get("userid", ""),
         },
     )
 
