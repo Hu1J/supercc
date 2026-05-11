@@ -163,7 +163,7 @@ class WeComClient:
                     "button_list": [
                         {
                             "name": "联系管理员",
-                            "action_type": "url",
+                            "action_type": "view",
                             "remark": "请联系管理员授权后重试",
                         }
                     ]
