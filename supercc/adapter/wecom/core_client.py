@@ -40,6 +40,7 @@ class WeComCoreWSClient:
         self._pending_message_ids: dict[str, str] = {}  # req_id → message_id
         self._accumulator_by_msg_id: dict[str, _WeComStreamAccumulator] = {}
         self._id_counter = 0
+        self._sent_message_ids: set[str] = set()  # 幂等性：已发送的 message_id
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -149,9 +150,13 @@ class WeComCoreWSClient:
             await self._do_send_markdown(chat_id, message_id, content)
 
     async def _do_send_markdown(self, chat_id: str, message_id: str, text: str) -> None:
-        """实际发送 Markdown 到企业微信。"""
+        """实际发送 Markdown 到企业微信（带幂等性）。"""
+        if message_id in self._sent_message_ids:
+            logger.info(f"[WeComCore] message {message_id} already sent, skipping")
+            return
         try:
             await self.wecom.send_markdown(chat_id, text)
+            self._sent_message_ids.add(message_id)
         except Exception as e:
             logger.warning(f"[WeComCore] send_markdown failed: {e}")
 
