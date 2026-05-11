@@ -41,6 +41,7 @@ class WeComCoreWSClient:
         self._accumulator_by_msg_id: dict[str, _WeComStreamAccumulator] = {}
         self._id_counter = 0
         self._sent_message_ids: set[str] = set()  # 幂等性：已发送的 message_id
+        self._sent_notification_ids: set[str] = set()  # (chat_id:notification_type) dedup
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -121,7 +122,7 @@ class WeComCoreWSClient:
                 # 触发后台任务（后台异步，不阻塞主流程）
                 result_data = data.get("result", {})
                 tool_count = result_data.get("tool_call_count", 0) if isinstance(result_data, dict) else 0
-                asyncio.create_task(self._trigger_background_tasks(chat_id, msg_id, tool_count))
+                asyncio.create_task(self._trigger_background_tasks(chat_id, tool_count))
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
@@ -231,7 +232,7 @@ class WeComCoreWSClient:
         self._id_counter += 1
         return self._id_counter
 
-    async def _trigger_background_tasks(self, chat_id: str, message_id: str, tool_count: int):
+    async def _trigger_background_tasks(self, chat_id: str, tool_count: int):
         """触发后台任务（SkillNudge、Memory Review）。"""
         if tool_count > 0:
             asyncio.create_task(self._do_skill_nudge(chat_id, tool_count))
@@ -239,6 +240,10 @@ class WeComCoreWSClient:
 
     async def _do_skill_nudge(self, chat_id: str, tool_count: int):
         """发送技能推荐通知。"""
+        notif_id = f"{chat_id}:skill_nudge"
+        if notif_id in self._sent_notification_ids:
+            return
+        self._sent_notification_ids.add(notif_id)
         try:
             content = f"🧰 你在本次对话中使用了 {tool_count} 个工具调用。想了解相关技能吗？"
             await self.wecom.send_text(chat_id, content)
@@ -247,6 +252,10 @@ class WeComCoreWSClient:
 
     async def _do_memory_review(self, chat_id: str):
         """发送记忆回顾提示。"""
+        notif_id = f"{chat_id}:memory_review"
+        if notif_id in self._sent_notification_ids:
+            return
+        self._sent_notification_ids.add(notif_id)
         try:
             content = "📝 对话结束。你想保存这次重要的信息到记忆吗？"
             await self.wecom.send_text(chat_id, content)
