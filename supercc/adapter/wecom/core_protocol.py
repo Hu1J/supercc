@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from core.protocol import OutboundMessage
 
 
+def _check_mention_bot(msg: dict) -> bool:
+    """检测消息是否 @ 了机器人。"""
+    mentioned_list = msg.get("mentioned_list", [])
+    bot_id = msg.get("aibotid", "")
+    return bot_id in mentioned_list
+
+
 def incoming_to_inbound(
     msg: dict,
     bot_id: str,
@@ -73,8 +80,8 @@ def incoming_to_inbound(
         extra={
             "raw": str(msg),
             "is_group_chat": msg.get("chattype") == "group",
-            "mention_bot": False,  # WeCom 暂无 @mention 数据
-            "mention_ids": [],
+            "mention_bot": _check_mention_bot(msg),  # ← 改为函数调用
+            "mention_ids": msg.get("mentioned_list", []),  # ← 从 [] 改为 msg.get()
             "group_name": "",
             "chat_type": msg.get("chattype", "single"),
         },
