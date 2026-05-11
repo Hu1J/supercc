@@ -37,7 +37,7 @@ class WeComCoreWSClient:
         self._ws: Any = None
         self._running = False
         self._pending_responses: dict[str, asyncio.Future] = {}
-        self._pending_message_ids: dict[str, str] = {}  # req_id → message_id
+        self._pending_message_ids: dict[str, tuple[str, str]] = {}  # req_id → (message_id, chat_id)
         self._accumulator_by_msg_id: dict[str, _WeComStreamAccumulator] = {}
         self._id_counter = 0
         self._sent_message_ids: set[str] = set()  # 幂等性：已发送的 message_id
@@ -112,10 +112,16 @@ class WeComCoreWSClient:
     async def _handle_core_message(self, data: dict):
         if "id" in data:
             req_id = str(data.get("id"))
-            msg_id = self._pending_message_ids.pop(req_id, None)
-            if msg_id and msg_id in self._accumulator_by_msg_id:
-                acc = self._accumulator_by_msg_id.pop(msg_id)
-                await acc.flush()
+            stored = self._pending_message_ids.pop(req_id, None)
+            if stored:
+                msg_id, chat_id = stored
+                if msg_id in self._accumulator_by_msg_id:
+                    acc = self._accumulator_by_msg_id.pop(msg_id)
+                    await acc.flush()
+                # 触发后台任务（后台异步，不阻塞主流程）
+                result_data = data.get("result", {})
+                tool_count = result_data.get("tool_call_count", 0) if isinstance(result_data, dict) else 0
+                asyncio.create_task(self._trigger_background_tasks(chat_id, msg_id, tool_count))
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
@@ -210,7 +216,7 @@ class WeComCoreWSClient:
 
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
-        self._pending_message_ids[str(req.id)] = inbound.message_id
+        self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
         await self._ws.send(json.dumps(req.to_dict()))
         result = await future
         return result or {}
@@ -224,6 +230,28 @@ class WeComCoreWSClient:
     def _next_id(self) -> int:
         self._id_counter += 1
         return self._id_counter
+
+    async def _trigger_background_tasks(self, chat_id: str, message_id: str, tool_count: int):
+        """触发后台任务（SkillNudge、Memory Review）。"""
+        if tool_count > 0:
+            asyncio.create_task(self._do_skill_nudge(chat_id, tool_count))
+        asyncio.create_task(self._do_memory_review(chat_id))
+
+    async def _do_skill_nudge(self, chat_id: str, tool_count: int):
+        """发送技能推荐通知。"""
+        try:
+            content = f"🧰 你在本次对话中使用了 {tool_count} 个工具调用。想了解相关技能吗？"
+            await self.wecom.send_text(chat_id, content)
+        except Exception as e:
+            logger.warning(f"[WeComCore] skill_nudge failed: {e}")
+
+    async def _do_memory_review(self, chat_id: str):
+        """发送记忆回顾提示。"""
+        try:
+            content = "📝 对话结束。你想保存这次重要的信息到记忆吗？"
+            await self.wecom.send_text(chat_id, content)
+        except Exception as e:
+            logger.warning(f"[WeComCore] memory_review failed: {e}")
 
     async def close(self):
         """关闭连接。"""
