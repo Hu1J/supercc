@@ -115,3 +115,28 @@ class WeComClient:
         if data.get("errcode") != 0:
             raise RuntimeError(f"WeCom send image failed: {data}")
         return data.get("msgid", "")
+
+    async def send_typing_indicator(self, chat_id: str) -> str:
+        """发送'正在思考...'提示（WeCom 模板卡片实现）。"""
+        token = await self._get_token()
+        url = f"{self.BASE_URL}/cgi-bin/message/send"
+        params = {"access_token": token}
+        body = {
+            "touser": chat_id,
+            "msgtype": "template_card",
+            "agentid": self.agent_id,
+            "template_card": {
+                "card_type": "text_notice",
+                "source": {
+                    "desc": "SuperCC",
+                },
+                "main_title": {
+                    "title": "正在思考...",
+                    "desc": "",
+                },
+            },
+        }
+        data = await _call_api("POST", url, params, body)
+        if data.get("errcode") != 0:
+            logger.warning(f"[WeCom] send_typing_indicator failed: {data}")
+        return data.get("msgid", "")

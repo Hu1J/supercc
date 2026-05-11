@@ -177,6 +177,12 @@ class WeComCoreWSClient:
         """将 WeCom 消息转发给核心，并等待响应。"""
         inbound = incoming_to_inbound(msg, bot_id=self.bot_id, project_path=self.project_path)
 
+        # 显示 typing 提示
+        try:
+            await self.wecom.send_typing_indicator(inbound.session_key.chat_id)
+        except Exception:
+            pass  # typing indicator 失败不影响主流程
+
         req = JsonRpcRequest(
             id=self._next_id(),
             method="wecom.message",
