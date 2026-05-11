@@ -140,3 +140,37 @@ class WeComClient:
         if data.get("errcode") != 0:
             logger.warning(f"[WeCom] send_typing_indicator failed: {data}")
         return data.get("msgid", "")
+
+    async def send_authorization_card(self, chat_id: str, reason: str) -> str:
+        """发送权限不足引导卡片。"""
+        token = await self._get_token()
+        url = f"{self.BASE_URL}/cgi-bin/message/send"
+        params = {"access_token": token}
+        body = {
+            "touser": chat_id,
+            "msgtype": "template_card",
+            "agentid": self.agent_id,
+            "template_card": {
+                "card_type": "button_interaction",
+                "source": {
+                    "desc": "SuperCC 权限",
+                },
+                "main_title": {
+                    "title": "权限不足",
+                    "desc": reason,
+                },
+                "action": {
+                    "button_list": [
+                        {
+                            "name": "联系管理员",
+                            "action_type": "url",
+                            "remark": "请联系管理员授权后重试",
+                        }
+                    ]
+                },
+            },
+        }
+        data = await _call_api("POST", url, params, body)
+        if data.get("errcode") != 0:
+            raise RuntimeError(f"WeCom authorization card failed: {data}")
+        return data.get("msgid", "")
