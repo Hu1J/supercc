@@ -1,6 +1,6 @@
 """新建会话 — /new"""
-from core.commands.base import CommandHandler, CommandResult
-from core.protocol import SessionKey
+from supercc.core.commands.base import CommandHandler, CommandResult
+from supercc.core.protocol import SessionKey
 
 
 class NewSessionHandler(CommandHandler):
@@ -13,7 +13,7 @@ class NewSessionHandler(CommandHandler):
         return "/new — 新建会话"
 
     async def execute(self, args: str, context: dict) -> CommandResult:
-        from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+        from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
 
         session_key: SessionKey = context.get("session_key")
         user_open_id = context.get("user_open_id", "")

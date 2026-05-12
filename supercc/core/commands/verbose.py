@@ -1,5 +1,5 @@
 """Verbose 配置 — /verbose"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class VerboseHandler(CommandHandler):

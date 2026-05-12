@@ -10,12 +10,12 @@ import logging
 import re
 from typing import Any, Callable, Awaitable
 
-from core.protocol import (
+from supercc.core.protocol import (
     InboundMessage, OutboundMessage,
     MessageType, Event,
 )
-from core.session import SessionManager
-from core.worker import WorkerPool
+from supercc.core.session import SessionManager
+from supercc.core.worker import WorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class CoreExecutor:
         self._config = config
         self._data_dir = data_dir
         self._config_path = config_path
-        from core.commands.router import CommandRouter
+        from supercc.core.commands.router import CommandRouter
         self._router = CommandRouter()
 
         # 安全组件初始化

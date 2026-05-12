@@ -4,13 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from core.protocol import (
+from supercc.core.protocol import (
     SessionKey, InboundMessage,
     MessageRole, MessageType, _cst_now,
 )
 
 if TYPE_CHECKING:
-    from core.protocol import OutboundMessage
+    from supercc.core.protocol import OutboundMessage
 
 
 def _check_mention_bot(msg: dict) -> bool:

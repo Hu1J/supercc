@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from supercc.adapter.feishu.client import IncomingMessage
-from core.protocol import (
+from supercc.core.protocol import (
     SessionKey, InboundMessage, OutboundMessage,
     MessageRole, MessageType, _cst_now,
 )
 
 if TYPE_CHECKING:
-    from core.protocol import OutboundMessage as OutboundMessageType
+    from supercc.core.protocol import OutboundMessage as OutboundMessageType
 
 
 def incoming_to_inbound(

@@ -1,6 +1,6 @@
 """切换项目 — /switch"""
 import os
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class SwitchHandler(CommandHandler):

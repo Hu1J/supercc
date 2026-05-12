@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from core.protocol import JsonRpcRequest, Event
+from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.adapter.wecom.client import WeComClient
 from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to_renderable
 from wecom_aibot_sdk import generate_req_id

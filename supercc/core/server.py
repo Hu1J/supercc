@@ -9,7 +9,7 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
-from core.protocol import (
+from supercc.core.protocol import (
     Event,
     JsonRpcError,
     JsonRpcRequest,
@@ -157,7 +157,7 @@ class WsServer:
 
     async def _handle_worker_status(self, req: JsonRpcRequest) -> dict:
         """返回 Worker 池状态。"""
-        from core.worker import WorkerPool
+        from supercc.core.worker import WorkerPool
         pool = WorkerPool.instance() if hasattr(WorkerPool, 'instance') else None
         if pool:
             return asyncio.run_coroutine_threadsafe(pool.stats(), asyncio.get_event_loop())
@@ -169,7 +169,7 @@ class WsServer:
 
     async def _handle_message(self, req: JsonRpcRequest) -> dict:
         """处理来自飞书插件的消息。"""
-        from core.protocol import InboundMessage, SessionKey, MessageRole, MessageType, _cst_now
+        from supercc.core.protocol import InboundMessage, SessionKey, MessageRole, MessageType, _cst_now
 
         params = req.params
 

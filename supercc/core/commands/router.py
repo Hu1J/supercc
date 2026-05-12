@@ -1,18 +1,18 @@
 """命令路由器 — 将命令名分发给对应 Handler。"""
-from core.commands.base import CommandHandler, CommandResult
-from core.commands.help import HelpHandler
-from core.commands.status import StatusHandler
-from core.commands.new_session import NewSessionHandler
-from core.commands.stop import StopHandler
-from core.commands.git import GitHandler
-from core.commands.model import ModelHandler
-from core.commands.codex import CodexHandler
-from core.commands.verbose import VerboseHandler
-from core.commands.memory import MemoryHandler
-from core.commands.skill import SkillHandler
-from core.commands.restart import RestartHandler
-from core.commands.update import UpdateHandler
-from core.commands.switch import SwitchHandler
+from supercc.core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.help import HelpHandler
+from supercc.core.commands.status import StatusHandler
+from supercc.core.commands.new_session import NewSessionHandler
+from supercc.core.commands.stop import StopHandler
+from supercc.core.commands.git import GitHandler
+from supercc.core.commands.model import ModelHandler
+from supercc.core.commands.codex import CodexHandler
+from supercc.core.commands.verbose import VerboseHandler
+from supercc.core.commands.memory import MemoryHandler
+from supercc.core.commands.skill import SkillHandler
+from supercc.core.commands.restart import RestartHandler
+from supercc.core.commands.update import UpdateHandler
+from supercc.core.commands.switch import SwitchHandler
 
 
 class CommandRouter:

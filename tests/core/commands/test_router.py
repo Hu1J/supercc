@@ -1,6 +1,6 @@
 import pytest
 import pytest_asyncio
-from core.commands.router import CommandRouter
+from supercc.core.commands.router import CommandRouter
 
 @pytest.mark.asyncio
 async def test_router_dispatch_help():

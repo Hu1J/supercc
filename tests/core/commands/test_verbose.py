@@ -1,5 +1,5 @@
 import pytest
-from core.commands.verbose import VerboseHandler
+from supercc.core.commands.verbose import VerboseHandler
 
 @pytest.fixture
 def handler():

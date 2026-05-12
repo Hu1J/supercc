@@ -1,5 +1,5 @@
 """更新 — /update"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class UpdateHandler(CommandHandler):

@@ -1,7 +1,7 @@
 import pytest
 from supercc.adapter.feishu.client import IncomingMessage
 from supercc.adapter.feishu.core_protocol import incoming_to_inbound
-from core.protocol import SessionKey, MessageRole, MessageType
+from supercc.core.protocol import SessionKey, MessageRole, MessageType
 
 
 class TestIncomingToInbound:

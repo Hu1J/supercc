@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Optional
 
-from core.protocol import SessionKey
+from supercc.core.protocol import SessionKey
 
 logger = logging.getLogger(__name__)
 

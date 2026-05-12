@@ -1,6 +1,6 @@
 """停止查询 — /stop"""
-from core.commands.base import CommandHandler, CommandResult
-from core.protocol import SessionKey
+from supercc.core.commands.base import CommandHandler, CommandResult
+from supercc.core.protocol import SessionKey
 
 
 class StopHandler(CommandHandler):

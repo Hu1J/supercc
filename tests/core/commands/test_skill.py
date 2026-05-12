@@ -1,5 +1,5 @@
 import pytest
-from core.commands.skill import SkillHandler
+from supercc.core.commands.skill import SkillHandler
 
 
 @pytest.fixture

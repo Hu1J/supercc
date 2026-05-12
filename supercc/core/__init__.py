@@ -1,6 +1,6 @@
 """SuperCC Core Service — AI reasoning + business state management."""
 
-from core.protocol import (
+from supercc.core.protocol import (
     SessionKey,
     InboundMessage,
     OutboundMessage,

@@ -1,6 +1,6 @@
 """模型管理 — /model"""
-from core.commands.base import CommandHandler, CommandResult, CommandCard
-from core.protocol import SessionKey
+from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.protocol import SessionKey
 
 
 class ModelHandler(CommandHandler):

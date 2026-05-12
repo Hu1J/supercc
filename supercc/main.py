@@ -436,10 +436,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     def run_core_server():
         import asyncio
-        from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
-        from core.worker import WorkerPool
-        from core.executor import CoreExecutor
-        from core.server import WsServer
+        from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+        from supercc.core.worker import WorkerPool
+        from supercc.core.executor import CoreExecutor
+        from supercc.core.server import WsServer
 
         session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
         worker_pool = WorkerPool()
@@ -548,10 +548,10 @@ def start_core_only(config_path: str, data_dir: str):
 
     def run_core_server():
         import asyncio
-        from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
-        from core.worker import WorkerPool
-        from core.executor import CoreExecutor
-        from core.server import WsServer
+        from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+        from supercc.core.worker import WorkerPool
+        from supercc.core.executor import CoreExecutor
+        from supercc.core.server import WsServer
 
         session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
         worker_pool = WorkerPool()

@@ -1,5 +1,5 @@
 """斜杠指令帮助信息 — /help"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class HelpHandler(CommandHandler):

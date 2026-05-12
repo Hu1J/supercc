@@ -1,5 +1,5 @@
 """重启 — /restart"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class RestartHandler(CommandHandler):

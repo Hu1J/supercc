@@ -1,5 +1,5 @@
 import pytest
-from core.commands.memory import MemoryHandler
+from supercc.core.commands.memory import MemoryHandler
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Callable, Awaitable
 
-from core.protocol import (
+from supercc.core.protocol import (
     JsonRpcRequest,
     OutboundMessage, Event,
 )

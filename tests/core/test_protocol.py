@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from core.protocol import (
+from supercc.core.protocol import (
     SessionKey,
     InboundMessage,
     OutboundMessage,
@@ -147,7 +147,7 @@ class TestEvent:
 
 
 def test_command_result_types():
-    from core.protocol import CommandResult, CommandCard
+    from supercc.core.protocol import CommandResult, CommandCard
     # text result
     r = CommandResult(content="hello")
     assert r.content == "hello"

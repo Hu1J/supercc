@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-from core.protocol import SessionKey
+from supercc.core.protocol import SessionKey
 
 _CST = timezone(timedelta(hours=8))
 

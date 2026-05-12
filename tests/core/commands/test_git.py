@@ -1,5 +1,5 @@
 import pytest
-from core.commands.git import GitHandler
+from supercc.core.commands.git import GitHandler
 
 @pytest.fixture
 def handler():

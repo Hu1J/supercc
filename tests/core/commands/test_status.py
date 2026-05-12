@@ -1,6 +1,6 @@
 import pytest
-from core.commands.status import StatusHandler
-from core.commands.base import CommandResult
+from supercc.core.commands.status import StatusHandler
+from supercc.core.commands.base import CommandResult
 
 @pytest.fixture
 def handler():

@@ -5,8 +5,8 @@ import pytest
 import tempfile
 from datetime import datetime
 
-from core.protocol import SessionKey
-from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+from supercc.core.protocol import SessionKey
+from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
 
 
 @pytest.fixture

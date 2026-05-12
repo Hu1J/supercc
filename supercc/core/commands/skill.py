@@ -1,6 +1,6 @@
 """技能列表 — /skill"""
 from pathlib import Path
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class SkillHandler(CommandHandler):

@@ -1,5 +1,5 @@
 import pytest
-from core.commands.codex import CodexHandler
+from supercc.core.commands.codex import CodexHandler
 
 @pytest.fixture
 def handler():

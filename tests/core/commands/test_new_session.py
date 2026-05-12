@@ -1,6 +1,6 @@
 import pytest
-from core.commands.new_session import NewSessionHandler
-from core.protocol import SessionKey
+from supercc.core.commands.new_session import NewSessionHandler
+from supercc.core.protocol import SessionKey
 
 @pytest.fixture
 def handler():

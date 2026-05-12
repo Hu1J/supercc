@@ -1,5 +1,5 @@
 import pytest
-from core.commands.stop import StopHandler
+from supercc.core.commands.stop import StopHandler
 
 @pytest.fixture
 def handler():

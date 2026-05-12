@@ -1,5 +1,5 @@
 """记忆管理 — /memory"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 HELP_TEXT = (

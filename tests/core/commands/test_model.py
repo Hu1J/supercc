@@ -1,5 +1,5 @@
 import pytest
-from core.commands.model import ModelHandler
+from supercc.core.commands.model import ModelHandler
 
 @pytest.fixture
 def handler():

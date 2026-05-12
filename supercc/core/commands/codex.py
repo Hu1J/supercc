@@ -1,5 +1,5 @@
 """Codex MCP 状态 — /codex"""
-from core.commands.base import CommandHandler, CommandResult
+from supercc.core.commands.base import CommandHandler, CommandResult
 
 
 class CodexHandler(CommandHandler):

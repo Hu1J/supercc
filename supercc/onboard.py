@@ -110,7 +110,19 @@ def run_onboard_flow() -> bool:
                 print(f"⚠️  飞书配置出错：{e}（稍后可手动配置）\n")
 
         if platform_choice in ("wecom", "both"):
-            print("\n请按照提示输入企业微信凭证...\n")
+            print("\n正在安装企业微信 SDK...\n")
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "wecom-aibot-sdk-python", "--quiet"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                print(f"⚠️  企业微信 SDK 安装失败：{result.stderr.strip()}（请手动运行 pip install wecom-aibot-sdk-python）\n")
+            else:
+                print("✅ 企业微信 SDK 安装完成\n")
+
+            print("请按照提示输入企业微信凭证...\n")
             try:
                 from supercc.install.wecom_flow import run_wecom_install_flow
                 run_wecom_install_flow(cfg_path, bypass_accepted=True)

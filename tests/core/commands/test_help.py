@@ -1,6 +1,6 @@
 import pytest
-from core.commands.help import HelpHandler
-from core.commands.base import CommandResult
+from supercc.core.commands.help import HelpHandler
+from supercc.core.commands.base import CommandResult
 
 @pytest.fixture
 def handler():

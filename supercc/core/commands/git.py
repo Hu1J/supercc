@@ -1,7 +1,7 @@
 """Git 状态 — /git"""
 import subprocess
-from core.commands.base import CommandHandler, CommandResult, CommandCard
-from core.protocol import SessionKey
+from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.protocol import SessionKey
 
 
 class GitHandler(CommandHandler):

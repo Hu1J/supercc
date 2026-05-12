@@ -2,9 +2,9 @@
 import asyncio
 import os
 import re
-from core.commands.base import CommandHandler, CommandResult, CommandCard
-from core.protocol import SessionKey
-from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.protocol import SessionKey
+from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
 
 
 class StatusHandler(CommandHandler):

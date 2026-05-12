@@ -9,8 +9,8 @@ class TestCoreComponentsIntegration:
 
     def test_session_manager_and_worker_pool_creation(self):
         """验证 SessionManager 和 WorkerPool 能正常创建。"""
-        from core.session import SessionManager
-        from core.worker import WorkerPool
+        from supercc.core.session import SessionManager
+        from supercc.core.worker import WorkerPool
 
         sm = SessionManager(db_path=":memory:")
         pool = WorkerPool()
@@ -20,7 +20,7 @@ class TestCoreComponentsIntegration:
 
     def test_worker_pool_execute_signature(self):
         """验证 WorkerPool.execute() 方法签名正确。"""
-        from core.worker import WorkerPool
+        from supercc.core.worker import WorkerPool
         import inspect
 
         pool = WorkerPool()
@@ -37,8 +37,8 @@ class TestCoreComponentsIntegration:
     @pytest.mark.asyncio
     async def test_worker_pool_acquire_release(self):
         """验证 WorkerPool acquire/release 循环。"""
-        from core.worker import WorkerPool
-        from core.protocol import SessionKey
+        from supercc.core.worker import WorkerPool
+        from supercc.core.protocol import SessionKey
 
         pool = WorkerPool()
         key = SessionKey(
@@ -62,9 +62,9 @@ class TestCoreComponentsIntegration:
     @pytest.mark.asyncio
     async def test_core_executor_instantiation(self):
         """验证 CoreExecutor 能正常实例化。"""
-        from core.session import SessionManager
-        from core.worker import WorkerPool
-        from core.executor import CoreExecutor
+        from supercc.core.session import SessionManager
+        from supercc.core.worker import WorkerPool
+        from supercc.core.executor import CoreExecutor
 
         sm = SessionManager(db_path=":memory:")
         pool = WorkerPool()
@@ -130,10 +130,10 @@ class TestCoreComponentsIntegration:
 
     def test_ws_server_accepts_executor(self):
         """验证 WsServer 能接受 executor 参数。"""
-        from core.server import WsServer
-        from core.session import SessionManager
-        from core.worker import WorkerPool
-        from core.executor import CoreExecutor
+        from supercc.core.server import WsServer
+        from supercc.core.session import SessionManager
+        from supercc.core.worker import WorkerPool
+        from supercc.core.executor import CoreExecutor
         import inspect
 
         # 检查 __init__ 签名
@@ -152,8 +152,8 @@ class TestCoreComponentsIntegration:
     @pytest.mark.asyncio
     async def test_worker_pool_permanent_binding(self):
         """验证 Worker 永久绑定：同一 key 获取同一个 Worker。"""
-        from core.worker import WorkerPool
-        from core.protocol import SessionKey
+        from supercc.core.worker import WorkerPool
+        from supercc.core.protocol import SessionKey
 
         pool = WorkerPool()
         key = SessionKey(
