@@ -9,6 +9,7 @@ from typing import Any
 from core.protocol import JsonRpcRequest, Event
 from supercc.adapter.wecom.client import WeComClient
 from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to_renderable
+from wecom_aibot_sdk import generate_req_id
 
 logger = logging.getLogger(__name__)
 
@@ -20,20 +21,22 @@ class WeComCoreWSClient:
     职责：
     - 通过 WebSocket 连接核心服务
     - 将 WeCom 消息转换为 InboundMessage，发给核心
-    - 接收核心的 OutboundMessage，渲染为企业微信格式并发送
+    - 接收核心的 OutboundMessage，通过 SDK 的 reply_stream 渲染为企业微信格式并发送
     """
 
     def __init__(
         self,
         core_url: str,
+        ws_client,          # WeComWSClient (SDK-based)
         wecom_client: WeComClient,
         bot_id: str,
         project_path: str,
-        groups: dict | None = None,        # group_id -> GroupConfigEntry dict
-        allowed_users: list | None = None, # P2P whitelist
+        groups: dict | None = None,
+        allowed_users: list | None = None,
     ):
         self.core_url = core_url
-        self.wecom = wecom_client
+        self.ws_client = ws_client       # SDK WSClient
+        self.wecom = wecom_client        # WeComClient (消息发送)
         self.bot_id = bot_id
         self.project_path = project_path
         self._groups = groups or {}
@@ -41,11 +44,11 @@ class WeComCoreWSClient:
         self._ws: Any = None
         self._running = False
         self._pending_responses: dict[str, asyncio.Future] = {}
-        self._pending_message_ids: dict[str, tuple[str, str]] = {}  # req_id → (message_id, chat_id)
-        self._accumulator_by_msg_id: dict[str, _WeComStreamAccumulator] = {}
+        # req_id → (message_id, chat_id)
+        self._pending_message_ids: dict[str, tuple[str, str]] = {}
         self._id_counter = 0
-        self._sent_message_ids: set[str] = set()  # 幂等性：已发送的 message_id
-        self._sent_notification_ids: set[str] = set()  # (chat_id:notification_type) dedup
+        self._sent_message_ids: set[str] = set()       # 幂等性（背景任务主动发送去重）
+        self._sent_notification_ids: set[str] = set()
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -68,62 +71,15 @@ class WeComCoreWSClient:
             except Exception:
                 logger.exception("[WeComCore] Error reading message")
 
-    class _WeComStreamAccumulator:
-        """缓冲流式文本，1.5s idle flush + tool_call 时立即 flush。"""
-        def __init__(self, chat_id: str, message_id: str, send_fn, flush_timeout: float = 1.5):
-            self.chat_id = chat_id
-            self._message_id = message_id
-            self._send = send_fn
-            self._flush_timeout = flush_timeout
-            self._buffer = ""
-            self._lock = asyncio.Lock()
-            self._timer_task: asyncio.Task | None = None
-            self.sent_something = False
-
-        async def add_text(self, text: str) -> None:
-            if not text:
-                return
-            async with self._lock:
-                self._buffer += text
-                if self._timer_task:
-                    self._timer_task.cancel()
-                self._timer_task = asyncio.create_task(self._flush_after(self._flush_timeout))
-
-        async def flush(self) -> None:
-            async with self._lock:
-                if self._timer_task:
-                    self._timer_task.cancel()
-                    self._timer_task = None
-                if self._buffer:
-                    text = self._buffer
-                    self._buffer = ""
-                    if text.strip():
-                        await self._send(self.chat_id, self._message_id, text)
-                        self.sent_something = True
-
-        async def _flush_after(self, delay: float) -> None:
-            try:
-                await asyncio.sleep(delay)
-                async with self._lock:
-                    if self._buffer:
-                        text = self._buffer
-                        self._buffer = ""
-                        if text.strip():
-                            await self._send(self.chat_id, self._message_id, text)
-                            self.sent_something = True
-            except asyncio.CancelledError:
-                pass
-
     async def _handle_core_message(self, data: dict):
         if "id" in data:
             req_id = str(data.get("id"))
             stored = self._pending_message_ids.pop(req_id, None)
             if stored:
                 msg_id, chat_id = stored
-                if msg_id in self._accumulator_by_msg_id:
-                    acc = self._accumulator_by_msg_id.pop(msg_id)
-                    await acc.flush()
-                # 触发后台任务（后台异步，不阻塞主流程）
+                # 流结束，清理 ws_client 中缓存的 frame
+                self.ws_client.pop_frame(msg_id)
+                # 触发后台任务
                 result_data = data.get("result", {})
                 tool_count = result_data.get("tool_call_count", 0) if isinstance(result_data, dict) else 0
                 asyncio.create_task(self._trigger_background_tasks(chat_id, tool_count))
@@ -137,52 +93,52 @@ class WeComCoreWSClient:
 
         if method == Event.RESPONSE or method == Event.STREAM_CHUNK:
             await self._render_and_send(params)
-        elif method == Event.TOOL_CALL:
-            await self._handle_tool_call(params)
 
     async def _render_and_send(self, params: dict):
+        """通过 SDK reply_stream 发送流式回复。"""
         content = params.get("content", "")
-        chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
 
         if not content:
             return
 
         if message_id:
-            if message_id not in self._accumulator_by_msg_id:
-                self._accumulator_by_msg_id[message_id] = self._WeComStreamAccumulator(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    send_fn=lambda cid, mid, text: self._do_send_markdown(cid, mid, text),
-                    flush_timeout=1.5,
-                )
-            await self._accumulator_by_msg_id[message_id].add_text(content)
+            frame = self.ws_client.get_frame(message_id)
+            stream_id = generate_req_id("stream")
+            try:
+                if frame:
+                    # 有原始帧 → 用 reply_stream 流式回复
+                    await self.ws_client.reply_stream(
+                        frame=frame,
+                        stream_id=stream_id,
+                        content=content,
+                        finish=True,
+                    )
+                else:
+                    # 无帧 → 降级为主动发送
+                    await self.wecom.send_markdown(message_id, content)
+            except Exception as e:
+                logger.warning(f"[WeComCore] reply_stream failed: {e}")
+                # 流式失败，尝试降级
+                try:
+                    await self.wecom.send_markdown(message_id, content)
+                except Exception:
+                    pass
         else:
-            await self._do_send_markdown(chat_id, message_id, content)
-
-    async def _do_send_markdown(self, chat_id: str, message_id: str, text: str) -> None:
-        """实际发送 Markdown 到企业微信（带幂等性）。"""
-        if message_id and message_id in self._sent_message_ids:
-            logger.info(f"[WeComCore] message {message_id} already sent, skipping")
-            return
-        try:
-            await self.wecom.send_markdown(chat_id, text)
-            self._sent_message_ids.add(message_id)
-        except Exception as e:
-            logger.warning(f"[WeComCore] send_markdown failed: {e}")
+            # 无 message_id → 用 chat_id 主动发送
+            chat_id = params.get("chat_id", "")
+            if chat_id:
+                try:
+                    await self.wecom.send_markdown(chat_id, content)
+                except Exception as e:
+                    logger.warning(f"[WeComCore] send_markdown failed: {e}")
 
     async def _handle_tool_call(self, params: dict):
-        """tool_call 事件：先 flush accumulator，再处理工具调用。"""
+        """tool_call 事件：发送工具执行结果。"""
         tool_name = params.get("tool_name", "")
         tool_call_id = params.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
-        message_id = params.get("message_id", "")
-
-        if message_id and message_id in self._accumulator_by_msg_id:
-            await self._accumulator_by_msg_id[message_id].flush()
-
         result_content = f"[{tool_name}] 执行完成"
-
         await self._send_event(Event.TOOL_RESULT, {
             "tool_call_id": tool_call_id,
             "content": result_content,
@@ -190,10 +146,7 @@ class WeComCoreWSClient:
         })
 
     async def _check_group_permissions(self, inbound) -> bool:
-        """检查群聊权限。返回 True=允许通过，False=已拦截（已发送授权卡片）。
-
-        WeCom API 限制：无法删除消息，授权卡片会永久保留在聊天中。
-        """
+        """检查群聊权限。返回 True=允许通过，False=已拦截（已发送授权卡片）。"""
         is_group = inbound.extra.get("is_group_chat", False)
 
         if is_group:
@@ -233,7 +186,6 @@ class WeComCoreWSClient:
 
             return True
         else:
-            # P2P 白名单
             if self._allowed_users and inbound.user_open_id not in self._allowed_users:
                 reason = "你不在允许使用列表中。"
                 try:
@@ -250,9 +202,6 @@ class WeComCoreWSClient:
         # 群聊权限校验
         if not await self._check_group_permissions(inbound):
             return {}
-
-        # WeCom API 限制：不支持删除消息，typing indicator 会永久保留，改为不发送
-        # （飞书用 OK reaction 短暂提示，WeCom 无此能力）
 
         req = JsonRpcRequest(
             id=self._next_id(),
@@ -273,6 +222,9 @@ class WeComCoreWSClient:
                 "extra": inbound.extra,
             },
         )
+
+        # frame 已在 ws_client._handle_message 中通过 message_id 缓存
+        # 这里不需要重复存储
 
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
@@ -298,7 +250,6 @@ class WeComCoreWSClient:
         asyncio.create_task(self._do_memory_review(chat_id))
 
     async def _do_skill_nudge(self, chat_id: str, tool_count: int):
-        """发送技能推荐通知。"""
         notif_id = f"{chat_id}:skill_nudge"
         if notif_id in self._sent_notification_ids:
             return
@@ -310,7 +261,6 @@ class WeComCoreWSClient:
             logger.warning(f"[WeComCore] skill_nudge failed: {e}")
 
     async def _do_memory_review(self, chat_id: str):
-        """发送记忆回顾提示。"""
         notif_id = f"{chat_id}:memory_review"
         if notif_id in self._sent_notification_ids:
             return

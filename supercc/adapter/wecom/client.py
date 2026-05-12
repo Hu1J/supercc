@@ -1,176 +1,168 @@
-"""WeCom HTTP API 客户端：发送消息、媒体上传等。"""
+"""企业微信消息发送客户端（基于官方 wecom-aibot-sdk-python）。"""
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass
+
+from wecom_aibot_sdk import generate_req_id
+from wecom_aibot_sdk.types import (
+    SendMarkdownMsgBody,
+    SendTemplateCardMsgBody,
+    TemplateCard,
+)
+from wecom_aibot_sdk.types.message import CardTitle, CardButton
 
 logger = logging.getLogger(__name__)
 
 
-async def _call_api(method: str, url: str, headers: dict, body: dict | None = None) -> dict:
-    """通用 HTTP 调用。"""
-    import aiohttp
-    async with aiohttp.ClientSession() as session:
-        async with session.request(method, url, headers=headers, json=body) as resp:
-            return await resp.json()
-
-
 class WeComClient:
-    """WeCom HTTP API 客户端。"""
+    """
+    企业微信消息发送客户端。
 
-    BASE_URL = "https://qyapi.weixin.qq.com"
+    封装 wecom-aibot-sdk-python 的 WSClient，提供：
+    - send_text / send_markdown：主动发送文本消息
+    - send_template_card：发送模板卡片
+    - upload_media：上传本地文件（3-step 协议）
+    - download_file：下载并解密文件
+    """
 
-    def __init__(self, corp_id: str, agent_id: str, corp_secret: str):
-        self.corp_id = corp_id
-        self.agent_id = agent_id
-        self.corp_secret = corp_secret
-        self._access_token: str | None = None
+    def __init__(self, ws_client):
+        """
+        Args:
+            ws_client: WeComWSClient 实例（基于 SDK）
+        """
+        self._ws = ws_client
 
-    async def _get_token(self) -> str:
-        """获取 access_token。"""
-        if self._access_token:
-            return self._access_token
-        url = f"{self.BASE_URL}/cgi-bin/gettoken"
-        params = {"corpid": self.corp_id, "corpsecret": self.corp_secret}
-        data = await _call_api("GET", url, {}, None)
-        self._access_token = data["access_token"]
-        return self._access_token
+    # ── 主动发送 ────────────────────────────────────────────────────────────────
 
     async def send_text(self, chat_id: str, text: str) -> str:
-        """发送文本消息。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "text",
-            "agentid": self.agent_id,
-            "text": {"content": text},
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom send failed: {data}")
-        return data.get("msgid", "")
+        """发送文本消息（主动发送，无原始帧）。"""
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body={"msgtype": "text", "text": {"content": text}},
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
 
     async def send_markdown(self, chat_id: str, content: str) -> str:
-        """发送 Markdown 消息（企业微信原生支持）。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "markdown",
-            "agentid": self.agent_id,
-            "markdown": {"content": content},
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom send markdown failed: {data}")
-        return data.get("msgid", "")
+        """发送 Markdown 消息（主动发送，无原始帧）。"""
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body=SendMarkdownMsgBody(markdown={"content": content}),
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
 
-    async def upload_media(self, file_data: bytes, file_name: str, media_type: str = "file") -> str:
-        """上传临时媒体，返回 media_id。"""
-        import aiohttp
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/media/upload"
-        params = {"access_token": token, "type": media_type}
-        form = aiohttp.FormData()
-        form.add_field("media", file_data, filename=file_name, content_type="application/octet-stream")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, params=params, data=form) as resp:
-                data = await resp.json()
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom upload failed: {data}")
-        return data["media_id"]
+    async def send_template_card(
+        self, chat_id: str, card_type: str, title: str, desc: str = "", buttons: list | None = None
+    ) -> str:
+        """发送模板卡片（主动发送）。"""
+        card = TemplateCard(
+            card_type=card_type,
+            main_title=CardTitle(title=title, desc=desc) if desc else CardTitle(title=title),
+            button_list=[
+                CardButton(text=btn["text"], key=btn.get("key", btn["text"]))
+                for btn in (buttons or [])
+            ],
+        )
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body=SendTemplateCardMsgBody(template_card=self._build_card(card)),
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
 
-    async def send_file(self, chat_id: str, media_id: str) -> str:
-        """发送文件消息。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "file",
-            "agentid": self.agent_id,
-            "file": {"media_id": media_id},
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom send file failed: {data}")
-        return data.get("msgid", "")
-
-    async def send_image(self, chat_id: str, media_id: str) -> str:
-        """发送图片消息。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "image",
-            "agentid": self.agent_id,
-            "image": {"media_id": media_id},
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom send image failed: {data}")
-        return data.get("msgid", "")
-
-    async def send_typing_indicator(self, chat_id: str) -> str:
-        """发送'正在思考...'提示（WeCom 模板卡片实现）。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "template_card",
-            "agentid": self.agent_id,
-            "template_card": {
-                "card_type": "text_notice",
-                "source": {
-                    "desc": "SuperCC",
-                },
-                "main_title": {
-                    "title": "正在思考...",
-                    "desc": "",
-                },
-            },
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            logger.warning(f"[WeCom] send_typing_indicator failed: {data}")
-        return data.get("msgid", "")
+    # ── 专用业务消息 ─────────────────────────────────────────────────────────
 
     async def send_authorization_card(self, chat_id: str, reason: str) -> str:
         """发送权限不足引导卡片。"""
-        token = await self._get_token()
-        url = f"{self.BASE_URL}/cgi-bin/message/send"
-        params = {"access_token": token}
-        body = {
-            "touser": chat_id,
-            "msgtype": "template_card",
-            "agentid": self.agent_id,
-            "template_card": {
-                "card_type": "button_interaction",
-                "source": {
-                    "desc": "SuperCC 权限",
-                },
-                "main_title": {
-                    "title": "权限不足",
-                    "desc": reason,
-                },
-                "action": {
-                    "button_list": [
-                        {
-                            "name": "联系管理员",
-                            "action_type": "click",
-                            "remark": "请联系管理员授权后重试",
-                        }
-                    ]
-                },
-            },
-        }
-        data = await _call_api("POST", url, params, body)
-        if data.get("errcode") != 0:
-            raise RuntimeError(f"WeCom authorization card failed: {data}")
-        return data.get("msgid", "")
+        return await self.send_template_card(
+            chat_id=chat_id,
+            card_type="button_interaction",
+            title="权限不足",
+            desc=reason,
+            buttons=[{"text": "联系管理员", "key": "contact_admin"}],
+        )
+
+    async def send_typing_indicator(self, chat_id: str) -> str:
+        """发送'正在思考...'提示（text_notice 模板卡片）。"""
+        card = TemplateCard(
+            card_type="text_notice",
+            main_title=CardTitle(title="正在思考...", desc=""),
+            source={"desc": "SuperCC"},
+        )
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body=SendTemplateCardMsgBody(template_card=self._build_card(card)),
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
+
+    # ── 媒体 ─────────────────────────────────────────────────────────────────
+
+    async def upload_media(self, file_path: str) -> str:
+        """上传本地文件，返回 media_id（SDK 3-step 协议）。"""
+        result = await self._ws.upload_media(file_path)
+        return result.media_id
+
+    async def send_file(self, chat_id: str, media_id: str) -> str:
+        """发送文件消息。"""
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body={"msgtype": "file", "file": {"media_id": media_id}},
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
+
+    async def send_image(self, chat_id: str, media_id: str) -> str:
+        """发送图片消息。"""
+        ack = await self._ws.send_message(
+            chatid=chat_id,
+            body={"msgtype": "image", "image": {"media_id": media_id}},
+        )
+        return ack.body.get("msgid", "") if ack.body else ""
+
+    # ── 下载 ─────────────────────────────────────────────────────────────────
+
+    async def download_file(self, url: str, aes_key: str = "") -> bytes:
+        """下载并解密文件。"""
+        data, _ = await self._ws.download_file(url=url, aes_key=aes_key or None)
+        return data
+
+    # ── 内部 ─────────────────────────────────────────────────────────────────
+
+    def _build_card(self, card: TemplateCard) -> dict:
+        """将 TemplateCard 对象转为 dict（复制 SDK _build_template_card 逻辑）。"""
+        result: dict = {"card_type": card.card_type}
+
+        if card.main_title:
+            result["main_title"] = {"title": card.main_title.title}
+            if card.main_title.desc:
+                result["main_title"]["desc"] = card.main_title.desc
+
+        if card.sub_title:
+            result["sub_title"] = card.sub_title
+
+        if card.card_action:
+            result["card_action"] = {"type": card.card_action.type}
+            if card.card_action.url:
+                result["card_action"]["url"] = card.card_action.url
+            if card.card_action.taskid:
+                result["card_action"]["taskid"] = card.card_action.taskid
+
+        if card.button_list:
+            result["button_list"] = [
+                {"text": btn.text, "key": btn.key}
+                for btn in card.button_list
+            ]
+
+        if card.task_id:
+            result["task_id"] = card.task_id
+
+        if card.source:
+            result["source"] = card.source
+
+        if card.card_image:
+            result["card_image"] = card.card_image
+
+        if card.horizontal_content_list:
+            result["horizontal_content_list"] = card.horizontal_content_list
+
+        if card.jump_list:
+            result["jump_list"] = card.jump_list
+
+        return result
