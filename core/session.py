@@ -97,7 +97,9 @@ class SessionManager:
             # 旧数据库迁移
             self._migrate_add_column(conn, "sessions", "bot_id", "TEXT NOT NULL DEFAULT ''")
             self._migrate_add_column(conn, "sessions", "project_path", "TEXT NOT NULL DEFAULT ''")
+            self._migrate_add_column(conn, "sessions", "user_open_id", "TEXT")
             self._migrate_add_column(conn, "sessions", "group_members", "TEXT")
+            self._migrate_add_column(conn, "sessions", "user_id", "TEXT")
 
             # 索引
             conn.execute("""
@@ -166,12 +168,12 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO sessions
-                   (session_id, bot_id, project_path, platform, chat_id, user_open_id,
+                   (session_id, bot_id, project_path, platform, chat_id, user_id, user_open_id,
                     created_at, last_used, total_cost, message_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session.session_id, session.bot_id, session.project_path,
-                    session.platform, session.chat_id, session.user_open_id,
+                    session.platform, session.chat_id, user_open_id, session.user_open_id,
                     session.created_at.isoformat(), session.last_used.isoformat(),
                     session.total_cost, session.message_count,
                 ),
