@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 _COMMAND_RE = re.compile(r"^/[a-zA-Z][a-zA-Z0-9_-]*(?:\s.*)?$")
 
+# 技能自进化触发阈值：累计 tool_call 达到此数量时触发
+SKILL_NUDGE_THRESHOLD = 10
+
 
 def _is_command(text: str) -> bool:
     return bool(_COMMAND_RE.match(text))
@@ -61,13 +64,9 @@ class CoreExecutor:
         # 安全组件初始化
         self._init_security(config)
 
-        # 后台任务通知回调（由插件在初始化时注入，用于推送 SkillNudge/Memory Review 结果）
-        # 签名: Callable[[str, str], Awaitable[None]] = (chat_id, content) -> None
-        self._background_callback: Callable[[str, str], Awaitable[None]] | None = None
-
-    def set_background_callback(self, cb: Callable[[str, str], Awaitable[None]] | None):
-        """插件设置后台任务完成通知回调，用于推送 SkillNudge/Memory Review 结果。"""
-        self._background_callback = cb
+        # push_fn：由 server.py 在调用 execute() 时传入，用于推送 WebSocket 帧到正确连接
+        # 签名: Callable[[OutboundMessage], Awaitable[None]]
+        self._push_fn: Callable[[OutboundMessage], Awaitable[None]] | None = None
 
     def _init_security(self, config: Any):
         """根据 config 初始化 SecurityValidator（Authenticator 按 platform 懒加载）。"""
@@ -112,6 +111,7 @@ class CoreExecutor:
         self,
         inbound: InboundMessage,
         on_stream: Callable[[OutboundMessage], Awaitable[None]] | None = None,
+        push_fn: Callable[[OutboundMessage], Awaitable[None]] | None = None,
     ) -> OutboundMessage:
         """
         处理一条 InboundMessage，返回 OutboundMessage。
@@ -183,11 +183,27 @@ class CoreExecutor:
 
         # 流式回调包装
         accumulated = []
+        _tool_count = 0  # 本次查询的 tool call 计数
+        _stream_too_long = [False]  # 上下文溢出标记
+
+        # 决定用哪个回调发送 streaming 帧：优先 on_stream，否则用 push_fn
+        _stream_sender = on_stream if on_stream else push_fn
 
         async def _stream_callback(msg: Any) -> None:
+            nonlocal _tool_count
             if msg.content:
                 accumulated.append(msg.content)
-                if on_stream:
+                # Long Context Warning：检测上下文溢出关键词
+                content_lower = msg.content.lower()
+                if (
+                    "too long" in content_lower
+                    or "超出" in msg.content
+                    or "context window" in content_lower
+                    or "context_length" in content_lower
+                    or "max_tokens" in content_lower
+                ):
+                    _stream_too_long[0] = True
+                if _stream_sender:
                     chunk = OutboundMessage(
                         event=Event.STREAM_CHUNK,
                         session_key=key,
@@ -195,17 +211,20 @@ class CoreExecutor:
                         content=msg.content,
                         message_type=MessageType.TEXT,
                     )
-                    await on_stream(chunk)
-            elif msg.tool_name and on_stream:
-                tool_msg = OutboundMessage(
-                    event=Event.TOOL_CALL,
-                    session_key=key,
-                    message_id=inbound.message_id,
-                    content=f"[{msg.tool_name}]",
-                    message_type=MessageType.TOOL_CALL,
-                    extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                )
-                await on_stream(tool_msg)
+                    await _stream_sender(chunk)
+            elif msg.tool_name:
+                nonlocal _tool_count
+                _tool_count += 1
+                if _stream_sender:
+                    tool_msg = OutboundMessage(
+                        event=Event.TOOL_CALL,
+                        session_key=key,
+                        message_id=inbound.message_id,
+                        content=f"[{msg.tool_name}]",
+                        message_type=MessageType.TOOL_CALL,
+                        extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
+                    )
+                    await _stream_sender(tool_msg)
 
         # 执行查询（最多重试3次，SDK 空响应时重试）
         result = ""
@@ -234,6 +253,17 @@ class CoreExecutor:
                 cost = 0.0
                 break
 
+        # 累加工具调用计数到 Worker（供技能自进化阈值判断）
+        total_tool_count = 0
+        if _tool_count > 0:
+            try:
+                worker = await self.pool.get(key)
+                if worker:
+                    worker.tool_call_count += _tool_count
+                    total_tool_count = worker.tool_call_count
+            except Exception:
+                pass
+
         # 更新 Session 统计
         self.sessions.update_session(
             session_id=session.session_id,
@@ -254,29 +284,143 @@ class CoreExecutor:
             direction="incoming",
         )
 
-        return OutboundMessage(
+        # ── 群聊 @mention 检查：若 AI 未 mention 提问者，追加 ────────────
+        # 核心只计算 mention_tag，放在 extra 中传给 plugin；
+        # plugin 在 RESPONSE 事件到达时追加到最后的流式消息，避免重复发送完整内容。
+        mention_tag = ""
+        if key.platform == "feishu" and inbound.extra.get("is_group_chat"):
+            members = inbound.extra.get("group_members", [])
+            sender_id = inbound.user_open_id or ""
+            if sender_id and members:
+                for m in members:
+                    if isinstance(m, dict):
+                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                        name = m.get("name") or m.get("bot_name", "")
+                    else:
+                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                        name = getattr(m, "name", None) or ""
+                    if member_id == sender_id and name:
+                        mention_tag = f"\n<at user_id=\"{member_id}\">{name}</at>"
+                        break
+                # 如果 AI 已自然 mention，mention_tag 保持为空
+                if mention_tag and f'<at user_id="{sender_id}"' in result:
+                    mention_tag = ""
+
+        # ── 发送主响应 + 触发后台任务 ────────────────────────────────────
+        result_msg = OutboundMessage(
             event=Event.RESPONSE,
             session_key=key,
             message_id=inbound.message_id,
             content=result,
             message_type=MessageType.TEXT,
+            extra={
+                "mention_tag": mention_tag,
+                "user_open_id": inbound.user_open_id or "",
+                "is_group_chat": inbound.extra.get("is_group_chat", False),
+                "group_members": inbound.extra.get("group_members", []),
+            },
         )
 
+        # 通过 push_fn 发送主响应（server.py 通过此机制推送 WebSocket 帧）
+        if push_fn:
+            self._push_fn = push_fn
+            await push_fn(result_msg)
+            # 触发后台任务（异步，不阻塞主响应返回）
+            # 用原始 result 作为记忆回顾的上下文
+            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count))
+
+        return result_msg
+
     def _build_prompt(self, inbound: InboundMessage) -> str:
-        """从 inbound 构建发送给 Claude 的 prompt，含群聊上下文。"""
+        """从 inbound 构建发送给 Claude 的 prompt，含系统上下文和群聊上下文。"""
         extra = inbound.extra
+        key = inbound.session_key
         parts = []
 
-        # 群聊：注入群名、成员、引用消息、历史
+        # ── 1. AGENTS.md 注入 ─────────────────────────────────────────────
+        agents_md_content = ""
+        if key.project_path:
+            import os
+            agents_md_path = os.path.join(key.project_path, "AGENTS.md")
+            if os.path.isfile(agents_md_path):
+                try:
+                    with open(agents_md_path, encoding="utf-8") as f:
+                        agents_md_content = f.read().strip()
+                except Exception:
+                    pass
+        if agents_md_content:
+            parts.append(agents_md_content)
+
+        # ── 2. 系统 Prompt Guide 注入 ────────────────────────────────────
+
+        system_parts = []
+
+        # Memory System Guide
+        try:
+            from supercc.claude.memory_manager import MEMORY_SYSTEM_GUIDE
+            system_parts.append(MEMORY_SYSTEM_GUIDE)
+        except Exception:
+            pass
+
+        # Feishu File Guide
+        try:
+            from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
+            system_parts.append(FEISHU_FILE_GUIDE)
+        except Exception:
+            pass
+
+        # Cron Guide
+        try:
+            from supercc.claude.cron_tools import CRON_GUIDE
+            system_parts.append(CRON_GUIDE)
+        except Exception:
+            pass
+
+        # Memory Context Injection
+        try:
+            from supercc.claude.memory_manager import get_memory_manager
+            memory_manager = get_memory_manager()
+            memory_ctx = memory_manager.inject_context(
+                user_open_id=inbound.user_open_id or "",
+                project_path=key.project_path,
+                platform=key.platform,
+                chat_id=key.chat_id,
+            )
+            if memory_ctx:
+                system_parts.append(memory_ctx)
+        except Exception:
+            pass
+
+        if system_parts:
+            parts.append("\n".join(system_parts))
+
+        # ── 3. @mention 规则注入 ─────────────────────────────────────────
+        mention_rules = extra.get("mention_rules", "")
+        if mention_rules:
+            parts.append(mention_rules)
+
+        # ── 4. 群聊上下文注入 ───────────────────────────────────────────
         if extra.get("is_group_chat"):
             group_name = extra.get("group_name", "")
             parts.append(f"[群聊: {group_name}]")
 
-            # 群成员列表
+            # 群成员列表（含 @mention 标签）
             members = extra.get("group_members", [])
             if members:
-                member_list = ", ".join(members[:50])
-                parts.append(f"[群成员] {member_list}")
+                member_lines = [
+                    "【群聊规则】必须在最终回复里艾特@{发送者}以及相关人员。"
+                    "使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。"
+                ]
+                for m in members[:50]:
+                    if isinstance(m, dict):
+                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                        name = m.get("name") or m.get("bot_name", "")
+                    else:
+                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                        name = getattr(m, "name", None) or ""
+                    if member_id and name:
+                        member_lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
+                parts.append("\n".join(member_lines))
 
             # 引用消息内容
             quoted = extra.get("quoted_content", "")
@@ -290,5 +434,83 @@ class CoreExecutor:
                 for h in history[-10:]:
                     parts.append(f"  {h}")
 
+        # ── 5. 用户消息 ──────────────────────────────────────────────────
         parts.append(inbound.content)
         return "\n\n".join(parts)
+
+    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0) -> None:
+        """触发记忆自进化（integration_mem）和技能自进化（integration_skill）。
+
+        由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
+        结果通过 self._push_fn 推送回 plugin（WebSocket）。
+        """
+        push_fn = self._push_fn
+        if not push_fn:
+            return
+
+        try:
+            worker = await self.pool.get(key)
+        except Exception:
+            return
+
+        if worker is None:
+            return
+
+        # ── 记忆自进化 ────────────────────────────────────────────────────
+        if worker.integration_mem:
+            try:
+                memory_prompt = (
+                    "根据之前的对话，判断是否有值得记住的信息。\n"
+                    "需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，"
+                    "不需要问我任何问题。\n"
+                    "本次对话内容参考：\n" + prompt[-1000:]
+                )
+
+                async def mem_stream_callback(msg: Any) -> None:
+                    if msg.content and push_fn:
+                        chunk = OutboundMessage(
+                            event=Event.STREAM_CHUNK,
+                            session_key=key,
+                            message_id="",
+                            content=msg.content,
+                            message_type=MessageType.TEXT,
+                        )
+                        await push_fn(chunk)
+
+                await worker.integration_mem.query(
+                    prompt=memory_prompt,
+                    on_stream=mem_stream_callback,
+                )
+                logger.info(f"[Background] memory review done for {key}")
+            except Exception as e:
+                logger.warning(f"[Background] memory review failed: {e}")
+
+        # ── 技能自进化（达到阈值时触发）────────────────────────────────
+        if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
+            try:
+                skill_prompt = (
+                    f"你在本次对话中使用了 {total_tool_count} 个工具调用。\n"
+                    "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n"
+                    "如果发现值得技能化的模式，直接调用 MCP 工具来创建或更新技能，"
+                    "不需要问我任何问题。"
+                )
+
+                async def skill_stream_callback(msg: Any) -> None:
+                    if msg.content and push_fn:
+                        chunk = OutboundMessage(
+                            event=Event.STREAM_CHUNK,
+                            session_key=key,
+                            message_id="",
+                            content=msg.content,
+                            message_type=MessageType.TEXT,
+                        )
+                        await push_fn(chunk)
+
+                await worker.integration_skill.query(
+                    prompt=skill_prompt,
+                    on_stream=skill_stream_callback,
+                )
+                logger.info(f"[Background] skill review done for {key} ({total_tool_count} tool calls)")
+            except Exception as e:
+                logger.warning(f"[Background] skill review failed: {e}")
+

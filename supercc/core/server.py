@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import secrets
@@ -20,8 +21,10 @@ from supercc.core.protocol import (
 
 logger = logging.getLogger(__name__)
 
-
-# ── 类型别名 ─────────────────────────────────────────────────────────────────
+# Task-local context variable：当前处理中的 WebSocket 连接
+_conn_var: contextvars.ContextVar[Connection | None] = contextvars.ContextVar(
+    "_conn_var", default=None
+)
 
 WsHandler = Callable[[JsonRpcRequest], Awaitable[Optional[JsonRpcResponse]]]
 WsEventHandler = Callable[[dict], Awaitable[None]]
@@ -117,7 +120,9 @@ class WsServer:
         self.router.add("core.worker_status", self._handle_worker_status)
         self.router.add("core.ping", self._handle_ping)
         self.router.add("feishu.message", self._handle_message)
+        self.router.add("feishu.notify", self._handle_notify)
         self.router.add("wecom.message", self._handle_wecom_message)
+        self.router.add("wecom.notify", self._handle_notify)
 
     # ── 核心方法处理 ────────────────────────────────────────────────────────
 
@@ -169,7 +174,7 @@ class WsServer:
 
     async def _handle_message(self, req: JsonRpcRequest) -> dict:
         """处理来自飞书插件的消息。"""
-        from supercc.core.protocol import InboundMessage, SessionKey, MessageRole, MessageType, _cst_now
+        from supercc.core.protocol import InboundMessage, MessageRole, MessageType, _cst_now
 
         params = req.params
 
@@ -212,11 +217,29 @@ class WsServer:
             },
         )
 
-        # 通过 executor 处理
+        # 通过 executor 处理（push_fn 通过 WS 推送响应帧）
         if self._executor is None:
             raise RuntimeError("No executor configured")
 
-        result_outbound = await self._executor.execute(inbound)
+        # push_fn：找到当前连接，发送 OutboundMessage 为 Event notification
+        async def push_fn(msg: Any) -> None:
+            conn = _conn_var.get()
+            if conn is None:
+                return
+            params = {
+                "chat_id": msg.session_key.chat_id,
+                "message_id": msg.message_id,
+                "content": msg.content,
+                "event": msg.event,
+            }
+            frame = {"jsonrpc": "2.0", "method": msg.event, "params": params}
+            try:
+                await conn.ws.send(json.dumps(frame))
+            except Exception:
+                conn.alive = False
+
+        result_outbound = await self._executor.execute(inbound, push_fn=push_fn)
+        # 主响应已由 push_fn 发送，此处返回仅供 JSON-RPC 框架使用
         return {
             "message_id": result_outbound.message_id,
             "content": result_outbound.content,
@@ -226,6 +249,35 @@ class WsServer:
     async def _handle_wecom_message(self, req: JsonRpcRequest) -> dict:
         """处理来自企业微信插件的消息（复用 feishu.message 逻辑）。"""
         return await self._handle_message(req)
+
+    async def _handle_notify(self, req: JsonRpcRequest) -> dict:
+        """轻量通知：plugin 通知 core 更新 session（群聊非@mention消息）。
+
+        只更新 session 统计，不触发 AI 推理。
+        """
+        params = req.params
+        from supercc.core.protocol import SessionKey
+
+        key = SessionKey(
+            bot_id=params.get("bot_id", ""),
+            project_path=params.get("project_path", ""),
+            platform=params.get("platform", "feishu"),
+            chat_id=params.get("chat_id", ""),
+        )
+        user_open_id = params.get("user_open_id", "") or ""
+
+        try:
+            if self._executor and self._executor.sessions:
+                session = self._executor.sessions.get_or_create_session(key, user_open_id)
+                self._executor.sessions.update_session(
+                    session_id=session.session_id,
+                    message_increment=1,
+                    update_last_message=True,
+                )
+        except Exception:
+            pass
+
+        return {}
 
     # ── 连接管理 ──────────────────────────────────────────────────────────
 
@@ -272,7 +324,13 @@ class WsServer:
             await conn.ws.send(json.dumps(resp.to_dict()))
             return
 
-        resp = await self.router.dispatch(req)
+        # 设置 task-local 连接上下文，供 push_fn 使用
+        token = _conn_var.set(conn)
+        try:
+            resp = await self.router.dispatch(req)
+        finally:
+            _conn_var.reset(token)
+
         if resp is not None:
             await conn.ws.send(json.dumps(resp.to_dict()))
 

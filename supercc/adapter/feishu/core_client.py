@@ -13,6 +13,9 @@ from supercc.core.protocol import (
 )
 from supercc.adapter.feishu.client import IncomingMessage
 from supercc.adapter.feishu.core_protocol import incoming_to_inbound
+from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter, should_use_card
+from supercc.adapter.feishu.format.questionnaire_card import format_questionnaire_card
+from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +84,8 @@ class FeishuCoreWSClient:
     - 将 IncomingMessage（来自飞书）转换为 InboundMessage，发给核心
     - 接收核心的 OutboundMessage，渲染为飞书格式并发送
     - 处理 tool_call 事件（委托给 FeishuClient 执行）
-    - 管理 SkillNudge 和 Memory Review 后台任务
 
-    不负责：Session 管理、AI 推理（但持有专用的 ClaudeIntegration 实例供后台任务使用）
+    不负责：Session 管理、AI 推理
     """
 
     def __init__(
@@ -111,13 +113,20 @@ class FeishuCoreWSClient:
         self._id_counter = 0
         # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
-        # SkillNudge tracking: message_id → tool call count
-        self._tool_call_counts: dict[str, int] = {}
-        # Claude instances for background tasks (lazy init)
-        self._claude_skill: Any = None
-        self._claude_memory: Any = None
+        # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
+        self._group_history: dict[str, list[IncomingMessage]] = {}
+        self._MAX_GROUP_HISTORY = 10
         self._data_dir = data_dir
-        self._skills_dir: Any = None
+
+        # Feishu 格式化管线
+        self.formatter = ReplyFormatter()
+
+        # Memory Manager（MCP 工具执行器）
+        try:
+            from supercc.claude.memory_manager import get_memory_manager
+            self._memory_manager = get_memory_manager()
+        except Exception:
+            self._memory_manager = None
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -171,12 +180,25 @@ class FeishuCoreWSClient:
         params = data.get("params", {})
 
         if method == Event.RESPONSE:
-            await self._render_and_send(params)
-            # Trigger SkillNudge and Memory Review after main response
-            chat_id = params.get("chat_id", "")
             msg_id = params.get("message_id", "")
-            content = params.get("content", "") or ""
-            self._trigger_background_tasks(chat_id, msg_id, content)
+            extra = params.get("extra", {})
+            mention_tag = extra.get("mention_tag", "")  # executor 已计算，直接使用
+            content = params.get("content", "")
+
+            if mention_tag:
+                if msg_id and msg_id in self._accumulator_by_msg_id:
+                    # 流式模式：在 flush 前追加 mention_tag 到 buffer
+                    acc = self._accumulator_by_msg_id[msg_id]
+                    async with acc._lock:
+                        buffered = acc._buffer
+                    if buffered and f'<at user_id=' not in buffered:
+                        async with acc._lock:
+                            acc._buffer += mention_tag
+                elif content and f'<at user_id=' not in content:
+                    # 非流式模式：在 content 末尾追加 mention_tag
+                    params["content"] = content + mention_tag
+
+            await self._render_and_send(params)
         elif method == Event.STREAM_CHUNK:
             # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)
@@ -186,9 +208,15 @@ class FeishuCoreWSClient:
             pass  # 心跳响应
 
     async def _render_and_send(self, params: dict):
-        """渲染 OutboundMessage 为飞书格式并发送。"""
-        from supercc.adapter.feishu.format.reply_formatter import should_use_card
+        """渲染 OutboundMessage 为飞书格式并发送。
 
+        RESPONSE 事件：
+        - 有 accumulator（流式模式）：flush 后丢弃 RESPONSE 内容（内容已在 chunks 中）
+        - 无 accumulator（非流式模式）：格式化后 safe send
+
+        STREAM_CHUNK 事件：
+        - 走缓冲区累积，由 accumulator 在 idle 超时或 tool call 时 flush
+        """
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
@@ -202,35 +230,71 @@ class FeishuCoreWSClient:
             if message_id and message_id in self._accumulator_by_msg_id:
                 await self._accumulator_by_msg_id[message_id].flush()
             await self.feishu.send_interactive_card(chat_id, content)
-        else:
-            # Buffer text chunks for efficient batched sending
-            if message_id:
-                if message_id not in self._accumulator_by_msg_id:
-                    self._accumulator_by_msg_id[message_id] = StreamAccumulator(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
-                    )
-                await self._accumulator_by_msg_id[message_id].add_text(content)
+            return
+
+        if message_id and message_id in self._accumulator_by_msg_id:
+            # 有 accumulator → 流式 chunks 或 RESPONSE flush 信号
+            acc = self._accumulator_by_msg_id[message_id]
+            if params.get("event") == Event.RESPONSE:
+                # RESPONSE = 流式结束信号：flush 并清理 accumulator
+                await acc.flush()
+                del self._accumulator_by_msg_id[message_id]
             else:
-                # No message_id (e.g. final RESPONSE without streaming) - send directly
-                if should_use_card(content):
-                    await self.feishu.send_interactive_card(chat_id, content)
-                else:
-                    await self.feishu.send_post_reply(chat_id, content, message_id)
+                # STREAM_CHUNK：追加到缓冲区（accumulator 内部会定时 flush）
+                await acc.add_text(content)
+        elif message_id:
+            # 首次收到该 message_id 的 chunk，创建 accumulator
+            self._accumulator_by_msg_id[message_id] = StreamAccumulator(
+                chat_id=chat_id,
+                message_id=message_id,
+                send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
+            )
+            await self._accumulator_by_msg_id[message_id].add_text(content)
+        else:
+            # 非流式完整响应：格式化后 safe send
+            formatted = self.formatter.format_text(content)
+            await self._safe_send(chat_id, message_id, formatted)
+
+    async def _safe_send(self, chat_id: str, reply_to_message_id: str, text: str):
+        """发送格式化文本，依次尝试：card → post → text，三级降级。
+
+        Uses Interactive Card for content with fenced code blocks or tables,
+        falls back to rich text post for plain markdown.
+        Falls back to plain text if card/post sending fails.
+        """
+        if not text or not text.strip():
+            return
+        try:
+            if should_use_card(text):
+                try:
+                    await self.feishu.send_interactive_reply(chat_id, text, reply_to_message_id)
+                except Exception as card_error:
+                    # 卡片失败，降级到 post
+                    logger.warning(f"Card failed ({card_error}), falling back to post")
+                    await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+            else:
+                await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+        except Exception as e:
+            logger.warning(f"Failed to send message: {e}")
 
     async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
-        """Send text to Feishu (called by StreamAccumulator after buffering)."""
-        from supercc.adapter.feishu.format.reply_formatter import should_use_card
-        if should_use_card(text):
-            await self.feishu.send_interactive_card(chat_id, text)
-        else:
-            await self.feishu.send_post_reply(chat_id, text, message_id)
+        """Send text to Feishu (called by StreamAccumulator after buffering).
+
+        Uses safe send: card → post → text fallback.
+        """
+        await self._safe_send(chat_id, message_id, text)
 
     async def _handle_tool_call(self, params: dict):
-        """处理核心发来的工具调用请求。"""
+        """处理核心发来的工具调用请求。
+
+        使用 ReplyFormatter 格式化工具结果，支持：
+        - _DiffMarker → Edit Diff 彩色卡片
+        - _MemoryCardMarker → 记忆工具卡片
+        - _AskUserQuestionMarker → 问卷卡片
+        - 其他 → backtick 格式 safe send
+        """
         tool_name = params.get("tool_name", "")
-        tool_input = params.get("tool_input", {})
+        tool_input_raw = params.get("tool_input", {})
         tool_call_id = params.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
@@ -240,19 +304,188 @@ class FeishuCoreWSClient:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
 
-        # Track tool call for SkillNudge (increment count for this message)
-        if msg_id:
-            self._tool_call_counts[msg_id] = self._tool_call_counts.get(msg_id, 0) + 1
+        # 格式化工具结果
+        tool_input_str = json.dumps(tool_input_raw) if isinstance(tool_input_raw, dict) else str(tool_input_raw or "")
 
-        # 执行工具（通过 FeishuClient 的 MCP 工具）
-        result_content = f"[{tool_name}] executed"
+        # 构建 format_tool_call kwargs
+        kwargs: dict[str, Any] = {}
+        if tool_name.startswith("mcp__SuperCC__Memory") and self._memory_manager:
+            kwargs["memory_manager"] = self._memory_manager
+            kwargs["default_project_path"] = self.project_path
+            kwargs["platform"] = "feishu"
+            kwargs["chat_id"] = chat_id
+
+        result = self.formatter.format_tool_call(tool_name, tool_input_str, **kwargs)
+
+        # 根据 result 类型渲染
+        if isinstance(result, _DiffMarker):
+            # Edit/Write → 彩色 diff 卡片
+            cards = result.card if isinstance(result.card, list) else [result.card]
+            for card in cards:
+                try:
+                    await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
+                except Exception:
+                    # 降级为带图标的纯文本
+                    try:
+                        data = json.loads(result.tool_input)
+                        file_path = data.get("file_path", "unknown")
+                        if result.tool_name == "Edit":
+                            icon = "✏️"
+                        elif result.tool_name.startswith("cc-"):
+                            icon = "🧰"
+                        elif result.tool_name == "Bash":
+                            cmd = data.get("command", "")
+                            if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
+                                icon = "🧰"
+                            else:
+                                icon = "📝"
+                        else:
+                            icon = "📝"
+                        fallback = f"{icon} **{result.tool_name}** — `{file_path}`"
+                    except Exception:
+                        fallback = f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`"
+                    await self._safe_send(chat_id, msg_id, fallback)
+
+        elif isinstance(result, list):
+            # list[_DiffMarker]
+            for marker in result:
+                if isinstance(marker, _DiffMarker):
+                    cards = marker.card if isinstance(marker.card, list) else [marker.card]
+                    for card in cards:
+                        try:
+                            await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
+                        except Exception:
+                            try:
+                                data = json.loads(marker.tool_input)
+                                file_path = data.get("file_path", "unknown")
+                                if marker.tool_name == "Edit":
+                                    icon = "✏️"
+                                elif marker.tool_name.startswith("cc-"):
+                                    icon = "🧰"
+                                elif marker.tool_name == "Bash":
+                                    cmd = data.get("command", "")
+                                    if "~/.claude/skills/" in cmd or cmd.startswith("cc-"):
+                                        icon = "🧰"
+                                    else:
+                                        icon = "📝"
+                                else:
+                                    icon = "📝"
+                                fallback = f"{icon} **{marker.tool_name}** — `{file_path}`"
+                            except Exception:
+                                fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
+                            await self._safe_send(chat_id, msg_id, fallback)
+
+        elif isinstance(result, _MemoryCardMarker):
+            # 记忆工具 → CardKit 格式
+            card = self._render_memory_card(result)
+            try:
+                await self.feishu.send_card(chat_id, card)
+            except Exception:
+                await self._safe_send(chat_id, msg_id, str(card))
+
+        elif isinstance(result, str) and tool_name.startswith("mcp__SuperCC__AskUserQuestion"):
+            # AskUserQuestion → 尝试渲染为问卷卡片
+            from supercc.adapter.feishu.format.questionnaire_card import parse_ask_user_question
+            qdata = parse_ask_user_question(tool_input_str)
+            if qdata is not None:
+                # 包装为 _AskUserQuestionMarker 以复用 format_questionnaire_card
+                from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
+                marker = _AskUserQuestionMarker(tool_name, tool_input_str)
+                marker.data = qdata
+                card = format_questionnaire_card(marker)
+                try:
+                    await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
+                except Exception:
+                    await self._safe_send(chat_id, msg_id, result)
+            else:
+                await self._safe_send(chat_id, msg_id, result)
+
+        else:
+            # 其他工具 → backtick 格式
+            if isinstance(result, str):
+                await self._safe_send(chat_id, msg_id, result)
+            else:
+                await self._safe_send(chat_id, msg_id, f"🤖 **{tool_name}**")
 
         # 发送 tool_result 回核心
         await self._send_event(Event.TOOL_RESULT, {
             "tool_call_id": tool_call_id,
-            "content": result_content,
+            "content": f"[{tool_name}] executed",
             "chat_id": chat_id,
         })
+
+    def _render_memory_card(self, marker: _MemoryCardMarker) -> dict:
+        """将 _MemoryCardMarker 渲染为 CardKit 原生格式。"""
+        try:
+            args = json.loads(marker.tool_input) if marker.tool_input else {}
+        except json.JSONDecodeError:
+            args = {}
+
+        short = marker.tool_name.replace("mcp__SuperCC__", "")
+        scope = "proj" if "Proj" in short else "user"
+        card_type = marker.card_type or ""
+
+        def _esc(s: str) -> str:
+            return s.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+        header = f"🧠 **{short}**"
+        if card_type == "search":
+            q = args.get("query", "")
+            header += f"  查询: 「{q}」"
+        if scope == "proj":
+            pp = args.get("project_path", "") or self.project_path
+            if pp:
+                header += f"  项目: {pp.split('/')[-1] or pp}"
+        elif args.get("user_open_id"):
+            header += f"  用户: {args['user_open_id']}"
+
+        elements = []
+
+        if card_type in ("add", "update"):
+            if not marker.entries:
+                elements.append({"tag": "markdown", "content": f"{header}\n\n_无结果_"})
+            else:
+                table_lines = "| 标题 | 内容摘要 | 关键词 |\n|------|----------|--------|\n"
+                for e in marker.entries:
+                    title = _esc(e.get("title", "")[:60])
+                    content = _esc(e.get("content", "")[:50])
+                    keywords = _esc(e.get("keywords", ""))
+                    table_lines += f"| {title} | {content} | {keywords} |\n"
+                elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
+
+        elif card_type in ("list", "search"):
+            total = len(marker.entries)
+            header += f"（共 {total} 条）"
+            if not marker.entries:
+                elements.append({"tag": "markdown", "content": f"{header}\n\n_无结果_"})
+            else:
+                table_lines = "| # | 标题 | 内容摘要 | 关键词 | ID |\n|---|------|----------|--------|---|\n"
+                for i, e in enumerate(marker.entries, 1):
+                    title = _esc(e.get("title", "")[:40])
+                    content = _esc(e.get("content", "")[:50])
+                    keywords = _esc(e.get("keywords", ""))
+                    mid = f"`{e.get('id', '')}`"
+                    table_lines += f"| {i} | {title} | {content} | {keywords} | {mid} |\n"
+                elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
+
+        elif card_type == "delete":
+            deleted_id = marker.entries[0].get("id", "") if marker.entries else ""
+            elements.append({"tag": "markdown", "content": f"{header}\n\n| ID |\n|------|\n| `{deleted_id}` |\n"})
+
+        else:
+            table_lines = "| 参数 | 值 |\n|------|----|\n"
+            for k, v in args.items():
+                v_str = _esc(str(v))
+                if len(v_str) > 80:
+                    v_str = v_str[:80] + "…"
+                table_lines += f"| `{k}` | {v_str} |\n"
+            elements.append({"tag": "markdown", "content": f"{header}\n\n{table_lines}"})
+
+        return {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {"elements": elements},
+        }
 
     async def _check_group_permissions(self, inbound, incoming: IncomingMessage) -> bool:
         """检查群聊权限。返回 True=允许通过，False=已拦截（已发送授权卡片）。
@@ -389,7 +622,32 @@ class FeishuCoreWSClient:
         if not await self._check_group_permissions(inbound, incoming):
             return {}
 
-        # 群聊上下文 enrichment（历史、成员列表、引用消息）
+        # ── 群聊非@mention消息：只存内存，通知core更新session ─────────────────
+        if inbound.extra.get("is_group_chat") and not inbound.extra.get("mention_bot"):
+            hist = self._group_history.setdefault(inbound.session_key.chat_id, [])
+            hist.append(incoming)
+            if len(hist) > self._MAX_GROUP_HISTORY:
+                hist[:] = hist[-self._MAX_GROUP_HISTORY:]
+            # 发轻量通知让 core 更新 session（不计消息数，避免触发 AI 处理）
+            try:
+                notify_req = JsonRpcRequest(
+                    id=self._next_id(),
+                    method="feishu.notify",
+                    params={
+                        "chat_id": inbound.session_key.chat_id,
+                        "user_open_id": inbound.user_open_id or "",
+                        "platform": inbound.session_key.platform,
+                        "project_path": inbound.session_key.project_path,
+                        "content": inbound.content,
+                    },
+                )
+                await self._ws.send(json.dumps(notify_req.to_dict()))
+            except Exception:
+                pass
+            logger.info(f"[FeishuCore] group msg stored, hist_len={len(hist)}")
+            return {}
+
+        # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
         await self._enrich_group_context(inbound, incoming)
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
@@ -429,44 +687,160 @@ class FeishuCoreWSClient:
         result = await future
         return result or {}
 
+    async def _resolve_media_markdown(self, msg: Any) -> str | None:
+        """解析消息中的媒体（图片/文件）为 markdown 格式。
+
+        下载媒体到本地，返回 ![image](path) 或 [File: path] 格式。
+        返回 None 表示解析失败。
+        """
+        msg_type = getattr(msg, "message_type", "") or msg.get("message_type", "")
+        msg_id = getattr(msg, "message_id", "") or msg.get("message_id", "")
+
+        if msg_type not in ("image", "file"):
+            return None
+
+        try:
+            # 通过 get_message API 获取可靠的 content（WS 事件 content 可能缺 image_key）
+            msg_data = await self.feishu.get_message(msg_id)
+            if not msg_data:
+                return None
+            content_str = msg_data.get("content", "{}")
+            content = json.loads(content_str) if isinstance(content_str, str) else content_str
+        except Exception:
+            return None
+
+        data_dir = self._data_dir or ""
+
+        if msg_type == "image":
+            file_key = content.get("image_key", "") if isinstance(content, dict) else ""
+            if not file_key:
+                return None
+            try:
+                base_path = self._make_image_path(data_dir, msg_id, file_key)
+                data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
+                save_path = base_path + ".png"
+                with open(save_path, "wb") as f:
+                    f.write(data)
+                logger.info(f"[FeishuCore] saved image to {save_path}")
+                return f"![image]({save_path})"
+            except Exception as e:
+                logger.warning(f"[FeishuCore] image download failed: {e}")
+                return None
+
+        elif msg_type == "file":
+            file_key = content.get("file_key", "") if isinstance(content, dict) else ""
+            orig_name = content.get("file_name", "file") if isinstance(content, dict) else "file"
+            file_type = content.get("file_type", "bin") if isinstance(content, dict) else "bin"
+            if not file_key:
+                return None
+            try:
+                save_path = self._make_file_path(data_dir, msg_id, orig_name, file_type)
+                data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
+                with open(save_path, "wb") as f:
+                    f.write(data)
+                logger.info(f"[FeishuCore] saved file to {save_path}")
+                return f"[File: {save_path}] ({orig_name})"
+            except Exception as e:
+                logger.warning(f"[FeishuCore] file download failed: {e}")
+                return None
+
+        return None
+
+    def _make_image_path(self, data_dir: str, msg_id: str, image_key: str) -> str:
+        import hashlib, os
+        key_hash = hashlib.md5(image_key.encode()).hexdigest()[:8]
+        directory = os.path.join(data_dir, ".supercc", "media") if data_dir else "/tmp/supercc_media"
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{msg_id}_{key_hash}")
+
+    def _make_file_path(self, data_dir: str, msg_id: str, orig_name: str, file_type: str) -> str:
+        import os
+        directory = os.path.join(data_dir, ".supercc", "media") if data_dir else "/tmp/supercc_media"
+        os.makedirs(directory, exist_ok=True)
+        safe_name = "".join(c for c in orig_name if c.isalnum() or c in "._-") or "file"
+        return os.path.join(directory, f"{msg_id}_{safe_name}")
+
     async def _enrich_group_context(self, inbound, incoming):
-        """为群聊消息收集并注入上下文：历史、成员列表、引用消息。"""
+        """为群聊消息收集并注入上下文：历史、成员列表、引用消息、@mention规则。
+
+        历史从内存（_group_history）中取；成员列表调用API；引用消息调用API。
+        """
         if not inbound.extra.get("is_group_chat"):
             return
 
         chat_id = inbound.session_key.chat_id
         extra = inbound.extra
 
-        # 1) 群历史（最近10条）
-        try:
-            history = await self.feishu.get_chat_history(chat_id, limit=10)
-            if history:
-                history_lines = []
-                for msg in history:
-                    # sender.id: 发送者 open_id；body.content: 消息内容
-                    sender = msg.get("sender", {})
-                    user = getattr(sender, "id", "?") if hasattr(sender, "id") else sender.get("id", "?")
-                    body = msg.get("body", {})
-                    text = body.get("content", "") if isinstance(body, dict) else ""
-                    if text:
-                        history_lines.append(f"{user}: {text[:200]}")
-                extra["group_history"] = history_lines
-        except Exception as e:
-            logger.warning(f"[FeishuCore] failed to fetch group history: {e}")
+        # 1) 群历史（从内存，媒体按需解析）
+        # 内存中的消息（IncomingMessage 对象），图片/文件需下载到本地再注入
+        hist = self._group_history.get(chat_id, [])
+        if hist:
+            history_lines = []
+            for h_msg in hist:
+                h_msg_id = getattr(h_msg, "message_id", "") or (h_msg.get("message_id") if isinstance(h_msg, dict) else "")
+                h_user_open_id = getattr(h_msg, "user_open_id", "") or (h_msg.get("user_open_id") if isinstance(h_msg, dict) else "")
+                h_content = getattr(h_msg, "content", "") or (h_msg.get("content") if isinstance(h_msg, dict) else "")
+                h_msg_type = getattr(h_msg, "message_type", "text") or (h_msg.get("message_type") if isinstance(h_msg, dict) else "text")
+                h_raw = getattr(h_msg, "raw_content", "") or (h_msg.get("raw_content") if isinstance(h_msg, dict) else "")
 
-        # 2) 群成员列表
+                # 非文本类型用 raw_content
+                text = h_content if h_msg_type == "text" else h_raw
+
+                # 图片/文件：下载到本地，注入 markdown 路径
+                if h_msg_type in ("image", "file"):
+                    try:
+                        resolved = await self._resolve_media_markdown(h_msg)
+                        if resolved:
+                            text = resolved
+                            # 更新 hist 中的 content 避免重复下载
+                            if hasattr(h_msg, "content"):
+                                h_msg.content = resolved
+                            elif isinstance(h_msg, dict):
+                                h_msg["content"] = resolved
+                    except Exception as e:
+                        logger.warning(f"[FeishuCore] resolve media failed for {h_msg_id}: {e}")
+                        text = f"{h_content} (媒体下载失败)" if h_content else ""
+
+                # 获取发送者姓名
+                sender_name = h_user_open_id
+                if h_user_open_id:
+                    try:
+                        sender_name = await self.feishu.get_user_name(h_user_open_id)
+                    except Exception:
+                        pass
+
+                if text:
+                    history_lines.append(f"{sender_name}: {text[:200]}")
+            if history_lines:
+                extra["group_history"] = history_lines
+
+        # 2) 群成员列表 + @mention 规则生成
         try:
             members = await self.feishu.get_chat_members(chat_id)
             if members:
-                names = []
+                member_lines = []
+                sender_name = None
                 for m in members[:50]:
-                    if hasattr(m, "name"):
-                        names.append(getattr(m, "name", "?"))
-                    elif isinstance(m, dict):
-                        names.append(m.get("bot_name", m.get("name", "?")))
+                    if isinstance(m, dict):
+                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                        name = m.get("name") or m.get("bot_name", "")
                     else:
-                        names.append(str(m))
-                extra["group_members"] = names
+                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                        name = getattr(m, "name", None) or ""
+                    if member_id and name:
+                        member_lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
+                        if member_id == inbound.user_open_id and not sender_name:
+                            sender_name = name
+                extra["group_members"] = member_lines
+
+                # 生成 @mention 规则（含发送者姓名）
+                sender_display = sender_name or inbound.user_open_id
+                mention_rules = (
+                    f"【群聊规则】必须在最终回复里艾特@{sender_display}以及相关人员。"
+                    f"使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。\n"
+                    + "\n".join(member_lines)
+                )
+                extra["mention_rules"] = mention_rules
         except Exception as e:
             logger.warning(f"[FeishuCore] failed to fetch group members: {e}")
 
@@ -498,130 +872,3 @@ class FeishuCoreWSClient:
         self._running = False
         if self._ws:
             await self._ws.close()
-
-    # ── Background Tasks (SkillNudge + Memory Review) ───────────────────────
-
-    def _trigger_background_tasks(self, chat_id: str, msg_id: str, response_content: str) -> None:
-        """主响应完成后触发 SkillNudge 和 Memory Review 后台任务。"""
-        tool_count = self._tool_call_counts.pop(msg_id, 0)
-
-        # SkillNudge: after RESPONSE, check if threshold hit
-        if tool_count > 0:
-            asyncio.create_task(self._do_skill_nudge(chat_id, msg_id, tool_count))
-
-        # Memory Review: always trigger after main query completes
-        asyncio.create_task(self._do_memory_review(chat_id, msg_id, response_content))
-
-    async def _do_skill_nudge(self, chat_id: str, msg_id: str, tool_count: int) -> None:
-        """检查 SkillNudge 阈值，达到后触发 skill review。"""
-        try:
-            # Lazy init ClaudeIntegration for skill review
-            if self._claude_skill is None:
-                from pathlib import Path
-                from supercc.claude.integration import ClaudeIntegration
-                self._claude_skill = ClaudeIntegration(
-                    cli_path="claude",
-                    max_turns=5,
-                    approved_directory=self.project_path,
-                )
-                self._skills_dir = Path(self._data_dir) / "skills" if self._data_dir else None
-
-            # Load or create SkillNudge
-            nudge = self._load_or_create_nudge()
-
-            # Increment counter for each tool call
-            if nudge.increment():
-                # Threshold hit - trigger review
-                from supercc.evolve.skill_nudge import trigger_skill_review
-                logger.info("[SkillNudge] threshold hit, starting background review")
-
-                def send_to_feishu(cid: str, text: str) -> None:
-                    asyncio.create_task(self.feishu.send_text(cid, text))
-
-                await trigger_skill_review(
-                    make_claude_query=lambda p: self._claude_skill.query(prompt=p),
-                    nudge=nudge,
-                    chat_id=chat_id,
-                    send_to_feishu=send_to_feishu,
-                    skills_dir=self._skills_dir,
-                )
-                # Mark review done to reset counter
-                nudge.mark_review_done()
-        except Exception as e:
-            logger.warning(f"[SkillNudge] background review failed: {e}")
-
-    def _load_or_create_nudge(self):
-        """Load existing SkillNudge state or create new one."""
-        from pathlib import Path
-        from supercc.evolve.skill_nudge import SkillNudge, SkillNudgeConfig, make_nudge
-        import json
-
-        nudge_file = self._skills_dir / "skill_nudge.json" if self._skills_dir else None
-        if nudge_file and nudge_file.exists():
-            try:
-                with open(nudge_file) as f:
-                    data = json.load(f)
-                config = SkillNudgeConfig(
-                    enabled=data.get("enabled", True),
-                    interval=data.get("interval", 10),
-                )
-                nudge = make_nudge(config)
-                # Restore count if any
-                nudge._count = data.get("count", 0)
-                return nudge
-            except Exception:
-                pass
-        return make_nudge(SkillNudgeConfig())
-
-    async def _do_memory_review(self, chat_id: str, msg_id: str, response_content: str) -> None:
-        """运行 Memory Review 后台任务。"""
-        try:
-            # Lazy init ClaudeIntegration for memory review
-            if self._claude_memory is None:
-                from supercc.claude.integration import ClaudeIntegration
-                self._claude_memory = ClaudeIntegration(
-                    cli_path="claude",
-                    max_turns=5,
-                    approved_directory=self.project_path,
-                    memory_only=True,
-                )
-
-            from supercc.memory.manager import get_memory_manager
-            memory_manager = get_memory_manager()
-
-            prompt = (
-                "根据之前的对话，判断是否有值得记住的信息。需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，不需要问我任何问题。\n"
-            )
-
-            async def stream_callback(claude_msg):
-                if claude_msg.tool_name and claude_msg.tool_name.startswith("mcp__SuperCC__Memory"):
-                    result = self._format_memory_tool_result(claude_msg.tool_name, claude_msg.tool_input)
-                    if result:
-                        await self.feishu.send_text(chat_id, result)
-                    logger.info(f"[memory_review] tool: {claude_msg.tool_name}")
-
-            await self._claude_memory.query(prompt=prompt, on_stream=stream_callback)
-            logger.info("[MemoryReview] background review done")
-        except Exception as e:
-            logger.warning(f"[MemoryReview] background review failed: {e}")
-
-    def _format_memory_tool_result(self, tool_name: str, tool_input: str) -> str | None:
-        """Format memory MCP tool result for display."""
-        if not tool_input:
-            return None
-        try:
-            import json
-            data = json.loads(tool_input) if isinstance(tool_input, str) else tool_input
-            action = ""
-            if "add" in tool_name.lower():
-                action = "📝 记忆已新增"
-            elif "update" in tool_name.lower():
-                action = "✏️ 记忆已更新"
-            elif "delete" in tool_name.lower():
-                action = "🗑️ 记忆已删除"
-            else:
-                return None
-            title = data.get("title", "") if isinstance(data, dict) else ""
-            return f"{action}: {title}" if title else action
-        except Exception:
-            return None
