@@ -1,0 +1,1 @@
+"""WeCom plugin package."""
