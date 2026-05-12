@@ -52,10 +52,15 @@ async def main():
         corp_secret=config.channels.wecom.corp_secret,
     )
 
+    # WebSocket 凭证：优先使用扫码接入获得的 bot_id/secret，
+    # 回退到手动输入时的 agent_id/corp_secret（向后兼容）
+    ws_bot_id = config.channels.wecom.bot_id or config.channels.wecom.agent_id
+    ws_bot_secret = config.channels.wecom.secret or config.channels.wecom.corp_secret
+
     core_client = WeComCoreWSClient(
         core_url=core_url,
         wecom_client=wecom,
-        bot_id=config.channels.wecom.agent_id,
+        bot_id=ws_bot_id,
         project_path=config.claude.approved_directory,
         groups=config.channels.wecom.groups,
         allowed_users=config.channels.wecom.allowed_users,
@@ -65,8 +70,8 @@ async def main():
         await core_client.send_message(msg)
 
     ws_client = WeComWSClient(
-        bot_id=config.channels.wecom.agent_id,
-        bot_secret=config.channels.wecom.corp_secret,
+        bot_id=ws_bot_id,
+        bot_secret=ws_bot_secret,
         on_message=on_message,
     )
 

@@ -87,6 +87,9 @@ class WeComChannelConfig:
     corp_id: str = ""
     agent_id: str = ""
     corp_secret: str = ""
+    # 扫码接入获得的 WebSocket 凭证（优先级高于 agent_id/corp_secret）
+    bot_id: str = ""
+    secret: str = ""
     bot_name: str = "Claude"
     groups: dict = field(default_factory=dict)
     allowed_users: list = field(default_factory=list)
@@ -375,6 +378,8 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "corp_id": cfg.channels.wecom.corp_id,
                 "agent_id": cfg.channels.wecom.agent_id,
                 "corp_secret": cfg.channels.wecom.corp_secret,
+                "bot_id": cfg.channels.wecom.bot_id,
+                "secret": cfg.channels.wecom.secret,
                 "bot_name": cfg.channels.wecom.bot_name,
                 "groups": cfg.channels.wecom.groups,
                 "allowed_users": cfg.channels.wecom.allowed_users,
