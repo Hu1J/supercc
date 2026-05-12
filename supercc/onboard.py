@@ -28,7 +28,7 @@ def _print_step(step: int, total: int, title: str) -> None:
 
 def run_onboard_flow() -> bool:
     """Run the interactive onboard flow. Returns True if setup completed."""
-    TOTAL_STEPS = 2
+    TOTAL_STEPS = 3
 
     print("\n🐲 SuperCC 项目初始化引导\n")
 
@@ -60,29 +60,64 @@ def run_onboard_flow() -> bool:
 
     _do_model_config_step()
 
-    # ── Step 2: Feishu config ─────────────────────────────────────────────────
-    _print_step(2, TOTAL_STEPS, "配置飞书")
-    print("扫码登录飞书应用...\n")
+    # ── Step 2: Platform selection ─────────────────────────────────────────────
+    _print_step(2, TOTAL_STEPS, "选择平台")
 
-    import asyncio
-    from supercc.install.flow import run_install_flow
-    from supercc.config import resolve_config_path
+    platform_choice = questionary.select(
+        "请选择要配置的聊天平台（后续可随时通过 `supercc plugin` 命令修改）",
+        choices=[
+            questionary.Choice("飞书 (Feishu)", value="feishu"),
+            questionary.Choice("企业微信 (WeCom)", value="wecom"),
+            questionary.Choice("飞书 + 企业微信 (两者都配置)", value="both"),
+            questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
+        ],
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask()
 
-    try:
-        cfg_path, data_dir = resolve_config_path()
-    except Exception:
-        cfg_path = os.path.join(os.getcwd(), "config.yaml")
-        data_dir = os.path.join(os.getcwd(), ".supercc")
-
-    Path(cfg_path).parent.mkdir(parents=True, exist_ok=True)
-    feishu_ok = asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
-
-    if feishu_ok:
-        print("✅ 飞书配置完成\n")
-        feishu_configured = True
-    else:
-        print("⚠️  飞书配置未完成（稍后可手动配置）\n")
+    if platform_choice == "skip":
+        print("\n⏭  跳过平台配置\n")
         feishu_configured = False
+        wecom_configured = False
+    else:
+        # ── Step 3: Platform-specific config ────────────────────────────────
+        _print_step(3, TOTAL_STEPS, "配置平台")
+
+        import asyncio
+        from supercc.config import resolve_config_path
+
+        try:
+            cfg_path, data_dir = resolve_config_path()
+        except Exception:
+            cfg_path = os.path.join(os.getcwd(), "config.yaml")
+            data_dir = os.path.join(os.getcwd(), ".supercc")
+
+        Path(cfg_path).parent.mkdir(parents=True, exist_ok=True)
+        feishu_configured = False
+        wecom_configured = False
+
+        if platform_choice in ("feishu", "both"):
+            print("\n扫码登录飞书应用...\n")
+            try:
+                from supercc.install.flow import run_install_flow
+                asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
+                print("✅ 飞书配置完成\n")
+                feishu_configured = True
+            except Exception as e:
+                print(f"⚠️  飞书配置出错：{e}（稍后可手动配置）\n")
+
+        if platform_choice in ("wecom", "both"):
+            print("\n请按照提示输入企业微信凭证...\n")
+            try:
+                from supercc.install.wecom_flow import run_wecom_install_flow
+                run_wecom_install_flow(cfg_path, bypass_accepted=True)
+                print("✅ 企业微信配置完成\n")
+                wecom_configured = True
+            except Exception as e:
+                print(f"⚠️  企业微信配置出错：{e}（稍后可手动配置）\n")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'━' * 60}")
@@ -98,6 +133,7 @@ def run_onboard_flow() -> bool:
     else:
         print("模型: 未配置")
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
+    print(f"企业微信: {'已配置' if wecom_configured else '未配置'}")
 
     print()
 
@@ -129,6 +165,7 @@ def run_onboard_flow() -> bool:
     print("下一步：")
     print("  • 使用 `supercc start` 启动 SuperCC")
     print("  • 使用 `supercc config` 管理模型配置")
+    print("  • 使用 `supercc plugin status` 查看插件状态")
     print()
 
     return True
