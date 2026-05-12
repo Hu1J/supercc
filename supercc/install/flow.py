@@ -98,6 +98,7 @@ async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bo
         print("请使用飞书扫码完成配置（请确保已在飞书开放平台创建应用）")
         print("=" * 50 + "\n")
         print_qr(qr_url)
+        print(f"链接扫码（终端二维码无法扫描时使用）: {qr_url}")
         print("等待扫码完成...\n")
 
         # Step 4: Poll for result
