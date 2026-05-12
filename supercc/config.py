@@ -86,7 +86,7 @@ class WeComChannelConfig:
     enabled: bool = False
     corp_id: str = ""
     agent_id: str = ""
-    agent_secret: str = ""
+    corp_secret: str = ""
     bot_name: str = "Claude"
     groups: dict = field(default_factory=dict)
     allowed_users: list = field(default_factory=list)
@@ -245,7 +245,12 @@ def load_config(path: str, data_dir: str = "") -> Config:
     dingtalk_raw["allowed_users"] = dingtalk_allowed_users
     dingtalk_cfg = DingTalkChannelConfig(**dingtalk_raw)
 
-    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg)
+    wecom_raw = raw.get("channels", {}).get("wecom", {}).copy()
+    wecom_allowed_users = wecom_raw.get("allowed_users", [])
+    wecom_raw["allowed_users"] = wecom_allowed_users
+    wecom_cfg = WeComChannelConfig(**wecom_raw)
+
+    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg, wecom=wecom_cfg)
 
     # Deserialize codex.capture if present
     codex_raw = raw.get("codex") or {}
@@ -364,6 +369,15 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "app_key": cfg.channels.dingtalk.app_key,
                 "app_secret": cfg.channels.dingtalk.app_secret,
                 "allowed_users": cfg.channels.dingtalk.allowed_users,
+            },
+            "wecom": {
+                "enabled": cfg.channels.wecom.enabled,
+                "corp_id": cfg.channels.wecom.corp_id,
+                "agent_id": cfg.channels.wecom.agent_id,
+                "corp_secret": cfg.channels.wecom.corp_secret,
+                "bot_name": cfg.channels.wecom.bot_name,
+                "groups": cfg.channels.wecom.groups,
+                "allowed_users": cfg.channels.wecom.allowed_users,
             },
         },
         "claude": {

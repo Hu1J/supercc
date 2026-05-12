@@ -66,7 +66,7 @@ async def main():
 
     ws_client = WeComWSClient(
         bot_id=config.channels.wecom.agent_id,
-        bot_secret=getattr(config.channels.wecom, "agent_secret", ""),
+        bot_secret=config.channels.wecom.corp_secret,
         on_message=on_message,
     )
 
