@@ -462,13 +462,17 @@ def start_bridge(config_path: str, data_dir: str) -> None:
 
     # ── Phase 3: 启动插件子进程 ──────────────────────────────────────────────
 
-    # 启动飞书插件进程
-    feishu_proc = _spawn_plugin_process(
-        "supercc.plugin.feishu", config_path, data_dir, core_port
-    )
-    logger.info(f"[Bridge] Feishu plugin started (pid={feishu_proc.pid})")
+    # 启动飞书插件进程（如已启用）
+    _feishu_cfg = getattr(config.channels, "feishu", None)
+    if _feishu_cfg and getattr(_feishu_cfg, "enabled", False) and getattr(_feishu_cfg, "app_id", ""):
+        feishu_proc = _spawn_plugin_process(
+            "supercc.plugin.feishu", config_path, data_dir, core_port
+        )
+        logger.info(f"[Bridge] Feishu plugin started (pid={feishu_proc.pid})")
+    else:
+        logger.info("[Bridge] Feishu not enabled (skipping)")
 
-    # 启动企业微信插件进程（如已配置）
+    # 启动企业微信插件进程（如已启用）
     _wecom_cfg = getattr(config.channels, "wecom", None)
     if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "corp_id", ""):
         wecom_proc = _spawn_plugin_process(
