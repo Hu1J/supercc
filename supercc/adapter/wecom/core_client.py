@@ -29,11 +29,15 @@ class WeComCoreWSClient:
         wecom_client: WeComClient,
         bot_id: str,
         project_path: str,
+        groups: dict | None = None,        # group_id -> GroupConfigEntry dict
+        allowed_users: list | None = None, # P2P whitelist
     ):
         self.core_url = core_url
         self.wecom = wecom_client
         self.bot_id = bot_id
         self.project_path = project_path
+        self._groups = groups or {}
+        self._allowed_users = allowed_users or []
         self._ws: Any = None
         self._running = False
         self._pending_responses: dict[str, asyncio.Future] = {}
@@ -185,15 +189,70 @@ class WeComCoreWSClient:
             "chat_id": chat_id,
         })
 
+    async def _check_group_permissions(self, inbound) -> bool:
+        """检查群聊权限。返回 True=允许通过，False=已拦截（已发送授权卡片）。
+
+        WeCom API 限制：无法删除消息，授权卡片会永久保留在聊天中。
+        """
+        is_group = inbound.extra.get("is_group_chat", False)
+
+        if is_group:
+            entry = self._groups.get(inbound.session_key.chat_id)
+            if entry is None:
+                reason = "该群未配置使用权限，请联系管理员。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+
+            if not getattr(entry, "enabled", True):
+                reason = "该群已被禁用。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+
+            if getattr(entry, "require_mention", True) and not inbound.extra.get("mention_bot", False):
+                reason = "请 @CC 我来使用 SuperCC。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+
+            allow_from = getattr(entry, "allow_from", [])
+            if allow_from and inbound.user_open_id not in allow_from:
+                reason = "你在该群中没有使用权限。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+
+            return True
+        else:
+            # P2P 白名单
+            if self._allowed_users and inbound.user_open_id not in self._allowed_users:
+                reason = "你不在允许使用列表中。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+            return True
+
     async def send_message(self, msg: dict) -> dict:
         """将 WeCom 消息转发给核心，并等待响应。"""
         inbound = incoming_to_inbound(msg, bot_id=self.bot_id, project_path=self.project_path)
 
-        # 显示 typing 提示
-        try:
-            await self.wecom.send_typing_indicator(inbound.session_key.chat_id)
-        except Exception:
-            pass  # typing indicator 失败不影响主流程
+        # 群聊权限校验
+        if not await self._check_group_permissions(inbound):
+            return {}
+
+        # WeCom API 限制：不支持删除消息，typing indicator 会永久保留，改为不发送
+        # （飞书用 OK reaction 短暂提示，WeCom 无此能力）
 
         req = JsonRpcRequest(
             id=self._next_id(),

@@ -457,6 +457,8 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         feishu_client=feishu,
         bot_id=config.channels.feishu.bot_open_id,
         project_path=config.claude.approved_directory,
+        groups=config.channels.feishu.groups,
+        allowed_users=config.channels.feishu.allowed_users,
     )
 
     # 4. 在后台连接核心（等待连接建立）
@@ -513,6 +515,8 @@ def start_bridge(config_path: str, data_dir: str) -> None:
             wecom_client=wecom_client,
             bot_id=_wecom_cfg.agent_id,
             project_path=config.claude.approved_directory,
+            groups=_wecom_cfg.groups,
+            allowed_users=_wecom_cfg.allowed_users,
         )
 
         def on_wecom_message(msg: dict):
