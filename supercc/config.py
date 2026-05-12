@@ -143,10 +143,17 @@ class VerboseChannelEntry:
 
 
 @dataclass
+class CoreConfig:
+    host: str = "127.0.0.1"
+    port: int = 28888
+
+
+@dataclass
 class Config:
     channels: ChannelsConfig
     auth: AuthConfig
     claude: ClaudeConfig
+    core: CoreConfig = field(default_factory=CoreConfig)
     codex: CodexMcpConfig = field(default_factory=CodexMcpConfig)
     skill_nudge: SkillNudgeConfig = field(default_factory=SkillNudgeConfig)
     verbose: dict[str, dict[str, VerboseChannelEntry]] = field(default_factory=dict)

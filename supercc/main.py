@@ -570,6 +570,97 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     ws_client.start()
 
 
+def start_core_only(config_path: str, data_dir: str):
+    """仅启动 Core (WsServer + CronScheduler)，不启动任何 Channel。
+
+    进程隔离后，这是 supercc-main 服务的入口。
+    """
+    # 1. 获取锁（复用现有代码）
+    lock_file = os.path.join(data_dir, ".instance.lock")
+    lock = filelock.FileLock(lock_file, timeout=1)
+    global _active_lock
+    _active_lock = lock
+    try:
+        lock.acquire()
+    except filelock.Timeout:
+        print(f"错误：当前已有一个 SuperCC 实例正在运行 ({data_dir})")
+        print("如果确认没有实例在运行，请删除 .instance.lock 文件后重试。")
+        sys.exit(1)
+
+    # 2. 初始化 config, model env（复用现有代码）
+    config = init_config(config_path)
+    from supercc.claude.model_config import init_model_env, ensure_project_model_config
+    init_model_env(config.claude.approved_directory)
+    ensure_project_model_config(config.claude.approved_directory)
+    _ensure_codex_mcp(config)
+    _ensure_agents_md(config.claude.approved_directory)
+
+    # 3. 写 PID 文件
+    pid_file = os.path.join(data_dir, "supercc.pid")
+    write_pid(pid_file)
+
+    # 4. 创建 media 子目录
+    for sub in ("received_images", "received_files"):
+        sub_dir = os.path.join(data_dir, sub)
+        os.makedirs(sub_dir, exist_ok=True)
+
+    # 5. 启动 Core WsServer（从 config 读取端口！）
+    core_port = config.core.port  # 从 config 读，不是写死 8765
+    logger.info(f"[Phase2] Starting Core WsServer on port {core_port}")
+
+    # 用于 cleanup handler
+    cron_scheduler = None
+    core_server = None
+
+    def run_core_server():
+        import asyncio
+        from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+        from core.worker import WorkerPool
+        from core.executor import CoreExecutor
+        from core.server import WsServer
+
+        session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
+        worker_pool = WorkerPool()
+        executor = CoreExecutor(session_manager=session_manager, worker_pool=worker_pool)
+        nonlocal core_server
+        core_server = WsServer(
+            host="127.0.0.1",
+            port=core_port,  # 从 config 读取
+            executor=executor,
+        )
+        asyncio.run(core_server.start())
+
+    import threading
+    core_thread = threading.Thread(target=run_core_server, daemon=True)
+    core_thread.start()
+    logger.info("[Phase2] Core WsServer started in background thread")
+
+    # 6. 启动 CronScheduler
+    cron_scheduler = CronScheduler(config, data_dir)
+    set_cron_scheduler(cron_scheduler, config)
+    cron_scheduler.start()
+    logger.info("[Phase2] CronScheduler started")
+
+    # 7. 注册 cleanup signal handler
+    def cleanup(signum, frame):
+        nonlocal cron_scheduler, core_server
+        if cron_scheduler:
+            cron_scheduler.stop()
+        if core_server:
+            import asyncio as _asyncio
+            _asyncio.run(core_server.stop())
+        remove_pid(pid_file)
+        lock.release()
+        sys.exit(0)
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    # 8. 阻塞主线程（让 daemon thread 一直运行）
+    import time
+    while True:
+        time.sleep(3600)
+
+
 def list_bridges() -> None:
     """List SuperCC instances by checking the current directory's .supercc/ directory."""
     project_data_dir = os.path.join(os.getcwd(), ".supercc")
@@ -1527,6 +1618,11 @@ def main(args=None):
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
     gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
+    # core-only
+    core_only_parser = subparsers.add_parser("core-only", help="Start Core only (no channel plugins, internal use)")
+    core_only_parser.add_argument("--config", required=True, help="Path to config.json")
+    core_only_parser.add_argument("--data-dir", required=True, help="Path to data directory")
+
     args = parser.parse_args(args)
 
     # Print banner before any logging setup
@@ -1685,6 +1781,13 @@ def main(args=None):
             run_gateway_uninstall()
         else:
             run_gateway_status()
+        return
+
+    if command == "core-only":
+        cfg_path = args.config
+        d_dir = args.data_dir
+        init_config(cfg_path)
+        start_core_only(cfg_path, d_dir)
         return
 
     if command == "onboard":
