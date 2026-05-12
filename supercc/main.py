@@ -350,6 +350,25 @@ def confirm_risk_warning(config_path: str) -> bool:
             return False
 
 
+def _spawn_plugin_process(module_name: str, config_path: str, data_dir: str, core_port: int):
+    """启动一个插件子进程。返回 Popen 对象。"""
+    import subprocess
+    import sys
+    import os
+    env = {
+        **os.environ,
+        "SUPERCC_CONFIG": config_path,
+        "SUPERCC_DATA": data_dir,
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", module_name],
+        env=env,
+        cwd=os.getcwd(),
+        start_new_session=True,
+    )
+    return proc
+
+
 def start_bridge(config_path: str, data_dir: str) -> None:
     """Start SuperCC: load config and run WebSocket connection."""
     # Acquire exclusive lock before starting — prevents multiple instances in the same directory
@@ -412,17 +431,9 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         sub_dir = os.path.join(data_dir, sub)
         os.makedirs(sub_dir, exist_ok=True)
 
-    # ── Phase 2: 启动核心服务 + 飞书 Thin Client ──────────────────────────────
+    # ── Phase 2: 启动核心服务（异步，在后台线程运行）───────────────────────────
+    core_port = config.core.port
 
-    # 1. 创建 FeishuClient（用于发送消息）
-    feishu = FeishuClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
-        bot_name=config.channels.feishu.bot_name,
-        data_dir=data_dir,
-    )
-
-    # 2. 启动核心服务（异步，在后台线程运行）
     def run_core_server():
         import asyncio
         from core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
@@ -439,7 +450,7 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         nonlocal core_server
         core_server = WsServer(
             host="127.0.0.1",
-            port=8765,
+            port=core_port,
             executor=executor,
         )
         asyncio.run(core_server.start())
@@ -447,109 +458,27 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     import threading
     core_thread = threading.Thread(target=run_core_server, daemon=True)
     core_thread.start()
-    logger.info("[Phase2] Core WsServer started in background thread")
+    logger.info(f"[Phase2] Core WsServer started on port {core_port}")
 
-    # 3. 创建 FeishuCoreWSClient（Thin Client，连接核心）
-    from supercc.adapter.feishu.core_client import FeishuCoreWSClient
-    core_url = "ws://127.0.0.1:8765"
-    core_client = FeishuCoreWSClient(
-        core_url=core_url,
-        feishu_client=feishu,
-        bot_id=config.channels.feishu.bot_open_id,
-        project_path=config.claude.approved_directory,
-        groups=config.channels.feishu.groups,
-        allowed_users=config.channels.feishu.allowed_users,
+    # ── Phase 3: 启动插件子进程 ──────────────────────────────────────────────
+
+    # 启动飞书插件进程
+    feishu_proc = _spawn_plugin_process(
+        "supercc.plugin.feishu", config_path, data_dir, core_port
     )
+    logger.info(f"[Bridge] Feishu plugin started (pid={feishu_proc.pid})")
 
-    # 4. 在后台连接核心（等待连接建立）
-    def run_core_client():
-        import asyncio
-        asyncio.run(core_client.connect())
-
-    core_client_thread = threading.Thread(target=run_core_client, daemon=True)
-    core_client_thread.start()
-    logger.info("[Phase2] FeishuCoreWSClient connecting to core...")
-
-    # 5. 创建 FeishuWSClient（接收飞书消息，转发给核心）
-    async def on_feishu_message_async(msg: IncomingMessage):
-        """FeishuWSClient 收到消息后，转发给 FeishuCoreWSClient。"""
-        await core_client.send_message(msg)
-
-    def on_feishu_message(msg: IncomingMessage):
-        """同步包装：获取运行中的事件循环后调度异步版本。"""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(on_feishu_message_async(msg))
-            loop.close()
-            return
-        asyncio.ensure_future(on_feishu_message_async(msg))
-
-    ws_client = FeishuWSClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
-        bot_name=config.channels.feishu.bot_name,
-        bot_open_id=config.channels.feishu.bot_open_id,
-        domain=config.channels.feishu.domain,
-        on_message=on_feishu_message,
-        config_path=config_path,
-    )
-
-    # ── Phase 3: 企业微信插件（WeCom Thin Client）────────────────────────────
-    # Check if WeCom is configured (look for wecom.corp_id in config)
+    # 启动企业微信插件进程（如已配置）
     _wecom_cfg = getattr(config.channels, "wecom", None)
     if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "corp_id", ""):
-        from supercc.adapter.wecom.client import WeComClient
-        from supercc.adapter.wecom.ws_client import WeComWSClient
-        from supercc.adapter.wecom.core_client import WeComCoreWSClient
-
-        wecom_client = WeComClient(
-            corp_id=_wecom_cfg.corp_id,
-            agent_id=_wecom_cfg.agent_id,
-            corp_secret=_wecom_cfg.corp_secret,
+        wecom_proc = _spawn_plugin_process(
+            "supercc.plugin.wecom", config_path, data_dir, core_port
         )
-
-        wecom_core_client = WeComCoreWSClient(
-            core_url="ws://127.0.0.1:8765",
-            wecom_client=wecom_client,
-            bot_id=_wecom_cfg.agent_id,
-            project_path=config.claude.approved_directory,
-            groups=_wecom_cfg.groups,
-            allowed_users=_wecom_cfg.allowed_users,
-        )
-
-        def on_wecom_message(msg: dict):
-            """WeComWSClient 收到消息后，转发给 WeComCoreWSClient。"""
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(wecom_core_client.send_message(msg))
-                loop.close()
-                return
-            asyncio.ensure_future(wecom_core_client.send_message(msg))
-
-        wecom_ws = WeComWSClient(
-            bot_id=_wecom_cfg.agent_id,
-            bot_secret=getattr(_wecom_cfg, "agent_secret", ""),
-            on_message=on_wecom_message,
-        )
-
-        def run_wecom_core_client():
-            import asyncio
-            asyncio.run(wecom_core_client.connect())
-
-        wecom_core_thread = threading.Thread(target=run_wecom_core_client, daemon=True)
-        wecom_core_thread.start()
-        logger.info("[Phase3] WeComCoreWSClient connecting to core...")
-
-        wecom_ws.start()
-        logger.info("[Phase3] WeCom WS client started")
+        logger.info(f"[Bridge] WeCom plugin started (pid={wecom_proc.pid})")
     else:
-        logger.info("[Phase3] WeCom not configured (skipping)")
+        logger.info("[Bridge] WeCom not configured (skipping)")
 
-    # ── Cron scheduler（如有任务需要 AI 推理，依赖 core_client）─────────────────
+    # ── Cron scheduler（主进程自有功能）────────────────────────────────────────
     cron_scheduler = CronScheduler(config, data_dir)
     set_cron_scheduler(cron_scheduler, config)
     cron_scheduler.start()
@@ -565,9 +494,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     from supercc.evolve.dream import register_dream_job
     register_dream_job(data_dir)
 
-    # CLI 进程在第一条消息到达时才会建立连接（_ensure_connected 懒加载）。
-    # SDK 通过 continue_conversation=True 自动维护 session，无需手动 fork。
-    ws_client.start()
+    # 阻塞主线程（让 daemon threads 和子进程一直运行）
+    import time
+    while True:
+        time.sleep(3600)
 
 
 def start_core_only(config_path: str, data_dir: str):
