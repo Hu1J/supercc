@@ -210,23 +210,17 @@ class CoreExecutor:
         # 执行查询（最多重试3次，SDK 空响应时重试）
         result = ""
         cost = 0.0
+        cli_path = "claude"
+        if self._config and hasattr(self._config, "claude"):
+            cli_path = getattr(self._config.claude, "cli_path", "claude")
         for attempt in range(3):
             try:
-                from supercc.claude.integration import ClaudeIntegration
-                cli_path = "claude"
-                if self._config and hasattr(self._config, "claude"):
-                    cli_path = getattr(self._config.claude, "cli_path", "claude")
-                integration = ClaudeIntegration(
-                    cli_path=cli_path,
-                    max_turns=50,
-                    approved_directory=key.project_path,
-                )
-
                 result, cost = await self.pool.execute(
                     key=key,
                     session_id=session.session_id,
-                    integration=integration,
                     prompt=prompt,
+                    cli_path=cli_path,
+                    approved_dir=key.project_path,
                     on_stream=_stream_callback,
                 )
                 if result and result.strip():
