@@ -353,54 +353,6 @@ def confirm_risk_warning(config_path: str) -> bool:
             return False
 
 
-def _plugin_pid_file(data_dir: str, module_name: str) -> str:
-    """获取插件 PID 文件路径（按项目隔离）。"""
-    name = module_name.rsplit(".", 1)[-1]  # "supercc.adapter.feishu" → "feishu"
-    return os.path.join(data_dir, f"supercc-{name}.pid")
-
-
-def _kill_plugin_by_pid_file(pid_file: str) -> None:
-    """从 PID 文件杀掉旧进程（仅限同一 data_dir 的项目）。"""
-    import os
-    import signal
-    try:
-        if not os.path.exists(pid_file):
-            return
-        pid = int(Path(pid_file).read_text().strip())
-        # 检查进程是否存活（kill 0 不发送信号，只检查是否存在）
-        os.kill(pid, 0)
-        # 存活 → 杀掉
-        os.kill(pid, signal.SIGTERM)
-    except (ValueError, OSError):
-        pass
-
-
-def _spawn_plugin_process(module_name: str, config_path: str, data_dir: str, core_port: int):
-    """启动一个插件子进程。返回 Popen 对象。"""
-    import subprocess
-    import sys
-    import os
-
-    # 启动前杀同项目的旧进程（防泄漏，按 data_dir 隔离）
-    pid_file = _plugin_pid_file(data_dir, module_name)
-    _kill_plugin_by_pid_file(pid_file)
-
-    env = {
-        **os.environ,
-        "SUPERCC_CONFIG": config_path,
-        "SUPERCC_DATA": data_dir,
-    }
-    proc = subprocess.Popen(
-        [sys.executable, "-m", module_name],
-        env=env,
-        cwd=os.getcwd(),
-        start_new_session=True,
-    )
-    # 写 PID 文件，方便下次启动时清理
-    Path(pid_file).write_text(str(proc.pid))
-    return proc
-
-
 async def start_bridge(config_path: str, data_dir: str) -> None:
     """Start SuperCC: core + plugins all in one asyncio event loop."""
     # Acquire exclusive lock before starting — prevents multiple instances in the same directory
@@ -537,7 +489,7 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
     try:
         await stop_event.wait()
     finally:
-        # Cancel plugin tasks
+        # 1. Cancel plugin tasks
         for task in plugin_tasks:
             if not task.done():
                 task.cancel()
@@ -545,16 +497,24 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
                     await task
                 except asyncio.CancelledError:
                     pass
-        if cron_task:
+                except Exception:
+                    pass
+        # Wait 0.5s for plugin graceful shutdown
+        await asyncio.sleep(0.5)
+
+        # 2. Cancel cron task
+        if 'cron_task' in locals() and not cron_task.done():
             cron_task.cancel()
             try:
                 await cron_task
             except asyncio.CancelledError:
                 pass
-        if cron_scheduler:
-            cron_scheduler.stop()
+        await asyncio.sleep(0.5)
+
+        # 3. Stop core server
         if core_server:
             await core_server.stop()
+
         remove_pid(pid_file)
         lock.release()
         logger.info("SuperCC stopped gracefully")
