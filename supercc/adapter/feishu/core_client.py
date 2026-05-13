@@ -376,10 +376,10 @@ class FeishuCoreWSClient:
                             await self._safe_send(chat_id, msg_id, fallback)
 
         elif isinstance(result, _MemoryCardMarker):
-            # 记忆工具 → CardKit 格式
+            # 记忆工具 → CardKit 格式，reply 到原始消息
             card = self._render_memory_card(result)
             try:
-                await self.feishu.send_card(chat_id, card)
+                await self.feishu.send_interactive(chat_id, card, msg_id)
             except Exception:
                 await self._safe_send(chat_id, msg_id, str(card))
 
