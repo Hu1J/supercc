@@ -65,11 +65,22 @@ async def main():
         allowed_users=config.channels.feishu.allowed_users,
     )
 
-    async def on_message(msg):
-        try:
-            await core_client.send_message(msg)
-        except Exception:
-            logger.exception("[feishu] error in on_message")
+    def on_message(msg):
+        """同步入口：避免 lark SDK 内部 asyncio.run() 嵌套崩溃。"""
+        async def _run():
+            try:
+                await core_client.send_message(msg)
+            except BaseException:
+                logger.exception("[feishu] error in on_message")
+
+        task = asyncio.create_task(_run())
+        # 显式 retrieve exception，消除 "Task exception never retrieved" 警告
+        def _done(t):
+            try:
+                t.result()
+            except BaseException:
+                pass  # 已通过 logger.exception 记录
+        task.add_done_callback(_done)
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,

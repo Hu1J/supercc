@@ -13,7 +13,7 @@ import lark_oapi as lark
 
 from supercc.adapter.feishu.client import IncomingMessage
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("feishu")
 
 
 def _detect_media_type_from_content(parsed: dict) -> str | None:

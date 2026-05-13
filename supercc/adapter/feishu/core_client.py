@@ -18,7 +18,7 @@ from supercc.adapter.feishu.format.questionnaire_card import format_questionnair
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
 from dataclasses import replace as dataclass_replace
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("feishu")
 
 
 class StreamAccumulator:

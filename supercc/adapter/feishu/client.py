@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("feishu")
 
 # 默认重试和超时配置
 DEFAULT_MAX_RETRIES = 3
