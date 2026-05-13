@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import re
+import traceback
 from typing import Callable, Awaitable
 from unittest.mock import MagicMock
 
@@ -284,7 +285,7 @@ class FeishuWSClient:
                 if coro is not None:
                     asyncio.ensure_future(coro)
             except Exception as e:
-                logger.exception(f"Error handling Feishu message: {e}")
+                logger.error("Error handling Feishu message: %s\n%s", e, traceback.format_exc())
 
         builder.register_p2_im_message_receive_v1(wrapped_handler)
 

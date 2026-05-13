@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import traceback
 import threading
 import uuid
 from dataclasses import dataclass
@@ -440,4 +441,4 @@ class SessionManager:
         try:
             get_memory_manager()
         except Exception:
-            logger.exception("Failed to init memories DB")
+            logger.error("Failed to init memories DB\n%s", traceback.format_exc())

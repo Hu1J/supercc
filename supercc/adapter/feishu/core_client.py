@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import random
+import traceback
 from typing import Any, Callable, Awaitable
 
 from supercc.core.protocol import (
@@ -189,7 +190,7 @@ class FeishuCoreWSClient:
                 else:
                     break
             except Exception:
-                logger.exception("Error reading message")
+                logger.error("Error reading message\n%s", traceback.format_exc())
 
     async def _ping_loop(self):
         """定期 ping core，检测连接是否健康。超时则自动重连。
@@ -731,7 +732,7 @@ class FeishuCoreWSClient:
                 if resolved:
                     incoming = dataclass_replace(incoming, content=resolved)
             except Exception:
-                logger.exception("_resolve_media_markdown failed")
+                logger.error("_resolve_media_markdown failed\n%s", traceback.format_exc())
 
         inbound = incoming_to_inbound(
             incoming,
@@ -771,7 +772,7 @@ class FeishuCoreWSClient:
         try:
             await self._enrich_group_context(inbound, incoming)
         except Exception:
-            logger.exception("_enrich_group_context failed")
+            logger.error("_enrich_group_context failed\n%s", traceback.format_exc())
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
@@ -810,7 +811,7 @@ class FeishuCoreWSClient:
                     try:
                         await self._reconnect(jitter=False)
                     except Exception:
-                        logger.exception("reconnect failed")
+                        logger.error("reconnect failed\n%s", traceback.format_exc())
                         raise
                 else:
                     logger.error("send failed after reconnect")
@@ -821,7 +822,7 @@ class FeishuCoreWSClient:
                     try:
                         await self._reconnect(jitter=False)
                     except Exception:
-                        logger.exception("reconnect failed")
+                        logger.error("reconnect failed\n%s", traceback.format_exc())
                     continue  # 继续下一次尝试
                 else:
                     logger.error("TypeError persists after reconnect")

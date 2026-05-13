@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import traceback
 from typing import Any, Callable, Awaitable
 
 from supercc.core.protocol import (
@@ -283,7 +284,7 @@ class CoreExecutor:
                     logger.info(f"[CoreExecutor] empty response, retry {attempt + 2}/3")
                     await asyncio.sleep(0.5 * (attempt + 1))
             except Exception as e:
-                logger.exception(f"[CoreExecutor] execute error for {key}")
+                logger.error("[CoreExecutor] execute error for %s\n%s", key, traceback.format_exc())
                 result = f"错误: {e}"
                 cost = 0.0
                 break

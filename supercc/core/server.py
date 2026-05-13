@@ -7,6 +7,7 @@ import contextvars
 import json
 import logging
 import secrets
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -60,7 +61,7 @@ class Router:
             result = await handler(req)
             return JsonRpcResponse(id=req.id, result=result)
         except Exception as e:
-            logger.exception(f"[Router] Handler error for {req.method}")
+            logger.error("[Router] Handler error for %s\n%s", req.method, traceback.format_exc())
             return JsonRpcResponse(
                 id=req.id,
                 error=JsonRpcError(
@@ -330,7 +331,7 @@ class WsServer:
         try:
             resp = await self.router.dispatch(req)
         except Exception:
-            logger.exception(f"[WsServer] error in dispatch({req.method}):")
+            logger.error("[WsServer] error in dispatch(%s):\n%s", req.method, traceback.format_exc())
             resp = JsonRpcResponse(
                 error=JsonRpcError(code=ErrorCode.INTERNAL_ERROR, message="Internal error")
             )

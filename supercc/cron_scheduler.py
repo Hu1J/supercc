@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import traceback
 import sqlite3
 import tempfile
 import threading
@@ -955,7 +956,7 @@ class CronScheduler:
             try:
                 await self._tick()
             except Exception:
-                logger.exception("[cron] Tick error")
+                logger.error("[cron] Tick error\n%s", traceback.format_exc())
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=60)
                 break

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import traceback
 from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
@@ -226,7 +227,7 @@ class WeComCoreWSClient:
             except websockets.exceptions.ConnectionClosed:
                 break
             except Exception:
-                logger.exception("[WeComCore] Error reading message")
+                logger.error("[WeComCore] Error reading message\n%s", traceback.format_exc())
 
     async def _handle_core_message(self, data: dict):
         if "id" in data:
