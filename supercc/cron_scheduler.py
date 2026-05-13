@@ -21,7 +21,6 @@ import re
 import traceback
 import sqlite3
 import tempfile
-import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -915,38 +914,26 @@ class CronScheduler:
         self.config = config
         self.data_dir = data_dir
         self.chat_id = chat_id  # scope jobs and features to this chat_id
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._stop = asyncio.Event()
+                self._stop = asyncio.Event()
         self._running_jobs: set[str] = set()  # prevent overlap: skip jobs already running
 
     def start(self):
-        if self._thread is not None:
-            return
         self._stop.clear()
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
         logger.info("CronScheduler started")
 
-    def _run_loop(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._run())
-
     def stop(self):
-        """Synchronous stop — safe to call from signal handlers."""
-        if self._thread is None:
+        """Stop the scheduler — safe to call from signal handlers or main loop."""
+        self._stop.set()
+        if self._task is None:
             return
-        # Capture task reference immediately — _run() may reassign self._task
-        # on its next iteration before call_soon_threadsafe callbacks execute.
-        running_task = self._task
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._stop.set)
-            self._loop.call_soon_threadsafe(running_task.cancel if running_task else None)
-        self._thread.join(timeout=5)
-        self._thread = None
-        self._loop = None
-        self._task = None
+        # If called from a signal handler while _run() executes in a thread,
+        # use call_soon_threadsafe for thread-safe cancellation.
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.call_soon_threadsafe(self._task.cancel)
+        elif not self._task.done():
+            self._task.cancel()
+                self._task = None
         logger.info("CronScheduler stopped")
 
     async def _run(self):
