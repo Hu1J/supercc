@@ -233,6 +233,9 @@ class WsServer:
                 "content": msg.content,
                 "event": msg.event,
             }
+            # TOOL_CALL 事件需要 extra（tool_name、tool_input）传给 plugin
+            if msg.extra:
+                params["extra"] = msg.extra
             frame = {"jsonrpc": "2.0", "method": msg.event, "params": params}
             try:
                 await conn.ws.send(json.dumps(frame))
