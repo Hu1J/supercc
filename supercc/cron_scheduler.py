@@ -914,7 +914,7 @@ class CronScheduler:
         self.config = config
         self.data_dir = data_dir
         self.chat_id = chat_id  # scope jobs and features to this chat_id
-                self._stop = asyncio.Event()
+        self._stop = asyncio.Event()
         self._running_jobs: set[str] = set()  # prevent overlap: skip jobs already running
 
     def start(self):
