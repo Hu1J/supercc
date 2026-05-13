@@ -612,6 +612,13 @@ class FeishuCoreWSClient:
 
         用于消息处理的主流程。
         """
+        # 图片/文件消息：下载媒体，转换为本地路径 markdown
+        if incoming.message_type in ("image", "file"):
+            resolved = await self._resolve_media_markdown(incoming)
+            if resolved:
+                # 创建副本，用 resolved markdown 替换 content
+                incoming = dataclass_replace(incoming, content=resolved)
+
         inbound = incoming_to_inbound(
             incoming,
             bot_id=self.bot_id,
