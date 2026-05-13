@@ -943,7 +943,7 @@ class CronScheduler:
             try:
                 await self._tick()
             except Exception:
-                logger.error("[cron] Tick error\n%s", traceback.format_exc())
+                logger.error("Tick error\n%s", traceback.format_exc())
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=60)
                 break

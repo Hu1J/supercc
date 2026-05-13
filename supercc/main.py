@@ -427,7 +427,7 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
                 raise  # 有序关闭时会被外层 cancel，不继续重启
             except Exception:
                 import traceback
-                logger.error(f"[{name}] plugin crashed, restarting in {delay}s\n{traceback.format_exc()}")
+                logger.error(f"plugin crashed, restarting in {delay}s\n{traceback.format_exc()}")
                 await asyncio.sleep(delay)
 
     # ── Phase 3: Plugin async tasks（不复用旧 plugin __main__，直接 import）──
