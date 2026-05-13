@@ -353,7 +353,7 @@ class CoreExecutor:
             await push_fn(result_msg)
             # 触发后台任务（异步，不阻塞主响应返回）
             # 用原始 result 作为记忆回顾的上下文
-            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count, inbound.message_id))
+            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count, inbound.message_id, inbound.user_open_id or ""))
 
         return result_msg
 
@@ -464,7 +464,7 @@ class CoreExecutor:
         parts.append(inbound.content)
         return "\n\n".join(parts)
 
-    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "") -> None:
+    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "", user_open_id: str = "") -> None:
         """触发记忆自进化（integration_mem）和技能自进化（integration_skill）。
 
         由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
@@ -482,10 +482,16 @@ class CoreExecutor:
         if worker is None:
             return
 
+        # ── MCP 工具上下文（background task 中 memory MCP 工具也依赖此）────────
+        from supercc.claude.message_context import set_current_context
+        set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform)
+
         # ── 记忆自进化（结果受 mem verbose 配置控制）─────────────────────
         mem_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "mem")
         if worker.integration_mem:
             try:
+                # _init_options 也需要调用，否则 query() 会 crash
+                worker.integration_mem._init_options(channel=key.platform)
                 memory_prompt = (
                     "根据之前的对话，判断是否有值得记住的信息。\n"
                     "需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，"
@@ -517,6 +523,7 @@ class CoreExecutor:
         skill_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "skill")
         if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
             try:
+                worker.integration_skill._init_options(channel=key.platform)
                 skill_prompt = (
                     f"你在本次对话中使用了 {total_tool_count} 个工具调用。\n"
                     "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n"
