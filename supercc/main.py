@@ -353,11 +353,38 @@ def confirm_risk_warning(config_path: str) -> bool:
             return False
 
 
+def _plugin_pid_file(data_dir: str, module_name: str) -> str:
+    """获取插件 PID 文件路径（按项目隔离）。"""
+    name = module_name.rsplit(".", 1)[-1]  # "supercc.adapter.feishu" → "feishu"
+    return os.path.join(data_dir, f"supercc-{name}.pid")
+
+
+def _kill_plugin_by_pid_file(pid_file: str) -> None:
+    """从 PID 文件杀掉旧进程（仅限同一 data_dir 的项目）。"""
+    import os
+    import signal
+    try:
+        if not os.path.exists(pid_file):
+            return
+        pid = int(Path(pid_file).read_text().strip())
+        # 检查进程是否存活（kill 0 不发送信号，只检查是否存在）
+        os.kill(pid, 0)
+        # 存活 → 杀掉
+        os.kill(pid, signal.SIGTERM)
+    except (ValueError, OSError):
+        pass
+
+
 def _spawn_plugin_process(module_name: str, config_path: str, data_dir: str, core_port: int):
     """启动一个插件子进程。返回 Popen 对象。"""
     import subprocess
     import sys
     import os
+
+    # 启动前杀同项目的旧进程（防泄漏，按 data_dir 隔离）
+    pid_file = _plugin_pid_file(data_dir, module_name)
+    _kill_plugin_by_pid_file(pid_file)
+
     env = {
         **os.environ,
         "SUPERCC_CONFIG": config_path,
@@ -369,6 +396,8 @@ def _spawn_plugin_process(module_name: str, config_path: str, data_dir: str, cor
         cwd=os.getcwd(),
         start_new_session=True,
     )
+    # 写 PID 文件，方便下次启动时清理
+    Path(pid_file).write_text(str(proc.pid))
     return proc
 
 
@@ -408,13 +437,25 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     # Clean up PID file and lock on exit
     cron_scheduler = None
     core_server = None
+    feishu_proc = None
+    wecom_proc = None
 
     def cleanup(signum, frame):
-        nonlocal cron_scheduler, core_server
+        nonlocal cron_scheduler, core_server, feishu_proc, wecom_proc
         if cron_scheduler:
             cron_scheduler.stop()
         # core_server 运行在 daemon 线程，sys.exit(0) 会直接 kill 进程
         # 不需要也没法从信号处理线程优雅关闭 background thread 的 loop
+        # 杀插件子进程（防止孤儿进程堆积）
+        for proc, plug_pid_file in ((feishu_proc, _plugin_pid_file(data_dir, "supercc.adapter.feishu")),
+                                     (wecom_proc, _plugin_pid_file(data_dir, "supercc.plugin.wecom"))):
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
+            Path(plug_pid_file).unlink(missing_ok=True)
         remove_pid(pid_file)
         lock.release()
         sys.exit(0)
