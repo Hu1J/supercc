@@ -31,9 +31,11 @@ from supercc.claude.model_tools import (
     list_models,
     set_model_tool,
 )
+from supercc.claude.feishu_file_tools import feishu_send_file, get_chat_members
+from supercc.claude.feishu_history_tools import feishu_chat_history
 
 
-def get_supercc_mcp_server():
+def get_supercc_mcp_server(include_feishu: bool = True):
     tools = [
         memory_add_user,
         memory_delete_user,
@@ -57,6 +59,8 @@ def get_supercc_mcp_server():
         set_model_tool,
         add_custom_provider_tool,
     ]
+    if include_feishu:
+        tools.extend([feishu_send_file, get_chat_members, feishu_chat_history])
     return create_sdk_mcp_server(
         name="SuperCC",
         version="1.0.0",

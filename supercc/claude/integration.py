@@ -127,7 +127,8 @@ class ClaudeIntegration:
         if self.memory_only:
             supercc_server = get_memory_only_mcp_server()
         else:
-            supercc_server = get_supercc_mcp_server()
+            include_feishu = channel == "feishu"
+            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu)
 
         mcp_servers = {
             "SuperCC": supercc_server,

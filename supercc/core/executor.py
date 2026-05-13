@@ -86,6 +86,22 @@ class CoreExecutor:
         else:
             self._security_validator = None
 
+    def _is_verbose_enabled(self, platform: str, chat_id: str, msg_type: str) -> bool:
+        """检查该 chat_id 是否开启了某类消息。默认全开。"""
+        config = self._config
+        if config is None:
+            return True
+        verbose = getattr(config, "verbose", None)
+        if not verbose:
+            return True
+        platform_verbose = verbose.get(platform)
+        if not platform_verbose:
+            return True
+        entry = platform_verbose.get(chat_id)
+        if not entry:
+            return True
+        return getattr(entry, msg_type, True)
+
     def _get_authenticator_for_platform(self, platform: str):
         """按 platform 获取对应的 Authenticator。"""
         config = self._config
@@ -215,7 +231,9 @@ class CoreExecutor:
             elif msg.tool_name:
                 nonlocal _tool_count
                 _tool_count += 1
-                if _stream_sender:
+                # step=OFF 时屏蔽工具调用通知，AskUserQuestion 例外始终显示
+                # 工具本身由 SDK 内部执行，此处只控制是否发 TOOL_CALL WS 事件给 plugin
+                if _stream_sender and (self._is_verbose_enabled(key.platform, key.chat_id, "step") or msg.tool_name == "AskUserQuestion"):
                     tool_msg = OutboundMessage(
                         event=Event.TOOL_CALL,
                         session_key=key,
