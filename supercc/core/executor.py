@@ -345,7 +345,7 @@ class CoreExecutor:
             await push_fn(result_msg)
             # 触发后台任务（异步，不阻塞主响应返回）
             # 用原始 result 作为记忆回顾的上下文
-            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count))
+            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count, inbound.message_id))
 
         return result_msg
 
@@ -456,7 +456,7 @@ class CoreExecutor:
         parts.append(inbound.content)
         return "\n\n".join(parts)
 
-    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0) -> None:
+    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "") -> None:
         """触发记忆自进化（integration_mem）和技能自进化（integration_skill）。
 
         由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
@@ -491,7 +491,7 @@ class CoreExecutor:
                         chunk = OutboundMessage(
                             event=Event.STREAM_CHUNK,
                             session_key=key,
-                            message_id="",
+                            message_id=message_id,
                             content=msg.content,
                             message_type=MessageType.TEXT,
                         )
@@ -522,7 +522,7 @@ class CoreExecutor:
                         chunk = OutboundMessage(
                             event=Event.STREAM_CHUNK,
                             session_key=key,
-                            message_id="",
+                            message_id=message_id,
                             content=msg.content,
                             message_type=MessageType.TEXT,
                         )
