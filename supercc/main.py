@@ -401,8 +401,8 @@ def _spawn_plugin_process(module_name: str, config_path: str, data_dir: str, cor
     return proc
 
 
-def start_bridge(config_path: str, data_dir: str) -> None:
-    """Start SuperCC: load config and run WebSocket connection."""
+async def start_bridge(config_path: str, data_dir: str) -> None:
+    """Start SuperCC: core + plugins all in one asyncio event loop."""
     # Acquire exclusive lock before starting — prevents multiple instances in the same directory
     lock_file = os.path.join(data_dir, ".instance.lock")
     lock = filelock.FileLock(lock_file, timeout=1)
@@ -418,11 +418,8 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     config = init_config(config_path)
 
     # Startup: initialize model env singleton with global ~/.supercc/model.json
-    # 直接用 Config 单例里的 approved_directory（就是项目根路径）
     from supercc.claude.model_config import init_model_env, ensure_project_model_config
     init_model_env(config.claude.approved_directory)
-
-    # Startup: 如果当前项目没有有效的模型配置，强制配置
     ensure_project_model_config(config.claude.approved_directory)
 
     # Startup: ensure Claude Code onboarding is complete (幂等，重复调用无影响)
@@ -434,37 +431,9 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     pid_file = os.path.join(data_dir, "supercc.pid")
     write_pid(pid_file)
 
-    # Clean up PID file and lock on exit
-    cron_scheduler = None
-    core_server = None
-    feishu_proc = None
-    wecom_proc = None
+    logger.info(f"Starting SuperCC (async mode) — data: {data_dir}")
 
-    def cleanup(signum, frame):
-        nonlocal cron_scheduler, core_server, feishu_proc, wecom_proc
-        if cron_scheduler:
-            cron_scheduler.stop()
-        # core_server 运行在 daemon 线程，sys.exit(0) 会直接 kill 进程
-        # 不需要也没法从信号处理线程优雅关闭 background thread 的 loop
-        # 杀插件子进程（防止孤儿进程堆积）
-        for proc, plug_pid_file in ((feishu_proc, _plugin_pid_file(data_dir, "supercc.adapter.feishu")),
-                                     (wecom_proc, _plugin_pid_file(data_dir, "supercc.plugin.wecom"))):
-            if proc and proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=3)
-                except Exception:
-                    pass
-            Path(plug_pid_file).unlink(missing_ok=True)
-        remove_pid(pid_file)
-        lock.release()
-        sys.exit(0)
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
-
-    logger.info(f"Starting SuperCC (WS mode) — data: {data_dir}")
-
-    # Warn if git is not available (不影响启动，只是提示)
+    # Warn if git is not available
     from supercc.banner import _check_git_available
     if not _check_git_available():
         logger.warning("[SuperCC] 未检测到 git，跳过 Git 相关功能。如需使用 /git 命令，请安装 git；或跟SuperCC说: \"安装 git\"")
@@ -474,64 +443,74 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         sub_dir = os.path.join(data_dir, sub)
         os.makedirs(sub_dir, exist_ok=True)
 
-    # ── Phase 2: 启动核心服务（异步，在后台线程运行）───────────────────────────
+    # ── Phase 2: Core WsServer（在同一个 event loop 中）─────────────────────
     core_port = config.core.port
+    from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
+    from supercc.core.worker import WorkerPool
+    from supercc.core.executor import CoreExecutor
+    from supercc.core.server import WsServer
 
-    def run_core_server():
-        import asyncio
-        from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
-        from supercc.core.worker import WorkerPool
-        from supercc.core.executor import CoreExecutor
-        from supercc.core.server import WsServer
-
-        session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
-        worker_pool = WorkerPool()
-        executor = CoreExecutor(
-            session_manager=session_manager,
-            worker_pool=worker_pool,
-        )
-        nonlocal core_server
-        core_server = WsServer(
-            host="127.0.0.1",
-            port=core_port,
-            executor=executor,
-        )
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(core_server.start())
-        loop.run_forever()  # server 在后台运行，保持 loop 不退出
-
-    import threading
-    core_thread = threading.Thread(target=run_core_server, daemon=True)
-    core_thread.start()
+    session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
+    worker_pool = WorkerPool()
+    executor = CoreExecutor(session_manager=session_manager, worker_pool=worker_pool)
+    core_server = WsServer(
+        host="127.0.0.1",
+        port=core_port,
+        executor=executor,
+    )
+    await core_server.start()
     logger.info(f"[Phase2] Core WsServer started on port {core_port}")
 
-    # ── Phase 3: 启动插件子进程 ──────────────────────────────────────────────
+    # ── Plugin restart helper ───────────────────────────────────────────────
+    async def _run_plugin_with_restart(name: str, config, data_dir, delay: float = 5.0):
+        """运行一个 plugin task，崩溃后自动重启。"""
+        while True:
+            try:
+                if name == "feishu":
+                    from supercc.adapter.feishu.__main__ import run_plugin as _run
+                elif name == "wecom":
+                    from supercc.plugin.wecom.__main__ import run_plugin as _run
+                await _run(config, data_dir)
+            except asyncio.CancelledError:
+                raise  # 有序关闭时会被外层 cancel，不继续重启
+            except Exception:
+                import traceback
+                logger.error(f"[{name}] plugin crashed, restarting in {delay}s\n{traceback.format_exc()}")
+                await asyncio.sleep(delay)
 
-    # 启动飞书插件进程（如已启用）
+    # ── Phase 3: Plugin async tasks（不复用旧 plugin __main__，直接 import）──
+    plugin_tasks: list[asyncio.Task] = []
+
+    # 飞书
     _feishu_cfg = getattr(config.channels, "feishu", None)
     if _feishu_cfg and getattr(_feishu_cfg, "enabled", False) and getattr(_feishu_cfg, "app_id", ""):
-        feishu_proc = _spawn_plugin_process(
-            "supercc.adapter.feishu", config_path, data_dir, core_port
+        task = asyncio.create_task(
+            _run_plugin_with_restart("feishu", config, data_dir),
+            name="feishu-plugin"
         )
-        logger.info(f"[Bridge] Feishu plugin started (pid={feishu_proc.pid})")
+        plugin_tasks.append(task)
+        logger.info("[Bridge] Feishu plugin started (async task)")
     else:
         logger.info("[Bridge] Feishu not enabled (skipping)")
 
-    # 启动企业微信插件进程（如已启用）
+    # 企业微信
     _wecom_cfg = getattr(config.channels, "wecom", None)
     if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "corp_id", ""):
-        wecom_proc = _spawn_plugin_process(
-            "supercc.plugin.wecom", config_path, data_dir, core_port
+        task = asyncio.create_task(
+            _run_plugin_with_restart("wecom", config, data_dir),
+            name="wecom-plugin"
         )
-        logger.info(f"[Bridge] WeCom plugin started (pid={wecom_proc.pid})")
+        plugin_tasks.append(task)
+        logger.info("[Bridge] WeCom plugin started (async task)")
     else:
         logger.info("[Bridge] WeCom not configured (skipping)")
 
-    # ── Cron scheduler（主进程自有功能）────────────────────────────────────────
+    # ── Phase 4: Cron scheduler ────────────────────────────────────────────
     cron_scheduler = CronScheduler(config, data_dir)
     set_cron_scheduler(cron_scheduler, config)
     cron_scheduler.start()
+    cron_task = asyncio.create_task(cron_scheduler._run(), name="cron-scheduler")
+    logger.info("[Phase4] CronScheduler started")
 
     # Ensure skills directory is a git repo (init if needed)
     from supercc.evolve.skill_nudge import _ensure_skills_git_repo
@@ -544,10 +523,41 @@ def start_bridge(config_path: str, data_dir: str) -> None:
     from supercc.evolve.dream import register_dream_job
     register_dream_job(data_dir)
 
-    # 阻塞主线程（让 daemon threads 和子进程一直运行）
-    import time
-    while True:
-        time.sleep(3600)
+    # ── Graceful shutdown ──────────────────────────────────────────────────
+    stop_event = asyncio.Event()
+
+    def _on_signal():
+        logger.info("Received shutdown signal, stopping...")
+        stop_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _on_signal)
+
+    try:
+        await stop_event.wait()
+    finally:
+        # Cancel plugin tasks
+        for task in plugin_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        if cron_task:
+            cron_task.cancel()
+            try:
+                await cron_task
+            except asyncio.CancelledError:
+                pass
+        if cron_scheduler:
+            cron_scheduler.stop()
+        if core_server:
+            await core_server.stop()
+        remove_pid(pid_file)
+        lock.release()
+        logger.info("SuperCC stopped gracefully")
 
 
 def start_core_only(config_path: str, data_dir: str):
@@ -1788,7 +1798,7 @@ def main(args=None):
         if ok:
             cfg_path, data_dir = resolve_config_path()
             init_config(cfg_path)
-            start_bridge(cfg_path, data_dir)
+            asyncio.run(start_bridge(cfg_path, data_dir))
         return
 
     if command == "plugin":
@@ -1875,7 +1885,7 @@ def main(args=None):
     logging.getLogger().addHandler(fh)
     write_log_banner(_version)
     logger.info("Starting SuperCC...")
-    start_bridge(cfg_path, data_dir)
+    asyncio.run(start_bridge(cfg_path, data_dir))
 
 
 if __name__ == "__main__":
