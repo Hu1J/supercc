@@ -30,7 +30,7 @@ _root_handler = logging.StreamHandler()
 _root_handler.setFormatter(ColoredFormatter())
 logging.root.handlers = [_root_handler]
 logging.root.setLevel(logging.INFO)
-logger = logging.getLogger("feishu-plugin")
+logger = logging.getLogger("feishu")
 
 
 async def main():
@@ -47,7 +47,7 @@ async def main():
     # 从 config 读取 core 端口
     core_port = config.core.port
     core_url = f"ws://127.0.0.1:{core_port}"
-    logger.info(f"[FeishuPlugin] Connecting to core at {core_url}")
+    logger.info(f"[feishu] Connecting to core at {core_url}")
 
     feishu = FeishuClient(
         app_id=config.channels.feishu.app_id,
@@ -66,7 +66,10 @@ async def main():
     )
 
     async def on_message(msg):
-        await core_client.send_message(msg)
+        try:
+            await core_client.send_message(msg)
+        except Exception:
+            logger.exception("[feishu] error in on_message")
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,
@@ -80,12 +83,12 @@ async def main():
 
     # 连接到 Core
     await core_client.connect()
-    logger.info("[FeishuPlugin] Connected to core")
+    logger.info("[feishu] Connected to core")
 
     # 启动 WS 接收飞书消息（lark SDK 内部调用 asyncio.run()，必须放独立线程）
     _ws_thread = threading.Thread(target=ws_client.start, daemon=True, name="FeishuWS")
     _ws_thread.start()
-    logger.info("[FeishuPlugin] Feishu WebSocket thread started")
+    logger.info("[feishu] Feishu WebSocket thread started")
 
     # 保持 main() 活跃直到被中断
     try:
