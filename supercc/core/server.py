@@ -214,6 +214,7 @@ class WsServer:
                 "mention_ids": params.get("mention_ids", []),
                 "group_name": params.get("group_name", ""),
                 "chat_type": params.get("chat_type", "p2p"),
+                **params.get("extra", {}),  # 合并 platform 特有字段（group_history/mention_rules等）
             },
         )
 
