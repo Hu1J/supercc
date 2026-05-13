@@ -128,7 +128,7 @@ class WsServer:
 
     async def _handle_subscribe(self, req: JsonRpcRequest) -> dict:
         """插件订阅 SessionKey。"""
-        conn = self._get_conn_by_req_id(req.id)
+        conn = _conn_var.get()
         if not conn:
             return {"error": "connection not found"}
         keys = req.params.get("keys", [])
@@ -145,7 +145,7 @@ class WsServer:
 
     async def _handle_unsubscribe(self, req: JsonRpcRequest) -> dict:
         """插件取消订阅 SessionKey。"""
-        conn = self._get_conn_by_req_id(req.id)
+        conn = _conn_var.get()
         if not conn:
             return {"error": "connection not found"}
         keys = req.params.get("keys", [])
@@ -162,10 +162,9 @@ class WsServer:
 
     async def _handle_worker_status(self, req: JsonRpcRequest) -> dict:
         """返回 Worker 池状态。"""
-        from supercc.core.worker import WorkerPool
-        pool = WorkerPool.instance() if hasattr(WorkerPool, 'instance') else None
+        pool = self._executor.pool if self._executor else None
         if pool:
-            return asyncio.run_coroutine_threadsafe(pool.stats(), asyncio.get_event_loop())
+            return await pool.stats()
         return {"total_workers": 0, "idle": 0, "busy": 0}
 
     async def _handle_ping(self, req: JsonRpcRequest) -> dict:
@@ -234,7 +233,7 @@ class WsServer:
                 "event": msg.event,
             }
             # TOOL_CALL 事件需要 extra（tool_name、tool_input）传给 plugin
-            if msg.extra:
+            if msg.extra is not None:
                 params["extra"] = msg.extra
             frame = {"jsonrpc": "2.0", "method": msg.event, "params": params}
             try:
@@ -284,14 +283,6 @@ class WsServer:
         return {}
 
     # ── 连接管理 ──────────────────────────────────────────────────────────
-
-    def _get_conn_by_req_id(self, req_id: Any) -> Optional[Connection]:
-        """通过请求 ID 找到对应的 Connection。"""
-        for conn in self._connections.values():
-            # 简单实现：每个连接维护一个 pending_request_ids set
-            if hasattr(conn, '_pending_ids') and req_id in conn._pending_ids:
-                return conn
-        return None
 
     async def _register_connection(self, ws: Any, plugin_id: str, platform: str) -> Connection:
         conn_id = secrets.token_hex(8)
