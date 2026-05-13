@@ -657,7 +657,6 @@ class FeishuCoreWSClient:
             logger.error(f"[FeishuCore] await failed (future=None?): {e}")
             result = {}
         return result or {}
-        return result or {}
 
     async def send_message(self, incoming: IncomingMessage) -> dict:
         """
@@ -670,9 +669,12 @@ class FeishuCoreWSClient:
 
         # 图片/文件消息：下载媒体，转换为本地路径 markdown
         if incoming.message_type in ("image", "file"):
-            resolved = await self._resolve_media_markdown(incoming)
-            if resolved:
-                incoming = dataclass_replace(incoming, content=resolved)
+            try:
+                resolved = await self._resolve_media_markdown(incoming)
+                if resolved:
+                    incoming = dataclass_replace(incoming, content=resolved)
+            except Exception:
+                logger.exception("[FeishuCore] _resolve_media_markdown failed")
 
         inbound = incoming_to_inbound(
             incoming,
@@ -709,7 +711,10 @@ class FeishuCoreWSClient:
             return {}
 
         # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
-        await self._enrich_group_context(inbound, incoming)
+        try:
+            await self._enrich_group_context(inbound, incoming)
+        except Exception:
+            logger.exception("[FeishuCore] _enrich_group_context failed")
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
@@ -738,7 +743,7 @@ class FeishuCoreWSClient:
             },
         )
 
-        # 最多重试 2 次
+        # 最多重试 2 次（ConnectionClosedError、TypeError 均重试）
         for attempt in range(2):
             try:
                 return await self._do_send(req, incoming)
@@ -752,6 +757,17 @@ class FeishuCoreWSClient:
                         raise
                 else:
                     logger.error("[FeishuCore] send failed after reconnect")
+                    raise
+            except TypeError:
+                if attempt == 0:
+                    logger.warning("[FeishuCore] TypeError, reconnecting...")
+                    try:
+                        await self._reconnect()
+                    except Exception:
+                        logger.exception("[FeishuCore] reconnect failed")
+                    continue  # 继续下一次尝试
+                else:
+                    logger.error("[FeishuCore] TypeError persists after reconnect")
                     raise
         return {}
 
