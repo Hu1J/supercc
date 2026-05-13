@@ -454,9 +454,10 @@ class WeComCoreWSClient:
         return result or {}
 
     async def _enrich_group_context(self, inbound, msg: dict):
-        """为群聊消息收集并注入上下文：历史。
+        """为群聊消息收集并注入上下文：历史、mention 规则。
 
-        历史从内存中取（WeCom API 能力有限）。
+        WeCom API 能力有限（无群成员列表、无历史消息检索），
+        仅能从内存历史和 sender 信息构建基本上下文。
         """
         if not inbound.extra.get("is_group_chat"):
             return
@@ -474,6 +475,15 @@ class WeComCoreWSClient:
                 if content:
                     history_lines.append(f"{sender}: {content[:200]}")
             extra["group_history"] = history_lines
+
+        # mention 规则：企业微信使用 @userid 格式
+        sender_open_id = inbound.user_open_id or ""
+        if sender_open_id:
+            mention_rules = (
+                f"【群聊规则】回复时如需引用用户，请使用 @ 语法：@{sender_open_id}。"
+                f"企业微信支持在文本中直接使用 @userid 格式。"
+            )
+            extra["mention_rules"] = mention_rules
 
     async def _send_event(self, method: str, params: dict):
         """发送 Event notification 到核心。"""
