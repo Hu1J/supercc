@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 
 # 将项目根目录加入 sys.path（确保能 import supercc）
@@ -22,11 +23,13 @@ from supercc.config import init_config, get_config
 from supercc.adapter.feishu.client import FeishuClient
 from supercc.adapter.feishu.ws_client import FeishuWSClient
 from supercc.adapter.feishu.core_client import FeishuCoreWSClient
+from supercc.main import ColoredFormatter
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+# 统一日志格式（与 core 保持一致）
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(ColoredFormatter())
+logging.root.handlers = [_root_handler]
+logging.root.setLevel(logging.INFO)
 logger = logging.getLogger("feishu-plugin")
 
 
@@ -79,8 +82,17 @@ async def main():
     await core_client.connect()
     logger.info("[FeishuPlugin] Connected to core")
 
-    # 启动 WS 接收飞书消息（阻塞）
-    ws_client.start()
+    # 启动 WS 接收飞书消息（lark SDK 内部调用 asyncio.run()，必须放独立线程）
+    _ws_thread = threading.Thread(target=ws_client.start, daemon=True, name="FeishuWS")
+    _ws_thread.start()
+    logger.info("[FeishuPlugin] Feishu WebSocket thread started")
+
+    # 保持 main() 活跃直到被中断
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        pass
 
 
 if __name__ == "__main__":

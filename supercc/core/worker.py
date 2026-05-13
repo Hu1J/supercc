@@ -208,11 +208,12 @@ class WorkerPool:
 
         try:
             # _init_options 必须在 query 前调用，否则 crash
+            # SDK session_id 必须是 UUID 或 None（自动生成），不能用数据库 session_id
             resume = worker._sdk_session_id if worker._sdk_session_id else None
             worker.integration._init_options(
                 continue_conversation=not worker._is_first_session,
                 channel=key.platform,
-                session_id=session_id,
+                session_id=None,
                 resume=resume,
             )
 

@@ -235,6 +235,9 @@ class _BaseLogFormatter(logging.Formatter):
         name = record.name
         if name == "root" or not name:
             return "root"
+        # websockets 库显示为 ws
+        if name == "websockets":
+            return "ws"
         parts = name.split(".")
         # Skip 'supercc' prefix, return first sub-module name
         if len(parts) >= 2:
@@ -410,9 +413,8 @@ def start_bridge(config_path: str, data_dir: str) -> None:
         nonlocal cron_scheduler, core_server
         if cron_scheduler:
             cron_scheduler.stop()
-        if core_server:
-            import asyncio
-            asyncio.run(core_server.stop())
+        # core_server 运行在 daemon 线程，sys.exit(0) 会直接 kill 进程
+        # 不需要也没法从信号处理线程优雅关闭 background thread 的 loop
         remove_pid(pid_file)
         lock.release()
         sys.exit(0)
@@ -453,7 +455,10 @@ def start_bridge(config_path: str, data_dir: str) -> None:
             port=core_port,
             executor=executor,
         )
-        asyncio.run(core_server.start())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(core_server.start())
+        loop.run_forever()  # server 在后台运行，保持 loop 不退出
 
     import threading
     core_thread = threading.Thread(target=run_core_server, daemon=True)
@@ -562,7 +567,10 @@ def start_core_only(config_path: str, data_dir: str):
             port=core_port,  # 从 config 读取
             executor=executor,
         )
-        asyncio.run(core_server.start())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(core_server.start())
+        loop.run_forever()
 
     import threading
     core_thread = threading.Thread(target=run_core_server, daemon=True)
@@ -1743,7 +1751,7 @@ def main(args=None):
         return
 
     if command == "plugin":
-        from supercc.config import init_config, load_config, write_config, resolve_config_path
+        from supercc.config import load_config, write_config
         try:
             cfg_path, _ = resolve_config_path()
             init_config(cfg_path)

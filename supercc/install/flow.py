@@ -73,17 +73,11 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
 async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bool = False) -> AppRegistrationResult:
     config_path = str(Path(config_path).absolute())
     """Run the full install flow: init → begin → QR → poll → save config."""
-    print("\n🚀 开始安装 SuperCC...\n")
+    print("\n🚀 扫码创建飞书机器人...\n")
 
     api = FeishuInstallAPI()
     try:
-        # Step 1: Init
-        print("正在初始化...")
         await api.init()
-        print("初始化完成")
-
-        # Step 2: Begin → get QR URL
-        print("正在获取二维码...")
         begin_result = await api.begin()
 
         # Build QR URL with from=onboard tag

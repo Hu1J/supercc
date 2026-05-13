@@ -68,7 +68,6 @@ def run_onboard_flow() -> bool:
         choices=[
             questionary.Choice("飞书 (Feishu)", value="feishu"),
             questionary.Choice("企业微信 (WeCom)", value="wecom"),
-            questionary.Choice("飞书 + 企业微信 (两者都配置)", value="both"),
             questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
         ],
         style=questionary.Style([
@@ -99,8 +98,8 @@ def run_onboard_flow() -> bool:
         feishu_configured = False
         wecom_configured = False
 
-        if platform_choice in ("feishu", "both"):
-            print("\n扫码登录飞书应用...\n")
+        if platform_choice == "feishu":
+            print("\n🚀 扫码创建飞书机器人...\n")
             try:
                 from supercc.install.flow import run_install_flow
                 asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
@@ -109,7 +108,7 @@ def run_onboard_flow() -> bool:
             except Exception as e:
                 print(f"⚠️  飞书配置出错：{e}（稍后可手动配置）\n")
 
-        if platform_choice in ("wecom", "both"):
+        elif platform_choice == "wecom":
             print("\n正在安装企业微信 SDK...\n")
             import subprocess
             result = subprocess.run(
