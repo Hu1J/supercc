@@ -136,7 +136,7 @@ def format_questionnaire_card(marker: "_AskUserQuestionMarker") -> dict:
 
 
 class _AskUserQuestionMarker:
-    """通知 message_handler 此工具调用需要渲染问卷卡片。"""
+    """通知 FeishuCoreWSClient 此工具调用需要渲染问卷卡片。"""
     __slots__ = ("tool_name", "tool_input", "data")
 
     def __init__(self, tool_name: str, tool_input: str):

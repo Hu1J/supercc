@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.adapter.wecom.client import WeComClient
@@ -12,6 +12,104 @@ from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to
 from wecom_aibot_sdk import generate_req_id
 
 logger = logging.getLogger(__name__)
+
+
+class WeComReplyFormatter:
+    """Format tool call results for WeCom (limited card support)."""
+
+    ICONS = {
+        "Read": "📖",
+        "Write": "✏️",
+        "Edit": "🔧",
+        "Bash": "💻",
+        "Glob": "🔍",
+        "Grep": "🔎",
+        "WebFetch": "🌐",
+        "WebSearch": "🌐",
+        "Task": "📋",
+        "TodoWrite": "📋",
+        "MemorySearch": "🧠",
+        "MemoryList": "🧠",
+        "MemoryAdd": "🧠",
+        "MemoryDelete": "🧠",
+        "AskUserQuestion": "🎯",
+        "SkillSearch": "🎯",
+        "CronCreate": "⏰",
+        "CronDelete": "⏰",
+        "CronList": "⏰",
+        "CronPause": "⏰",
+        "CronResume": "⏰",
+        "CronTrigger": "⏰",
+        "CronLogs": "⏰",
+    }
+
+    def format_tool_call(self, tool_name: str, tool_input: str | None = None) -> str:
+        """Format a tool call notification as markdown text."""
+        if tool_input is None:
+            tool_input = ""
+
+        icon = self.ICONS.get(tool_name, "🤖")
+        short_name = tool_name.replace("mcp__SuperCC__", "")
+
+        # Edit/Write → code block
+        if tool_name in ("Edit", "Write"):
+            if tool_input.strip():
+                try:
+                    data = json.loads(tool_input)
+                    file_path = data.get("file_path", "unknown")
+                    return f"{icon} **{short_name}** — `{file_path}`"
+                except json.JSONDecodeError:
+                    pass
+            return f"{icon} **{short_name}**"
+
+        # Bash → code block
+        if tool_name == "Bash":
+            try:
+                data = json.loads(tool_input)
+                cmd = data.get("command", tool_input)
+                desc = data.get("description", "")
+                header = f"{icon} **Bash**"
+                if desc:
+                    header += f" — {desc}"
+                return f"{header}\n```bash\n{cmd}\n```"
+            except json.JSONDecodeError:
+                return f"{icon} **Bash**\n```bash\n{tool_input}\n```"
+
+        # TodoWrite → markdown table
+        if tool_name == "TodoWrite":
+            try:
+                data = json.loads(tool_input)
+                todos = data.get("todos", [])
+            except json.JSONDecodeError:
+                todos = []
+
+            if not todos:
+                return f"{icon} **TodoWrite** — 所有任务已完成"
+
+            status_icon = {"pending": "⬜", "in_progress": "🔄", "completed": "✅"}
+            rows = ["| 状态 | 待办事项 |", "|------|----------|"]
+            for t in todos:
+                icon_s = status_icon.get(t.get("status", "pending"), "⬜")
+                content = str(t.get("content", "")).replace("\n", " ")
+                rows.append(f"| {icon_s} | {content} |")
+            return f"{icon} **TodoWrite**\n\n" + "\n".join(rows)
+
+        # Read → file path
+        if tool_name == "Read":
+            try:
+                data = json.loads(tool_input)
+                path = data.get("file_path", tool_input)
+            except json.JSONDecodeError:
+                path = tool_input
+            return f"{icon} **Read** — `{path}`"
+
+        # Default: icon + name + first 100 chars of input
+        msg = f"{icon} **{short_name}**"
+        if tool_input and len(tool_input) <= 200:
+            msg += f"\n`{tool_input[:100]}`"
+        elif tool_input:
+            msg += f"\n`{tool_input[:100]}...`"
+        return msg
 
 
 class StreamAccumulator:
@@ -104,6 +202,9 @@ class WeComCoreWSClient:
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
 
+        # WeCom 格式化管线
+        self.formatter = WeComReplyFormatter()
+
     async def connect(self):
         """连接核心 WebSocket 服务。"""
         import websockets
@@ -178,7 +279,10 @@ class WeComCoreWSClient:
             await self.wecom.send_markdown(chat_id, content)
 
     async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
-        """Send text to WeCom (called by StreamAccumulator after buffering)."""
+        """Send text to WeCom with three-level fallback (called by StreamAccumulator)."""
+        # 检测是否包含飞书特有的 card 标记（从 Feishu 迁移的内容）
+        is_card_content = "<at user_id=" in text or "```" in text or "## " in text
+
         if message_id:
             frame = self.ws_client.get_frame(message_id)
             stream_id = generate_req_id("stream")
@@ -190,20 +294,35 @@ class WeComCoreWSClient:
                         content=text,
                         finish=True,
                     )
-                else:
-                    await self.wecom.send_markdown(chat_id, text)
+                    return
             except Exception as e:
                 logger.warning(f"[WeComCore] reply_stream failed: {e}")
-                try:
-                    await self.wecom.send_markdown(chat_id, text)
-                except Exception:
-                    pass
-        else:
+
+        # 三级降级
+        if is_card_content:
+            try:
+                await self.wecom.send_template_card(
+                    chat_id=chat_id,
+                    card_type="text_notice",
+                    title="消息",
+                    desc=text[:500],
+                )
+                return
+            except Exception:
+                pass
+
+        try:
             await self.wecom.send_markdown(chat_id, text)
+        except Exception:
+            try:
+                await self.wecom.send_text(chat_id, text[:2000])
+            except Exception as e:
+                logger.warning(f"[WeComCore] all send methods failed: {e}")
 
     async def _handle_tool_call(self, params: dict):
-        """tool_call 事件：发送工具执行结果。"""
+        """tool_call 事件：格式化工具结果并发送给用户。"""
         tool_name = params.get("tool_name", "")
+        tool_input = params.get("tool_input", "")
         tool_call_id = params.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
@@ -213,7 +332,8 @@ class WeComCoreWSClient:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
 
-        result_content = f"[{tool_name}] 执行完成"
+        # 格式化工具调用通知（TOOL_RESULT 回给 core 做记录，用户通知由 core 的 WS 推送）
+        result_content = self.formatter.format_tool_call(tool_name, tool_input)
         await self._send_event(Event.TOOL_RESULT, {
             "tool_call_id": tool_call_id,
             "content": result_content,

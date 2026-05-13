@@ -162,7 +162,7 @@ def format_write_card(file_path: str, content_lines: list[str]) -> dict:
 # 供 reply_formatter 使用的 marker
 # ----------------------------------------------------------------------
 class _DiffMarker:
-    """通知 message_handler 此工具调用需要渲染彩色 diff 卡片。"""
+    """通知 FeishuCoreWSClient 此工具调用需要渲染彩色 diff 卡片。"""
     __slots__ = ("tool_name", "tool_input", "card")
 
     def __init__(self, tool_name: str, tool_input: str, card: dict):

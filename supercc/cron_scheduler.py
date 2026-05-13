@@ -33,6 +33,24 @@ from supercc.claude.integration import ClaudeIntegration
 from supercc.adapter.feishu.client import FeishuClient
 
 
+def _get_user_open_id_by_chat_id(data_dir: str, chat_id: str) -> str | None:
+    """Get user_open_id for a given chat_id from sessions table."""
+    db_path = SESSIONS_DB_PATH
+    if not os.path.exists(db_path):
+        return None
+    project_path = str(Path(data_dir).resolve().parent)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT user_open_id FROM sessions WHERE chat_id = ? AND project_path = ? LIMIT 1",
+                (chat_id, project_path),
+            ).fetchone()
+            return row["user_open_id"] if row else None
+    except Exception:
+        return None
+
+
 def _get_active_chat_id(data_dir: str) -> str | None:
     """Get the most recent active session's chat_id for this project."""
     db_path = SESSIONS_DB_PATH
@@ -629,8 +647,12 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
     from supercc.claude.message_context import set_current_context
+    # 从 sessions 表查询 user_open_id，不用硬编码的 allowed_users[0]
+    user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
+        config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else ""
+    )
     set_current_context(
-        user_open_id=config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else "",
+        user_open_id=user_open_id,
         chat_id=chat_id,
         platform=job.get("platform", "feishu"),
     )
