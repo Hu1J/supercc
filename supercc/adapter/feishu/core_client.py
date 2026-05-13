@@ -139,6 +139,21 @@ class FeishuCoreWSClient:
         # 启动读取循环
         asyncio.create_task(self._read_loop())
 
+    async def _reconnect(self):
+        """断开旧连接，重新连接核心 WebSocket。"""
+        import websockets
+        self._running = False
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+        self._ws = None
+        self._ws = await websockets.connect(self.core_url)
+        self._running = True
+        logger.info("[FeishuCore] Reconnected to core")
+        asyncio.create_task(self._read_loop())
+
     async def _read_loop(self):
         """持续读取核心发来的消息。"""
         import websockets
@@ -148,7 +163,7 @@ class FeishuCoreWSClient:
                 data = json.loads(msg)
                 await self._handle_core_message(data)
             except websockets.exceptions.ConnectionClosed:
-                logger.warning("[FeishuCore] Connection closed")
+                logger.warning("[FeishuCore] Connection closed, reconnecting...")
                 break
             except Exception:
                 logger.exception("[FeishuCore] Error reading message")
@@ -613,6 +628,14 @@ class FeishuCoreWSClient:
 
         用于消息处理的主流程。
         """
+        # 检测连接是否存活，死了就重连
+        import websockets
+        try:
+            if self._ws is None or self._ws.closed:
+                await self._reconnect()
+        except Exception:
+            await self._reconnect()
+
         # 图片/文件消息：下载媒体，转换为本地路径 markdown
         if incoming.message_type in ("image", "file"):
             resolved = await self._resolve_media_markdown(incoming)
@@ -690,9 +713,21 @@ class FeishuCoreWSClient:
         self._pending_responses[req_id] = future
         self._pending_message_ids[req_id] = incoming.message_id
 
-        await self._ws.send(json.dumps(req.to_dict()))
+        try:
+            await self._ws.send(json.dumps(req.to_dict()))
+        except websockets.exceptions.ConnectionClosedError:
+            # 连接在发送时断了，重连后重试一次
+            logger.warning("[FeishuCore] send failed, reconnecting...")
+            await self._reconnect()
+            self._pending_responses[req_id] = future
+            self._pending_message_ids[req_id] = incoming.message_id
+            await self._ws.send(json.dumps(req.to_dict()))
 
-        result = await future
+        try:
+            result = await asyncio.wait_for(future, timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("[FeishuCore] response timeout")
+            result = {}
         return result or {}
 
     async def _resolve_media_markdown(self, msg: Any) -> str | None:
