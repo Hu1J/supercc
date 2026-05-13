@@ -628,6 +628,9 @@ class FeishuCoreWSClient:
 
         future = asyncio.Future()
         req_id = str(req.id)
+        if not req_id or req_id == "None":
+            logger.warning(f"[FeishuCore] invalid req_id: {req_id!r}, skipping")
+            return {}
         self._pending_responses[req_id] = future
         self._pending_message_ids[req_id] = incoming.message_id
 
@@ -646,6 +649,10 @@ class FeishuCoreWSClient:
         except asyncio.TimeoutError:
             logger.warning("[FeishuCore] response timeout")
             result = {}
+        except TypeError as e:
+            logger.error(f"[FeishuCore] await failed (future=None?): {e}")
+            result = {}
+        return result or {}
         return result or {}
 
     async def send_message(self, incoming: IncomingMessage) -> dict:
