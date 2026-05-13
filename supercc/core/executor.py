@@ -474,7 +474,8 @@ class CoreExecutor:
         if worker is None:
             return
 
-        # ── 记忆自进化 ────────────────────────────────────────────────────
+        # ── 记忆自进化（结果受 mem verbose 配置控制）─────────────────────
+        mem_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "mem")
         if worker.integration_mem:
             try:
                 memory_prompt = (
@@ -485,7 +486,8 @@ class CoreExecutor:
                 )
 
                 async def mem_stream_callback(msg: Any) -> None:
-                    if msg.content and push_fn:
+                    # mem=OFF 时不推送结果，但查询仍执行（记忆自进化仍发生）
+                    if msg.content and push_fn and mem_enabled:
                         chunk = OutboundMessage(
                             event=Event.STREAM_CHUNK,
                             session_key=key,
@@ -503,7 +505,8 @@ class CoreExecutor:
             except Exception as e:
                 logger.warning(f"[Background] memory review failed: {e}")
 
-        # ── 技能自进化（达到阈值时触发）────────────────────────────────
+        # ── 技能自进化（结果受 skill verbose 配置控制）────────────────────
+        skill_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "skill")
         if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
             try:
                 skill_prompt = (
@@ -514,7 +517,8 @@ class CoreExecutor:
                 )
 
                 async def skill_stream_callback(msg: Any) -> None:
-                    if msg.content and push_fn:
+                    # skill=OFF 时不推送结果，但查询仍执行（技能自进化仍发生）
+                    if msg.content and push_fn and skill_enabled:
                         chunk = OutboundMessage(
                             event=Event.STREAM_CHUNK,
                             session_key=key,
