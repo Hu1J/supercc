@@ -124,11 +124,10 @@ class ClaudeIntegration:
             self._continue_conversation = continue_conversation
         # else: 复用 self._continue_conversation（默认为 True）
 
-        include_feishu = channel == "feishu"
         if self.memory_only:
             supercc_server = get_memory_only_mcp_server()
         else:
-            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu)
+            supercc_server = get_supercc_mcp_server()
 
         mcp_servers = {
             "SuperCC": supercc_server,

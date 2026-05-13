@@ -9,7 +9,7 @@ User=%u
 WorkingDirectory=%h/.supercc
 Environment="SUPERCC_CONFIG=%h/.supercc/config.json"
 Environment="SUPERCC_DATA=%h/.supercc"
-ExecStart=/usr/bin/python3 -m supercc.plugin.feishu
+ExecStart=/usr/bin/python3 -m supercc.adapter.feishu
 Restart=unless-stopped
 RestartSec=5
 

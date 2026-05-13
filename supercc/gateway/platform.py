@@ -54,7 +54,7 @@ def _get_start_script(data_dir: str, channel: str) -> str:
             f"cd {project_dir}\n"
             f"export SUPERCC_CONFIG={data_dir}/config.json\n"
             f"export SUPERCC_DATA={data_dir}\n"
-            f"exec python -m supercc.plugin.feishu\n"
+            f"exec python -m supercc.adapter.feishu\n"
         )
     elif channel == ServiceType.WECOM:
         return (
@@ -312,7 +312,7 @@ def install_windows(data_dir: str, project_slug: str, channel: str) -> None:
             f'cd /d "{project_dir}"\n'
             f'set SUPERCC_CONFIG={data_dir}\\config.json\n'
             f'set SUPERCC_DATA={data_dir}\n'
-            f'python -m supercc.plugin.feishu\n'
+            f'python -m supercc.adapter.feishu\n'
         )
     elif channel == ServiceType.WECOM:
         script_content = (
