@@ -134,7 +134,7 @@ class FeishuCoreWSClient:
         import websockets
         self._ws = await websockets.connect(self.core_url)
         self._running = True
-        logger.info(f"[FeishuCore] Connected to core at {self.core_url}")
+        logger.info(f"Connected to core at {self.core_url}")
 
         # 启动读取循环
         asyncio.create_task(self._read_loop())
@@ -151,7 +151,7 @@ class FeishuCoreWSClient:
         self._ws = None
         self._ws = await websockets.connect(self.core_url)
         self._running = True
-        logger.info("[FeishuCore] Reconnected to core")
+        logger.info("Reconnected to core")
         asyncio.create_task(self._read_loop())
 
     async def _read_loop(self):
@@ -163,10 +163,10 @@ class FeishuCoreWSClient:
                 data = json.loads(msg)
                 await self._handle_core_message(data)
             except websockets.exceptions.ConnectionClosed:
-                logger.warning("[FeishuCore] Connection closed, reconnecting...")
+                logger.warning("Connection closed, reconnecting...")
                 break
             except Exception:
-                logger.exception("[FeishuCore] Error reading message")
+                logger.exception("Error reading message")
 
     async def _handle_core_message(self, data: dict):
         """处理核心发来的消息（Response 或 Event）。"""
@@ -629,7 +629,7 @@ class FeishuCoreWSClient:
         future = asyncio.Future()
         req_id = str(req.id)
         if not req_id or req_id == "None":
-            logger.warning(f"[FeishuCore] invalid req_id: {req_id!r}, skipping")
+            logger.warning(f"invalid req_id: {req_id!r}, skipping")
             return {}
         self._pending_responses[req_id] = future
         self._pending_message_ids[req_id] = incoming.message_id
@@ -638,23 +638,23 @@ class FeishuCoreWSClient:
             await self._ws.send(json.dumps(req.to_dict()))
         except websockets.exceptions.ConnectionClosedError:
             # 断了就重连并重试一次
-            logger.warning("[FeishuCore] send failed, reconnecting...")
+            logger.warning("send failed, reconnecting...")
             await self._reconnect()
             self._pending_responses[req_id] = future
             self._pending_message_ids[req_id] = incoming.message_id
             await self._ws.send(json.dumps(req.to_dict()))
 
         if future is None:
-            logger.warning("[FeishuCore] future is None, skipping await")
+            logger.warning("future is None, skipping await")
             return {}
 
         try:
             result = await asyncio.wait_for(future, timeout=30)
         except asyncio.TimeoutError:
-            logger.warning("[FeishuCore] response timeout")
+            logger.warning("response timeout")
             result = {}
         except TypeError as e:
-            logger.error(f"[FeishuCore] await failed (future=None?): {e}")
+            logger.error(f"await failed (future=None?): {e}")
             result = {}
         return result or {}
 
@@ -674,7 +674,7 @@ class FeishuCoreWSClient:
                 if resolved:
                     incoming = dataclass_replace(incoming, content=resolved)
             except Exception:
-                logger.exception("[FeishuCore] _resolve_media_markdown failed")
+                logger.exception("_resolve_media_markdown failed")
 
         inbound = incoming_to_inbound(
             incoming,
@@ -707,14 +707,14 @@ class FeishuCoreWSClient:
                 await self._ws.send(json.dumps(notify_req.to_dict()))
             except Exception:
                 pass
-            logger.info(f"[FeishuCore] group msg stored, hist_len={len(hist)}")
+            logger.info(f"group msg stored, hist_len={len(hist)}")
             return {}
 
         # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
         try:
             await self._enrich_group_context(inbound, incoming)
         except Exception:
-            logger.exception("[FeishuCore] _enrich_group_context failed")
+            logger.exception("_enrich_group_context failed")
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
@@ -749,25 +749,25 @@ class FeishuCoreWSClient:
                 return await self._do_send(req, incoming)
             except websockets.exceptions.ConnectionClosedError:
                 if attempt == 0:
-                    logger.warning("[FeishuCore] connection dead, reconnecting...")
+                    logger.warning("connection dead, reconnecting...")
                     try:
                         await self._reconnect()
                     except Exception:
-                        logger.exception("[FeishuCore] reconnect failed")
+                        logger.exception("reconnect failed")
                         raise
                 else:
-                    logger.error("[FeishuCore] send failed after reconnect")
+                    logger.error("send failed after reconnect")
                     raise
             except TypeError:
                 if attempt == 0:
-                    logger.warning("[FeishuCore] TypeError, reconnecting...")
+                    logger.warning("TypeError, reconnecting...")
                     try:
                         await self._reconnect()
                     except Exception:
-                        logger.exception("[FeishuCore] reconnect failed")
+                        logger.exception("reconnect failed")
                     continue  # 继续下一次尝试
                 else:
-                    logger.error("[FeishuCore] TypeError persists after reconnect")
+                    logger.error("TypeError persists after reconnect")
                     raise
         return {}
 
@@ -805,10 +805,10 @@ class FeishuCoreWSClient:
                 save_path = base_path + ".png"
                 with open(save_path, "wb") as f:
                     f.write(data)
-                logger.info(f"[FeishuCore] saved image to {save_path}")
+                logger.info(f"saved image to {save_path}")
                 return f"![image]({save_path})"
             except Exception as e:
-                logger.warning(f"[FeishuCore] image download failed: {e}")
+                logger.warning(f"image download failed: {e}")
                 return None
 
         elif msg_type == "file":
@@ -822,10 +822,10 @@ class FeishuCoreWSClient:
                 data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
                 with open(save_path, "wb") as f:
                     f.write(data)
-                logger.info(f"[FeishuCore] saved file to {save_path}")
+                logger.info(f"saved file to {save_path}")
                 return f"[File: {save_path}] ({orig_name})"
             except Exception as e:
-                logger.warning(f"[FeishuCore] file download failed: {e}")
+                logger.warning(f"file download failed: {e}")
                 return None
 
         return None
@@ -882,7 +882,7 @@ class FeishuCoreWSClient:
                             elif isinstance(h_msg, dict):
                                 h_msg["content"] = resolved
                     except Exception as e:
-                        logger.warning(f"[FeishuCore] resolve media failed for {h_msg_id}: {e}")
+                        logger.warning(f"resolve media failed for {h_msg_id}: {e}")
                         text = f"{h_content} (媒体下载失败)" if h_content else ""
 
                 # 获取发送者姓名
@@ -926,7 +926,7 @@ class FeishuCoreWSClient:
                 )
                 extra["mention_rules"] = mention_rules
         except Exception as e:
-            logger.warning(f"[FeishuCore] failed to fetch group members: {e}")
+            logger.warning(f"failed to fetch group members: {e}")
 
         # 3) 引用消息内容（parent_id → get_message）
         parent_id = getattr(incoming, "parent_id", "") or ""
@@ -939,7 +939,7 @@ class FeishuCoreWSClient:
                     if quoted_text:
                         extra["quoted_content"] = quoted_text[:500]
             except Exception as e:
-                logger.warning(f"[FeishuCore] failed to fetch quoted message {parent_id}: {e}")
+                logger.warning(f"failed to fetch quoted message {parent_id}: {e}")
 
     async def _send_event(self, method: str, params: dict):
         """发送 Event notification 到核心。"""

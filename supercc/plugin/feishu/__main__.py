@@ -27,7 +27,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-logger = logging.getLogger("feishu-plugin")
+logger = logging.getLogger("feishu")
 
 
 async def main():
@@ -44,7 +44,7 @@ async def main():
     # 从 config 读取 core 端口
     core_port = config.core.port
     core_url = f"ws://127.0.0.1:{core_port}"
-    logger.info(f"[FeishuPlugin] Connecting to core at {core_url}")
+    logger.info(f"Connecting to core at {core_url}")
 
     feishu = FeishuClient(
         app_id=config.channels.feishu.app_id,
@@ -62,8 +62,19 @@ async def main():
         allowed_users=config.channels.feishu.allowed_users,
     )
 
+    # 连接到 Core（在主事件循环中创建 WS 连接）
+    await core_client.connect()
+    main_loop = asyncio.get_running_loop()
+    logger.info("Connected to core")
+
+    # on_message 回调在 lark-oapi 的 loop 中被调用，
+    # 需要用 run_coroutine_threadsafe 桥接到主事件循环，
+    # 否则 await self._ws.send(...) 会因事件循环不匹配而失败
     async def on_message(msg):
-        await core_client.send_message(msg)
+        fut = asyncio.run_coroutine_threadsafe(
+            core_client.send_message(msg), main_loop
+        )
+        await asyncio.wrap_future(fut)
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,
@@ -75,12 +86,9 @@ async def main():
         config_path=config_path,
     )
 
-    # 连接到 Core
-    await core_client.connect()
-    logger.info("[FeishuPlugin] Connected to core")
-
-    # 启动 WS 接收飞书消息（阻塞）
-    ws_client.start()
+    # 启动 WS 接收飞书消息（lark-oapi 用自己的 loop 阻塞）
+    # 放到线程中执行，避免阻塞主事件循环
+    await asyncio.to_thread(ws_client.start)
 
 
 if __name__ == "__main__":
