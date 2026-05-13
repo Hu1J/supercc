@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from typing import Any, Callable, Awaitable
 
 from supercc.core.protocol import (
@@ -109,6 +110,7 @@ class FeishuCoreWSClient:
         self._allowed_users = allowed_users or []
         self._ws: Any = None
         self._running = False
+        self._reconnect_lock = asyncio.Lock()
         self._pending_responses: dict[str, asyncio.Future] = {}
         self._pending_message_ids: dict[str, str] = {}  # req_id → incoming message_id
         self._id_counter = 0
@@ -136,37 +138,86 @@ class FeishuCoreWSClient:
         self._running = True
         logger.info(f"Connected to core at {self.core_url}")
 
-        # 启动读取循环
+        # 启动读取循环 + 心跳
         asyncio.create_task(self._read_loop())
+        asyncio.create_task(self._ping_loop())
 
-    async def _reconnect(self):
-        """断开旧连接，重新连接核心 WebSocket。"""
+    async def _reconnect(self, jitter: bool = True):
+        """断开旧连接，重新连接核心 WebSocket。
+
+        可安全地从 _read_loop 和 _do_send 同时调用（_reconnect_lock 保证互斥）。
+        调用前 _running 应保持 True。
+
+        jitter=True 时重连前加 0~3s 随机延迟（防多插件同时重连 core）。"""
         import websockets
-        self._running = False
-        if self._ws:
-            try:
-                await self._ws.close()
-            except Exception:
-                pass
-        self._ws = None
-        self._ws = await websockets.connect(self.core_url)
-        self._running = True
-        logger.info("Reconnected to core")
-        asyncio.create_task(self._read_loop())
+        if jitter:
+            await asyncio.sleep(random.uniform(0, 3))
+        async with self._reconnect_lock:
+            # Guard: 另一个 task 已经重连好了
+            if self._ws:
+                try:
+                    if self._ws.close_code is None:
+                        return
+                except Exception:
+                    pass
+            old_ws = self._ws
+            self._ws = None
+            if old_ws:
+                try:
+                    await old_ws.close()
+                except Exception:
+                    pass
+            self._ws = await websockets.connect(self.core_url)
+            logger.info("Reconnected to core")
 
     async def _read_loop(self):
-        """持续读取核心发来的消息。"""
+        """持续读取核心发来的消息。连接断开时自动重连（自愈循环）。"""
         import websockets
-        while self._running and self._ws:
+        while self._running:
+            ws = self._ws
+            if ws is None:
+                await asyncio.sleep(1)
+                continue
             try:
-                msg = await self._ws.recv()
+                msg = await ws.recv()
                 data = json.loads(msg)
                 await self._handle_core_message(data)
             except websockets.exceptions.ConnectionClosed:
-                logger.warning("Connection closed, reconnecting...")
-                break
+                if self._running:
+                    logger.warning("Connection closed, reconnecting...")
+                    await self._reconnect()
+                else:
+                    break
             except Exception:
                 logger.exception("Error reading message")
+
+    async def _ping_loop(self):
+        """定期 ping core，检测连接是否健康。超时则自动重连。
+
+        应用层 ping（通过 JSON-RPC core.ping），比 TCP ping 更能反映
+        完整的发送-处理-响应链路是否正常。"""
+        import websockets
+        while self._running:
+            await asyncio.sleep(30)
+            ws = self._ws
+            if ws is None:
+                continue
+            future = asyncio.Future()
+            req_id = str(self._next_id())
+            self._pending_responses[req_id] = future
+            try:
+                await ws.send(json.dumps(
+                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}}
+                ))
+                await asyncio.wait_for(future, timeout=5)
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+                logger.warning("ping timeout, reconnecting...")
+                self._pending_responses.pop(req_id, None)
+                await self._reconnect(jitter=False)
+            except Exception:
+                self._pending_responses.pop(req_id, None)
+            else:
+                self._pending_responses.pop(req_id, None)
 
     async def _handle_core_message(self, data: dict):
         """处理核心发来的消息（Response 或 Event）。"""
@@ -645,7 +696,7 @@ class FeishuCoreWSClient:
         except websockets.exceptions.ConnectionClosedError:
             # 断了就重连并重试一次
             logger.warning("send failed, reconnecting...")
-            await self._reconnect()
+            await self._reconnect(jitter=False)
             self._pending_responses[req_id] = future
             self._pending_message_ids[req_id] = incoming.message_id
             await self._ws.send(json.dumps(req.to_dict()))
@@ -757,7 +808,7 @@ class FeishuCoreWSClient:
                 if attempt == 0:
                     logger.warning("connection dead, reconnecting...")
                     try:
-                        await self._reconnect()
+                        await self._reconnect(jitter=False)
                     except Exception:
                         logger.exception("reconnect failed")
                         raise
@@ -768,7 +819,7 @@ class FeishuCoreWSClient:
                 if attempt == 0:
                     logger.warning("TypeError, reconnecting...")
                     try:
-                        await self._reconnect()
+                        await self._reconnect(jitter=False)
                     except Exception:
                         logger.exception("reconnect failed")
                     continue  # 继续下一次尝试
