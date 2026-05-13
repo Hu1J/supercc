@@ -310,24 +310,38 @@ class WsServer:
             resp = JsonRpcResponse(
                 error=JsonRpcError(code=ErrorCode.PARSE_ERROR, message="Invalid JSON-RPC")
             )
-            await conn.ws.send(json.dumps(resp.to_dict()))
+            try:
+                await conn.ws.send(json.dumps(resp.to_dict()))
+            except Exception:
+                pass
             return
 
         # 订阅 connect/info 方法走快速路径
         if req.method in ("connect", "ping"):
             resp = JsonRpcResponse(id=req.id, result={"status": "ok"})
-            await conn.ws.send(json.dumps(resp.to_dict()))
+            try:
+                await conn.ws.send(json.dumps(resp.to_dict()))
+            except Exception:
+                pass
             return
 
         # 设置 task-local 连接上下文，供 push_fn 使用
         token = _conn_var.set(conn)
         try:
             resp = await self.router.dispatch(req)
+        except Exception:
+            logger.exception(f"[WsServer] error in dispatch({req.method}):")
+            resp = JsonRpcResponse(
+                error=JsonRpcError(code=ErrorCode.INTERNAL_ERROR, message="Internal error")
+            )
         finally:
             _conn_var.reset(token)
 
         if resp is not None:
-            await conn.ws.send(json.dumps(resp.to_dict()))
+            try:
+                await conn.ws.send(json.dumps(resp.to_dict()))
+            except Exception:
+                logger.warning("[WsServer] failed to send response, connection may be dead")
 
     async def _send_event(self, conn: Connection, method: str, params: dict):
         """向插件发送 Event notification（无 id）。"""
