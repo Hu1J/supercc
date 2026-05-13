@@ -466,12 +466,24 @@ class WeComCoreWSClient:
         extra = inbound.extra
 
         # 群历史（从内存）
+        # WeCom 存储的是原始 WS 消息字典，需要按 msgtype 提取内容
         hist = self._group_history.get(chat_id, [])
         if hist:
             history_lines = []
             for h in hist[-10:]:
-                sender = h.get("sender", {}).get("id", "?")
-                content = h.get("content", "") or h.get("body", {}).get("content", "")
+                sender = h.get("from", {}).get("userid", "?")
+                msg_type = h.get("msgtype", "text")
+                # 提取内容：text 用 text.content，image/file/voice 用占位符
+                if msg_type == "text":
+                    content = h.get("text", {}).get("content", "")
+                elif msg_type == "image":
+                    content = "[图片]"
+                elif msg_type == "file":
+                    content = "[文件]"
+                elif msg_type == "voice":
+                    content = "[语音]"
+                else:
+                    content = h.get("content", "") or str(h.get("body", {}))
                 if content:
                     history_lines.append(f"{sender}: {content[:200]}")
             extra["group_history"] = history_lines
