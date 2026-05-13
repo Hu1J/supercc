@@ -622,25 +622,45 @@ class FeishuCoreWSClient:
                 return False
             return True
 
+    async def _do_send(self, req: JsonRpcRequest, incoming: IncomingMessage) -> dict:
+        """实际执行 WS 发送和响应等待。"""
+        import websockets
+
+        future = asyncio.Future()
+        req_id = str(req.id)
+        self._pending_responses[req_id] = future
+        self._pending_message_ids[req_id] = incoming.message_id
+
+        try:
+            await self._ws.send(json.dumps(req.to_dict()))
+        except websockets.exceptions.ConnectionClosedError:
+            # 断了就重连并重试一次
+            logger.warning("[FeishuCore] send failed, reconnecting...")
+            await self._reconnect()
+            self._pending_responses[req_id] = future
+            self._pending_message_ids[req_id] = incoming.message_id
+            await self._ws.send(json.dumps(req.to_dict()))
+
+        try:
+            result = await asyncio.wait_for(future, timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("[FeishuCore] response timeout")
+            result = {}
+        return result or {}
+
     async def send_message(self, incoming: IncomingMessage) -> dict:
         """
         将 IncomingMessage 转发给核心，并等待响应。
 
         用于消息处理的主流程。
+        最多重试 2 次（第一次失败后重连，再试一次）。
         """
-        # 检测连接是否存活，死了就重连
         import websockets
-        try:
-            if self._ws is None or self._ws.closed:
-                await self._reconnect()
-        except Exception:
-            await self._reconnect()
 
         # 图片/文件消息：下载媒体，转换为本地路径 markdown
         if incoming.message_type in ("image", "file"):
             resolved = await self._resolve_media_markdown(incoming)
             if resolved:
-                # 创建副本，用 resolved markdown 替换 content
                 incoming = dataclass_replace(incoming, content=resolved)
 
         inbound = incoming_to_inbound(
@@ -659,7 +679,6 @@ class FeishuCoreWSClient:
             hist.append(incoming)
             if len(hist) > self._MAX_GROUP_HISTORY:
                 hist[:] = hist[-self._MAX_GROUP_HISTORY:]
-            # 发轻量通知让 core 更新 session（不计消息数，避免触发 AI 处理）
             try:
                 notify_req = JsonRpcRequest(
                     id=self._next_id(),
@@ -708,27 +727,22 @@ class FeishuCoreWSClient:
             },
         )
 
-        future = asyncio.Future()
-        req_id = str(req.id)
-        self._pending_responses[req_id] = future
-        self._pending_message_ids[req_id] = incoming.message_id
-
-        try:
-            await self._ws.send(json.dumps(req.to_dict()))
-        except websockets.exceptions.ConnectionClosedError:
-            # 连接在发送时断了，重连后重试一次
-            logger.warning("[FeishuCore] send failed, reconnecting...")
-            await self._reconnect()
-            self._pending_responses[req_id] = future
-            self._pending_message_ids[req_id] = incoming.message_id
-            await self._ws.send(json.dumps(req.to_dict()))
-
-        try:
-            result = await asyncio.wait_for(future, timeout=30)
-        except asyncio.TimeoutError:
-            logger.warning("[FeishuCore] response timeout")
-            result = {}
-        return result or {}
+        # 最多重试 2 次
+        for attempt in range(2):
+            try:
+                return await self._do_send(req, incoming)
+            except websockets.exceptions.ConnectionClosedError:
+                if attempt == 0:
+                    logger.warning("[FeishuCore] connection dead, reconnecting...")
+                    try:
+                        await self._reconnect()
+                    except Exception:
+                        logger.exception("[FeishuCore] reconnect failed")
+                        raise
+                else:
+                    logger.error("[FeishuCore] send failed after reconnect")
+                    raise
+        return {}
 
     async def _resolve_media_markdown(self, msg: Any) -> str | None:
         """解析消息中的媒体（图片/文件）为 markdown 格式。
