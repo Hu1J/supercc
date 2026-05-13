@@ -224,6 +224,14 @@ class SessionManager:
                     (datetime.now(_CST).isoformat(), cost, message_increment, session_id),
                 )
 
+    def update_sdk_session_id(self, session_id: str, sdk_session_id: str):
+        """更新 SDK 会话 ID。"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE sessions SET sdk_session_id = ? WHERE session_id = ?",
+                (sdk_session_id, session_id),
+            )
+
     def delete_session(self, session_id: str):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))

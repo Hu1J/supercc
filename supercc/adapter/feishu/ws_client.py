@@ -280,7 +280,9 @@ class FeishuWSClient:
                     loop.run_until_complete(self._on_message(incoming))
                     loop.close()
                     return
-                asyncio.ensure_future(self._on_message(incoming))
+                coro = self._on_message(incoming)
+                if coro is not None:
+                    asyncio.ensure_future(coro)
             except Exception as e:
                 logger.exception(f"Error handling Feishu message: {e}")
 

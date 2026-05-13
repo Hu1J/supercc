@@ -145,7 +145,7 @@ class FeishuCoreWSClient:
         self._running = False
         if self._ws:
             try:
-                self._ws.close()
+                await self._ws.close()
             except Exception:
                 pass
         self._ws = None
@@ -215,6 +215,12 @@ class FeishuCoreWSClient:
                     params["content"] = content + mention_tag
 
             await self._render_and_send(params)
+
+            # session 切换通知（在 AI 响应后追加提示）
+            session_info = extra.get("session_info", "")
+            if session_info:
+                chat_id = params.get("chat_id", "")
+                await self._safe_send(chat_id, msg_id, session_info)
         elif method == Event.STREAM_CHUNK:
             # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)

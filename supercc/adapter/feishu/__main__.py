@@ -11,7 +11,6 @@ import asyncio
 import logging
 import os
 import sys
-import threading
 from pathlib import Path
 
 # 将项目根目录加入 sys.path（确保能 import supercc）
@@ -23,7 +22,7 @@ from supercc.config import init_config, get_config
 from supercc.adapter.feishu.client import FeishuClient
 from supercc.adapter.feishu.ws_client import FeishuWSClient
 from supercc.adapter.feishu.core_client import FeishuCoreWSClient
-from supercc.main import ColoredFormatter
+from supercc.main import ColoredFormatter, PlainFormatter
 
 # 统一日志格式（与 core 保持一致）
 _root_handler = logging.StreamHandler()
@@ -31,6 +30,18 @@ _root_handler.setFormatter(ColoredFormatter())
 logging.root.handlers = [_root_handler]
 logging.root.setLevel(logging.INFO)
 logger = logging.getLogger("feishu")
+
+
+def _setup_file_logging(data_dir: str) -> None:
+    """Add file handler to root logger so feishu plugin logs also go to supercc.log."""
+    log_file = os.path.join(data_dir, "supercc.log")
+    try:
+        fh = logging.FileHandler(log_file, mode="a")
+        fh.setFormatter(PlainFormatter())
+        logging.root.addHandler(fh)
+        logger.debug("File logging added: %s", log_file)
+    except Exception as e:
+        logger.warning("Failed to add file logging: %s", e)
 
 
 async def main():
@@ -44,10 +55,13 @@ async def main():
 
     config = init_config(config_path)
 
+    # 添加文件日志（写入 supercc.log）
+    _setup_file_logging(data_dir)
+
     # 从 config 读取 core 端口
     core_port = config.core.port
     core_url = f"ws://127.0.0.1:{core_port}"
-    logger.info(f"[feishu] Connecting to core at {core_url}")
+    logger.info(f"Connecting to core at {core_url}")
 
     feishu = FeishuClient(
         app_id=config.channels.feishu.app_id,
@@ -65,32 +79,21 @@ async def main():
         allowed_users=config.channels.feishu.allowed_users,
     )
 
-    def on_message(msg):
-        """同步入口：lark SDK 调用时不 await，自己调度 task。"""
-        async def _run():
-            logger.info("[feishu] on_message _run start")
-            try:
-                await core_client.send_message(msg)
-            except BaseException as e:
-                logger.warning(f"[feishu] send_message raised: {type(e).__name__}: {e}")
-            finally:
-                logger.info("[feishu] on_message _run done")
+    # 连接到 Core（在主事件循环中创建 WS 连接）
+    await core_client.connect()
+    main_loop = asyncio.get_running_loop()
+    logger.info("Connected to core")
 
+    # on_message 回调在 lark-oapi 的 loop 中被调用，
+    # 需要用 run_coroutine_threadsafe 桥接到主事件循环
+    async def on_message(msg):
         try:
-            task = asyncio.create_task(_run())
-        except Exception as e:
-            logger.error(f"[feishu] create_task failed: {e}")
-            return
-
-        def _done(t):
-            logger.info("[feishu] _done called")
-            try:
-                t.result()
-            except BaseException as e:
-                logger.warning(f"[feishu] _done unhandled: {type(e).__name__}: {e}")
-
-        task.add_done_callback(_done)
-        return None
+            fut = asyncio.run_coroutine_threadsafe(
+                core_client.send_message(msg), main_loop
+            )
+            await asyncio.wrap_future(fut)
+        except BaseException:
+            logger.exception("error in on_message")
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,
@@ -102,21 +105,9 @@ async def main():
         config_path=config_path,
     )
 
-    # 连接到 Core
-    await core_client.connect()
-    logger.info("[feishu] Connected to core")
-
-    # 启动 WS 接收飞书消息（lark SDK 内部调用 asyncio.run()，必须放独立线程）
-    _ws_thread = threading.Thread(target=ws_client.start, daemon=True, name="FeishuWS")
-    _ws_thread.start()
-    logger.info("[feishu] Feishu WebSocket thread started")
-
-    # 保持 main() 活跃直到被中断
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        pass
+    # 启动 WS 接收飞书消息（lark-oapi 用自己的 loop 阻塞）
+    # 放到线程中执行，避免阻塞主事件循环
+    await asyncio.to_thread(ws_client.start)
 
 
 if __name__ == "__main__":

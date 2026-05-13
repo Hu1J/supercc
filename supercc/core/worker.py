@@ -191,6 +191,7 @@ class WorkerPool:
         key: SessionKey,
         session_id: str,
         prompt: str,
+        system_prompt_append: str | None = None,
         cli_path: str = "claude",
         approved_dir: str = "",
         on_stream: Callable[[Any], Awaitable[None]] | None = None,
@@ -211,6 +212,7 @@ class WorkerPool:
             # SDK session_id 必须是 UUID 或 None（自动生成），不能用数据库 session_id
             resume = worker._sdk_session_id if worker._sdk_session_id else None
             worker.integration._init_options(
+                system_prompt_append=system_prompt_append,
                 continue_conversation=not worker._is_first_session,
                 channel=key.platform,
                 session_id=None,
@@ -226,7 +228,7 @@ class WorkerPool:
                 worker._sdk_session_id = sdk_sid
             if worker._is_first_session:
                 worker._is_first_session = False
-            return result, cost
+            return result, cost, sdk_sid
         finally:
             worker.state = WorkerState.IDLE
             worker._current_task = None
