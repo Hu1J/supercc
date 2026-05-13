@@ -16,6 +16,7 @@ from supercc.adapter.feishu.core_protocol import incoming_to_inbound
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter, should_use_card
 from supercc.adapter.feishu.format.questionnaire_card import format_questionnaire_card
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+from dataclasses import replace as dataclass_replace
 
 logger = logging.getLogger(__name__)
 

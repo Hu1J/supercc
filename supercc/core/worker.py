@@ -200,13 +200,22 @@ class WorkerPool:
 
         每个消息创建独立 asyncio.Task，支持并发。
         Worker 永久绑定 key，同一 key 的消息串行处理。
-        复用 worker.integration（已由 acquire 初始化）。
+        复用 worker.integration（由 acquire 初始化）。
         """
         worker = await self.acquire(key, session_id, cli_path, approved_dir)
         async with worker._lock:
             worker.state = WorkerState.BUSY
 
         try:
+            # _init_options 必须在 query 前调用，否则 crash
+            resume = worker._sdk_session_id if worker._sdk_session_id else None
+            worker.integration._init_options(
+                continue_conversation=not worker._is_first_session,
+                channel=key.platform,
+                session_id=session_id,
+                resume=resume,
+            )
+
             task = asyncio.create_task(
                 worker.integration.query(prompt=prompt, on_stream=on_stream)
             )

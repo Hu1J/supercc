@@ -136,6 +136,14 @@ class CoreExecutor:
         """
         key = inbound.session_key
 
+        # ── MCP 工具上下文初始化（memory_tools 等依赖此获取用户身份）──────────
+        from supercc.claude.message_context import set_current_context
+        set_current_context(
+            user_open_id=inbound.user_open_id or "",
+            chat_id=key.chat_id,
+            platform=key.platform,
+        )
+
         # ── 安全检查 ───────────────────────────────────────────────────────
 
         # 1) Authenticator: P2P 白名单检查（按 platform 查找 allowed_users）
