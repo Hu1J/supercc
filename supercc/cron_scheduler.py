@@ -926,14 +926,14 @@ class CronScheduler:
         self._stop.set()
         if self._task is None:
             return
-        # If called from a signal handler while _run() executes in a thread,
-        # use call_soon_threadsafe for thread-safe cancellation.
+        # If called from a signal handler while _run() is executing,
+        # use call_soon_threadsafe for safe cancellation from signal context.
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.call_soon_threadsafe(self._task.cancel)
         elif not self._task.done():
             self._task.cancel()
-                self._task = None
+        self._task = None
         logger.info("CronScheduler stopped")
 
     async def _run(self):
