@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # 将项目根目录加入 sys.path（确保能 import supercc）
@@ -93,7 +94,7 @@ async def main():
             )
             await asyncio.wrap_future(fut)
         except BaseException:
-            logger.exception("error in on_message")
+            logger.error("error in on_message\n%s", traceback.format_exc())
 
     ws_client = FeishuWSClient(
         app_id=config.channels.feishu.app_id,
