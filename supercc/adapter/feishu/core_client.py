@@ -644,6 +644,10 @@ class FeishuCoreWSClient:
             self._pending_message_ids[req_id] = incoming.message_id
             await self._ws.send(json.dumps(req.to_dict()))
 
+        if future is None:
+            logger.warning("[FeishuCore] future is None, skipping await")
+            return {}
+
         try:
             result = await asyncio.wait_for(future, timeout=30)
         except asyncio.TimeoutError:
