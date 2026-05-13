@@ -201,6 +201,8 @@ class WeComCoreWSClient:
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
+        # 媒体缓存：message_id → 本地保存路径（避免重复下载）
+        self._media_cache: dict[str, str] = {}
 
         # WeCom 格式化管线
         self.formatter = WeComReplyFormatter()
@@ -392,6 +394,29 @@ class WeComCoreWSClient:
 
     async def send_message(self, msg: dict) -> dict:
         """将 WeCom 消息转发给核心，并等待响应。"""
+        # 图片/文件：解析 url+aeskey，下载到本地后转为 markdown 路径
+        # 直接修改 msg 的 content，这样 incoming_to_inbound 会拿到已解析的内容
+        msg_type = msg.get("msgtype", "text")
+        if msg_type == "image":
+            img = msg.get("image", {})
+            url = img.get("url", "")
+            aeskey = img.get("aeskey", "")
+            msg_id = msg.get("msgid", "")
+            sender = msg.get("from", {}).get("userid", "")
+            resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "image", sender)
+            if resolved:
+                msg["_resolved_content"] = resolved
+        elif msg_type == "file":
+            file_info = msg.get("file", {})
+            url = file_info.get("url", "")
+            aeskey = file_info.get("aeskey", "")
+            fname = file_info.get("name", "file")
+            msg_id = msg.get("msgid", "")
+            sender = msg.get("from", {}).get("userid", "")
+            resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "file", sender, fname)
+            if resolved:
+                msg["_resolved_content"] = resolved
+
         inbound = incoming_to_inbound(msg, bot_id=self.bot_id, project_path=self.project_path)
 
         # 群聊权限校验
@@ -453,6 +478,67 @@ class WeComCoreWSClient:
         result = await future
         return result or {}
 
+    async def _download_and_resolve_media(
+        self, msg_id: str, url: str, aeskey: str, msg_type: str, sender: str, file_name: str = ""
+    ) -> str | None:
+        """下载 WeCom 图片/文件，保存到本地，返回 markdown 格式字符串。
+
+        使用 _media_cache 避免重复下载（同一个 message_id 只下载一次）。
+        """
+        if not msg_id or not url:
+            return None
+
+        # 命中缓存
+        if msg_id in self._media_cache:
+            cached = self._media_cache[msg_id]
+            if msg_type == "image":
+                return f"{sender}: ![image]({cached})"
+            else:
+                return f"{sender}: [File: {cached}] ({file_name})"
+
+        try:
+            import tempfile
+            import os
+
+            data, _ = await self.wecom.download_file(url, aeskey or None)
+
+            # 保存到 temp 目录
+            tmp_dir = os.path.join(tempfile.gettempdir(), "supercc-wecom-media")
+            os.makedirs(tmp_dir, exist_ok=True)
+
+            if msg_type == "image":
+                ext = ".png"
+                save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
+                with open(save_path, "wb") as f:
+                    f.write(data)
+            else:
+                # file: 保留原扩展名
+                if file_name:
+                    _, ext = os.path.splitext(file_name)
+                    if not ext or ext == ".":
+                        ext = ".bin"
+                else:
+                    ext = ".bin"
+                save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
+                with open(save_path, "wb") as f:
+                    f.write(data)
+
+            self._media_cache[msg_id] = save_path
+            logger.info(f"[WeComCore] downloaded {msg_type} to {save_path}")
+
+            if msg_type == "image":
+                return f"{sender}: ![image]({save_path})"
+            else:
+                return f"{sender}: [File: {save_path}] ({file_name})"
+
+        except Exception as e:
+            logger.warning(f"[WeComCore] download media failed for {msg_id}: {e}")
+            # 下载失败时降级为占位符
+            if msg_type == "image":
+                return f"{sender}: [图片]"
+            else:
+                return f"{sender}: [文件: {file_name}]"
+
     async def _enrich_group_context(self, inbound, msg: dict):
         """为群聊消息收集并注入上下文：历史、mention 规则。
 
@@ -465,28 +551,52 @@ class WeComCoreWSClient:
         chat_id = inbound.session_key.chat_id
         extra = inbound.extra
 
-        # 群历史（从内存）
+        # 群聊历史（从内存）
         # WeCom 存储的是原始 WS 消息字典，需要按 msgtype 提取内容
+        # 图片/文件有 url+aeskey，可下载到本地后转为 markdown 路径
         hist = self._group_history.get(chat_id, [])
         if hist:
             history_lines = []
             for h in hist[-10:]:
                 sender = h.get("from", {}).get("userid", "?")
                 msg_type = h.get("msgtype", "text")
-                # 提取内容：text 用 text.content，image/file/voice 用占位符
+                msg_id = h.get("msgid", "")
+
+                # 提取内容：text 直接用，image/file 下载后转 markdown
                 if msg_type == "text":
                     content = h.get("text", {}).get("content", "")
+                    if content:
+                        history_lines.append(f"{sender}: {content[:200]}")
+
                 elif msg_type == "image":
-                    content = "[图片]"
+                    img = h.get("image", {})
+                    url = img.get("url", "")
+                    aeskey = img.get("aeskey", "")
+                    resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "image", sender)
+                    if resolved:
+                        history_lines.append(resolved)
+
                 elif msg_type == "file":
-                    content = "[文件]"
+                    file_info = h.get("file", {})
+                    url = file_info.get("url", "")
+                    aeskey = file_info.get("aeskey", "")
+                    fname = file_info.get("name", "file")
+                    resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "file", sender, fname)
+                    if resolved:
+                        history_lines.append(resolved)
+
                 elif msg_type == "voice":
-                    content = "[语音]"
+                    vc = h.get("voice", {})
+                    content = vc.get("content", "") if isinstance(vc, dict) else ""
+                    if content:
+                        history_lines.append(f"{sender}: {content[:200]}")
+
                 else:
                     content = h.get("content", "") or str(h.get("body", {}))
-                if content:
-                    history_lines.append(f"{sender}: {content[:200]}")
-            extra["group_history"] = history_lines
+                    if content:
+                        history_lines.append(f"{sender}: {content[:200]}")
+            if history_lines:
+                extra["group_history"] = history_lines
 
         # mention 规则：企业微信使用 @userid 格式
         sender_open_id = inbound.user_open_id or ""

@@ -35,22 +35,37 @@ def incoming_to_inbound(
         "chattype": "single" | "group",
         "chatid": "oc_xxx",
         "from": { "userid": "ou_xxx" },
-        "msgtype": "text" | "image" | "file",
+        "msgtype": "text" | "image" | "file" | "voice" | "mixed",
         "text": { "content": "..." },
-        "image": { "media_id": "..." },
+        "image": { "url": "https://...", "aeskey": "..." },
+        "file": { "url": "https://...", "aeskey": "...", "name": "xxx.pdf", "size": 123 },
         ...
     }
     """
     msg_type = msg.get("msgtype", "text")
     content = ""
+    extra_fields = {}
+
+    # _resolved_content：由 send_message 在解析媒体后设置，优先使用
+    resolved_content = msg.get("_resolved_content", "")
+
     if msg_type == "text":
         content = msg.get("text", {}).get("content", "")
     elif msg_type == "image":
-        content = "[图片]"
+        content = resolved_content if resolved_content else "[图片]"
+        img = msg.get("image", {})
+        extra_fields["image_url"] = img.get("url", "")
+        extra_fields["image_aeskey"] = img.get("aeskey", "")
     elif msg_type == "file":
-        content = "[文件]"
+        file_info = msg.get("file", {})
+        content = resolved_content if resolved_content else f"[文件: {file_info.get('name', '未知文件')}]"
+        extra_fields["file_url"] = file_info.get("url", "")
+        extra_fields["file_aeskey"] = file_info.get("aeskey", "")
+        extra_fields["file_name"] = file_info.get("name", "")
     elif msg_type == "voice":
         content = "[语音]"
+    elif msg_type == "mixed":
+        content = "[混合消息]"
 
     key = SessionKey(
         bot_id=bot_id,
@@ -80,13 +95,15 @@ def incoming_to_inbound(
         extra={
             "raw": str(msg),
             "is_group_chat": msg.get("chattype") == "group",
-            "mention_bot": _check_mention_bot(msg),  # ← 改为函数调用
-            "mention_ids": msg.get("mentioned_list", []),  # ← 从 [] 改为 msg.get()
+            "mention_bot": _check_mention_bot(msg),
+            "mention_ids": msg.get("mentioned_list", []),
             "group_name": "",
             "chat_type": msg.get("chattype", "single"),
             # 企业微信特有字段
             "room_id": msg.get("roomid", ""),
             "sender_id": msg.get("from", {}).get("userid", ""),
+            # 媒体下载字段（image/file 消息有 url + aeskey）
+            **extra_fields,
         },
     )
 
