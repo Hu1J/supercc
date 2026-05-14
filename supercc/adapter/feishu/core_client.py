@@ -117,6 +117,8 @@ class FeishuCoreWSClient:
         self._id_counter = 0
         # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
+        # Tracks message_ids whose RESPONSE Event has already been rendered (via streaming path)
+        self._response_rendered: set[str] = set()
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[IncomingMessage]] = {}
         self._MAX_GROUP_HISTORY = 10
@@ -269,6 +271,8 @@ class FeishuCoreWSClient:
                     params["content"] = content + mention_tag
 
             await self._render_and_send(params)
+            if msg_id:
+                self._response_rendered.add(msg_id)
 
             # session 切换通知（在 AI 响应后追加提示）
             session_info = extra.get("session_info", "")
@@ -808,7 +812,27 @@ class FeishuCoreWSClient:
         # 最多重试 2 次（ConnectionClosedError、TypeError 均重试）
         for attempt in range(2):
             try:
-                return await self._do_send(req, incoming)
+                result = await self._do_send(req, incoming)
+                # 同步响应（如命令结果、/restart、/update、/switch）
+                # 不走 Event.RESPONSE，直接在 JSON-RPC Response 中返回
+                if result:
+                    result_event = result.get("event", "")
+                    result_content = result.get("content", "")
+                    if result_event in ("restart", "update", "switch"):
+                        # TODO: 实现 restart/update/switch 的 plugin 侧处理
+                        logger.info("[command] /%s received (not yet implemented in plugin)", result_event)
+                    elif result_content:
+                        # 跳过已通过 RESPONSE Event 发送的（AI 流式响应走了 streaming path）
+                        msg_id = result.get("message_id", incoming.message_id)
+                        if msg_id in self._response_rendered:
+                            return result
+                        # 普通命令结果（/stop、/help、/status 等）：渲染并发送
+                        await self._safe_send(
+                            incoming.chat_id,
+                            result.get("message_id", incoming.message_id),
+                            self.formatter.format_text(result_content),
+                        )
+                return result
             except websockets.exceptions.ConnectionClosedError:
                 if attempt == 0:
                     logger.warning("connection dead, reconnecting...")

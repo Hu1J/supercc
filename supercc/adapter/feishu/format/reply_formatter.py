@@ -168,7 +168,7 @@ class ReplyFormatter:
             "EnterPlanMode": "🎯",
             "ExitPlanMode": "🎯",
             "AskUserQuestion": "🎯",
-            "Agent": "🧠",
+            "Agent": "🔀",
             "mcp__codex__codex": "⚡",
         }
 

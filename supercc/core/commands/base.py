@@ -21,6 +21,8 @@ class CommandResult:
     """命令执行结果。plugin 据此决定渲染文本还是卡片。"""
     content: str = ""
     card: Optional[CommandCard] = None
+    extra: dict = field(default_factory=dict)
+    event: str = "response"
 
 
 class CommandHandler(ABC):

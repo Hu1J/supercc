@@ -544,11 +544,20 @@ class CoreExecutor:
             except Exception as e:
                 logger.warning(f"[Background] memory review failed: {e}")
 
-        # ── 技能自进化（有变更时才推最终结果，不推中间流）───────────────
+        # ── 技能自进化（检查 skills git 变更，有变更才通知）───────────
         skill_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "skill")
         if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
             try:
+                from pathlib import Path
+                from supercc.evolve.skill_nudge import _get_skill_git_state
+
                 worker.integration_skill._init_options(channel=key.platform)
+
+                skills_dir = Path(self._data_dir) / "skills"
+
+                # 快照当前的 skills git 状态（执行前）
+                before_state = _get_skill_git_state(skills_dir)
+
                 skill_prompt = (
                     f"你在本次对话中使用了 {total_tool_count} 个工具调用。\n"
                     "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n"
@@ -560,22 +569,42 @@ class CoreExecutor:
                 async def skill_stream_callback(msg: Any) -> None:
                     pass
 
-                skill_result = await worker.integration_skill.query(
+                await worker.integration_skill.query(
                     prompt=skill_prompt,
                     on_stream=skill_stream_callback,
                 )
-                # skill_result = (result_text, session_id, cost)
-                skill_text = skill_result[0] if skill_result else ""
-                if skill_text and skill_enabled:
-                    result_msg = OutboundMessage(
-                        event=Event.RESPONSE,
-                        session_key=key,
-                        message_id=message_id,
-                        content=skill_text,
-                        message_type=MessageType.TEXT,
-                        extra={},
+
+                # 检查 skills git 状态是否有变更
+                from supercc.evolve.skill_nudge import _detect_skill_changes
+
+                if skill_enabled:
+                    # 把 push_fn 包装为 (chat_id, text) 签名供 _detect_skill_changes 调用
+                    async def _send_skill_notify(cid: str, text: str) -> None:
+                        result_msg = OutboundMessage(
+                            event=Event.RESPONSE,
+                            session_key=key,
+                            message_id=message_id,
+                            content=text,
+                            message_type=MessageType.TEXT,
+                            extra={},
+                        )
+                        await push_fn(result_msg)
+
+                    await _detect_skill_changes(
+                        before_state=before_state,
+                        skills_dir=skills_dir,
+                        chat_id=key.chat_id,
+                        send_to_feishu=_send_skill_notify,
+                        notify=True,
                     )
-                    await push_fn(result_msg)
+                else:
+                    # skill=OFF 时只检测不推送
+                    await _detect_skill_changes(
+                        before_state=before_state,
+                        skills_dir=skills_dir,
+                        notify=False,
+                    )
+
                 logger.info(f"[Background] skill review done for {key} ({total_tool_count} tool calls)")
             except Exception as e:
                 logger.warning(f"[Background] skill review failed: {e}")
