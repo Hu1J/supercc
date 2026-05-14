@@ -96,6 +96,6 @@ class ModelHandler(CommandHandler):
             f"## 🤖 模型配置\n"
             f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
             f"{table_content}\n\n"
-            f"💡 切换模型：`/model switch <provider_id> <model_id>`"
+            f"💡 切换模型：`/model switch <供应商> <模型ID>` 或者对我说：帮我切换到<供应商>的<模型ID>"
         )
         return CommandResult(content=content)
