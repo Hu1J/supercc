@@ -324,9 +324,11 @@ class WeComCoreWSClient:
 
     async def _handle_tool_call(self, params: dict):
         """tool_call 事件：格式化工具结果并发送给用户。"""
-        tool_name = params.get("tool_name", "")
-        tool_input = params.get("tool_input", "")
-        tool_call_id = params.get("tool_call_id", "")
+        extra = params.get("extra", {})
+        tool_name = extra.get("tool_name", "")
+        tool_input_raw = extra.get("tool_input", "")
+        tool_input = json.dumps(tool_input_raw) if isinstance(tool_input_raw, dict) else str(tool_input_raw or "")
+        tool_call_id = params.get("tool_call_id", "") or extra.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
 

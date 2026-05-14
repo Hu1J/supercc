@@ -210,7 +210,7 @@ class FeishuCoreWSClient:
                 await ws.send(json.dumps(
                     {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}}
                 ))
-                await asyncio.wait_for(future, timeout=5)
+                await asyncio.wait_for(future, timeout=30)
             except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
                 logger.warning("ping timeout, reconnecting...")
                 self._pending_responses.pop(req_id, None)
@@ -237,10 +237,11 @@ class FeishuCoreWSClient:
                     await acc.flush()
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
-                if data.get("error"):
-                    fut.set_result(data)
-                else:
-                    fut.set_result(data.get("result"))
+                if not fut.done():
+                    if data.get("error"):
+                        fut.set_result(data)
+                    else:
+                        fut.set_result(data.get("result"))
             return
 
         # Event notification
@@ -367,9 +368,10 @@ class FeishuCoreWSClient:
         - _AskUserQuestionMarker → 问卷卡片
         - 其他 → backtick 格式 safe send
         """
-        tool_name = params.get("tool_name", "")
-        tool_input_raw = params.get("tool_input", {})
-        tool_call_id = params.get("tool_call_id", "")
+        extra = params.get("extra", {})
+        tool_name = extra.get("tool_name", "")
+        tool_input_raw = extra.get("tool_input", {})
+        tool_call_id = params.get("tool_call_id", "") or extra.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
 

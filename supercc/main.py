@@ -518,6 +518,8 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
         remove_pid(pid_file)
         lock.release()
         logger.info("SuperCC stopped gracefully")
+        import os as _os
+        _os._exit(0)
 
 
 def start_core_only(config_path: str, data_dir: str):
