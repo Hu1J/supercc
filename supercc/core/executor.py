@@ -276,6 +276,7 @@ class CoreExecutor:
                     cli_path=cli_path,
                     approved_dir=key.project_path,
                     on_stream=_stream_callback,
+                    sdk_session_id=session.sdk_session_id,
                 )
                 new_sdk_sid = sdk_sid
                 if result and result.strip():

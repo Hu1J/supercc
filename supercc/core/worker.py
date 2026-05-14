@@ -62,6 +62,7 @@ class Worker:
     def reset_session(self) -> None:
         """重置会话标志，下次 query 强制新建 Claude SDK session。"""
         self._is_first_session = True
+        self._sdk_session_id = None
         self.tool_call_count = 0
         for integ in (self.integration, self.integration_mem, self.integration_skill):
             if integ is not None:
@@ -195,6 +196,7 @@ class WorkerPool:
         cli_path: str = "claude",
         approved_dir: str = "",
         on_stream: Callable[[Any], Awaitable[None]] | None = None,
+        sdk_session_id: str | None = None,
     ) -> tuple[str, float]:
         """
         为单个消息执行 Claude 查询。
@@ -202,18 +204,25 @@ class WorkerPool:
         每个消息创建独立 asyncio.Task，支持并发。
         Worker 永久绑定 key，同一 key 的消息串行处理。
         复用 worker.integration（由 acquire 初始化）。
+        sdk_session_id: 从 sessions DB 读取的 SDK session ID，首次 query 时用于 resume。
         """
         worker = await self.acquire(key, session_id, cli_path, approved_dir)
         async with worker._lock:
             worker.state = WorkerState.BUSY
 
         try:
+            # 首次 query（restart 后）：从 DB 恢复 SDK session
+            # 但 /new 后 _new_session_requested 为 True，此时不恢复
+            if (worker._sdk_session_id is None and sdk_session_id
+                    and not getattr(worker.integration, '_new_session_requested', False)):
+                worker._sdk_session_id = sdk_session_id
+
             # _init_options 必须在 query 前调用，否则 crash
             # SDK session_id 必须是 UUID 或 None（自动生成），不能用数据库 session_id
             resume = worker._sdk_session_id if worker._sdk_session_id else None
             worker.integration._init_options(
                 system_prompt_append=system_prompt_append,
-                continue_conversation=not worker._is_first_session,
+                continue_conversation=False,
                 channel=key.platform,
                 session_id=None,
                 resume=resume,
