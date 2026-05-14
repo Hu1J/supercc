@@ -150,10 +150,12 @@ class ClaudeIntegration:
             logger.debug("Codex MCP server was not added to Claude options", exc_info=True)
 
         # memory_only 模式：禁用所有内置工具，仅允许 MCP 工具（记忆相关）
+        # Agent（sub-agent）也禁用，防止绕过限制启动独立执行环境
         _DISABLED_BUILTIN_TOOLS = [
             "Read", "Write", "Edit", "Bash", "Grep",
             "NotRecommend", "WebSearch", "WebFetch",
             "NotebookEdit", "TaskStart", "TaskComplete",
+            "Agent",
         ]
 
         # 从全局 model.json 获取当前项目的激活模型 env

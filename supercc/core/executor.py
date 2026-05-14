@@ -521,20 +521,23 @@ class CoreExecutor:
                 )
 
                 async def mem_stream_callback(msg: Any) -> None:
-                    # 日志打印 AI 说的内容
-                    if msg.content:
-                        logger.info("[Background] memory review: %s", msg.content[:500])
+                    # mem_enabled=False 时完全静默，不打印不推送
+                    if not mem_enabled:
+                        return
                     # 只推 memory MCP 工具调用（卡片），不推文本流
-                    if msg.tool_name and push_fn and mem_enabled:
-                        tool_msg = OutboundMessage(
-                            event=Event.TOOL_CALL,
-                            session_key=key,
-                            message_id=message_id,
-                            content=f"[{msg.tool_name}]",
-                            message_type=MessageType.TOOL_CALL,
-                            extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                        )
-                        await push_fn(tool_msg)
+                    # 白名单：只有 mcp__SuperCC__Memory* 才推送
+                    if msg.tool_name and msg.tool_name.startswith("mcp__SuperCC__Memory"):
+                        logger.info("[Background] memory review tool: %s", msg.tool_name)
+                        if push_fn:
+                            tool_msg = OutboundMessage(
+                                event=Event.TOOL_CALL,
+                                session_key=key,
+                                message_id=message_id,
+                                content=f"[{msg.tool_name}]",
+                                message_type=MessageType.TOOL_CALL,
+                                extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
+                            )
+                            await push_fn(tool_msg)
 
                 await worker.integration_mem.query(
                     prompt=memory_prompt,
@@ -565,7 +568,7 @@ class CoreExecutor:
                     "不需要问我任何问题。"
                 )
 
-                # 空的 stream callback：不推送中间过程
+                # 空的 stream callback：技能自进化不推送中间过程，只等最终通知
                 async def skill_stream_callback(msg: Any) -> None:
                     pass
 

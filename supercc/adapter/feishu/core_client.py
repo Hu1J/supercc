@@ -581,26 +581,8 @@ class FeishuCoreWSClient:
 
         if is_group:
             entry = self._groups.get(key.chat_id)
-            if entry is None:
-                # 未知群：默认拒绝
-                reason = "该群未配置使用权限，请联系管理员。"
-                try:
-                    card = {
-                        "schema": "2.0",
-                        "config": {"wide_screen_mode": True},
-                        "header": {
-                            "title": {"tag": "plain_text", "content": "⛔ 无访问权限"},
-                        },
-                        "body": {
-                            "elements": [
-                                {"tag": "markdown", "content": reason},
-                            ]
-                        },
-                    }
-                    await self.feishu.send_card(key.chat_id, card)
-                except Exception:
-                    pass
-                return False
+            # 未知群（entry is None）：使用 GroupConfigEntry 的默认行为（enabled=True, require_mention=True, allow_from=[]）
+            # 等同于旧架构：无须注册，拉进群就能用（但仍需要 @CC）
 
             if not getattr(entry, "enabled", True):
                 reason = "该群已被禁用。"
