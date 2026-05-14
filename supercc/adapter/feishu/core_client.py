@@ -117,8 +117,8 @@ class FeishuCoreWSClient:
         self._id_counter = 0
         # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
-        # Tracks message_ids whose RESPONSE Event has already been rendered (via streaming path)
-        self._response_rendered: set[str] = set()
+        # Tracks message_ids that received STREAM_CHUNK (distinguishes AI queries from commands)
+        self._streamed_msg_ids: set[str] = set()
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[IncomingMessage]] = {}
         self._MAX_GROUP_HISTORY = 10
@@ -271,8 +271,6 @@ class FeishuCoreWSClient:
                     params["content"] = content + mention_tag
 
             await self._render_and_send(params)
-            if msg_id:
-                self._response_rendered.add(msg_id)
 
             # session 切换通知（在 AI 响应后追加提示）
             session_info = extra.get("session_info", "")
@@ -314,6 +312,7 @@ class FeishuCoreWSClient:
 
         if message_id and message_id in self._accumulator_by_msg_id:
             # 有 accumulator → 流式 chunks 或 RESPONSE flush 信号
+            self._streamed_msg_ids.add(message_id)
             acc = self._accumulator_by_msg_id[message_id]
             if params.get("event") == Event.RESPONSE:
                 # RESPONSE = 流式结束信号：flush 并清理 accumulator
@@ -324,6 +323,7 @@ class FeishuCoreWSClient:
                 await acc.add_text(content)
         elif message_id:
             # 首次收到该 message_id 的 chunk，创建 accumulator
+            self._streamed_msg_ids.add(message_id)
             self._accumulator_by_msg_id[message_id] = StreamAccumulator(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -822,10 +822,13 @@ class FeishuCoreWSClient:
                         # TODO: 实现 restart/update/switch 的 plugin 侧处理
                         logger.info("[command] /%s received (not yet implemented in plugin)", result_event)
                     elif result_content:
-                        # 跳过已通过 RESPONSE Event 发送的（AI 流式响应走了 streaming path）
+                        # AI 流式响应（有 STREAM_CHUNK）已通过 accumulator flush 发送，不走此路
                         msg_id = result.get("message_id", incoming.message_id)
-                        if msg_id in self._response_rendered:
+                        if msg_id in self._streamed_msg_ids:
+                            logger.info("[send_msg] skip %s (streamed)", msg_id)
                             return result
+                        logger.info("[send_msg] send %s event=%s content_len=%d",
+                                     msg_id, result_event, len(result_content))
                         # 普通命令结果（/stop、/help、/status 等）：渲染并发送
                         await self._safe_send(
                             incoming.chat_id,
