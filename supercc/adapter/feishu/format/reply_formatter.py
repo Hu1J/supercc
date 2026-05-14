@@ -168,6 +168,8 @@ class ReplyFormatter:
             "EnterPlanMode": "🎯",
             "ExitPlanMode": "🎯",
             "AskUserQuestion": "🎯",
+            "Agent": "🧠",
+            "mcp__codex__codex": "⚡",
         }
 
     def format_text(self, text: str) -> str:
@@ -253,6 +255,14 @@ class ReplyFormatter:
         # Read → 提取 file_path，用 backtick 包裹
         elif tool_name == "Read":
             return self._format_read_tool(tool_input)
+
+        # Agent (sub-agent) → 展示 description + 摘要
+        elif tool_name == "Agent":
+            return self._format_agent_tool(tool_input)
+
+        # mcp__codex__codex → 展示模型 + 摘要
+        elif tool_name == "mcp__codex__codex":
+            return self._format_codex_tool(tool_input)
 
         # 其他工具 → backtick 格式（原有逻辑）
         icon = self.tool_icons.get(tool_name, "🤖")
@@ -410,6 +420,62 @@ class ReplyFormatter:
             title = f"**Read**"
             path_line = f"`{file_path}`"
         return f"{icon} {title}\n{path_line}"
+
+    def _format_agent_tool(self, tool_input: str) -> str:
+        """Format Agent (sub-agent) tool call for sub-agent execution.
+
+        Shows a concise summary of what the agent was asked to do,
+        without overwhelming the user with raw JSON.
+        """
+        if not tool_input:
+            return "🧠 **Agent**"
+        try:
+            data = json.loads(tool_input)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+
+        description = data.get("description", "")
+        prompt = data.get("prompt", "")
+        icon = self.tool_icons.get("Agent", "🧠")
+
+        if description:
+            header = f"{icon} **Agent** — {description}"
+        else:
+            header = f"{icon} **Agent**"
+
+        if prompt:
+            cleaned = prompt.strip()[:300]
+            if len(prompt) > 300:
+                cleaned += "..."
+            return f"{header}\n`{cleaned}`"
+
+        return header
+
+    def _format_codex_tool(self, tool_input: str) -> str:
+        """Format mcp__codex__codex tool call for Codex CLI execution."""
+        if not tool_input:
+            return "⚡ **Codex**"
+        try:
+            data = json.loads(tool_input)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+
+        prompt = data.get("prompt", tool_input)
+        model = data.get("model", "")
+        icon = self.tool_icons.get("mcp__codex__codex", "⚡")
+
+        if model:
+            header = f"{icon} **Codex** (model: {model})"
+        else:
+            header = f"{icon} **Codex**"
+
+        if prompt:
+            cleaned = prompt.strip()[:300]
+            if len(prompt) > 300:
+                cleaned += "..."
+            return f"{header}\n`{cleaned}`"
+
+        return header
 
     def _format_todowrite_tool(self, tool_input: str) -> str:
         """Format TodoWrite tool call as a markdown table."""

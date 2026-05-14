@@ -229,6 +229,7 @@ class FeishuCoreWSClient:
             if msg_id:
                 try:
                     await self.feishu.add_typing_reaction(msg_id, emoji_type="DONE")
+                    logger.info("[typing] [done] message_id=%s", msg_id)
                 except Exception:
                     pass
                 # Flush and clean up the stream accumulator for this message
@@ -779,6 +780,7 @@ class FeishuCoreWSClient:
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
             await self.feishu.add_typing_reaction(incoming.message_id, emoji_type="OK")
+            logger.info("[typing] [ok] message_id=%s", incoming.message_id)
         except Exception:
             pass  # 失败不影响主流程
 

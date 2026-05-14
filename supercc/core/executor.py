@@ -521,6 +521,9 @@ class CoreExecutor:
                 )
 
                 async def mem_stream_callback(msg: Any) -> None:
+                    # 日志打印 AI 说的内容
+                    if msg.content:
+                        logger.info("[Background] memory review: %s", msg.content[:500])
                     # 只推 memory MCP 工具调用（卡片），不推文本流
                     if msg.tool_name and push_fn and mem_enabled:
                         tool_msg = OutboundMessage(

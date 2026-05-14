@@ -12,6 +12,9 @@ class CommandCard:
     type: str = "markdown"
     data: dict = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        return {"type": self.type, "data": self.data}
+
 
 @dataclass
 class CommandResult:
