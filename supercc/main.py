@@ -404,7 +404,13 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
 
     session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
     worker_pool = WorkerPool()
-    executor = CoreExecutor(session_manager=session_manager, worker_pool=worker_pool)
+    executor = CoreExecutor(
+        session_manager=session_manager,
+        worker_pool=worker_pool,
+        config=config,
+        data_dir=data_dir,
+        config_path=config_path,
+    )
     core_server = WsServer(
         host="127.0.0.1",
         port=core_port,
@@ -573,7 +579,13 @@ def start_core_only(config_path: str, data_dir: str):
 
         session_manager = SessionManager(db_path=DEFAULT_SESSIONS_DB_PATH)
         worker_pool = WorkerPool()
-        executor = CoreExecutor(session_manager=session_manager, worker_pool=worker_pool)
+        executor = CoreExecutor(
+            session_manager=session_manager,
+            worker_pool=worker_pool,
+            config=config,
+            data_dir=data_dir,
+            config_path=config_path,
+        )
         nonlocal core_server
         core_server = WsServer(
             host="127.0.0.1",

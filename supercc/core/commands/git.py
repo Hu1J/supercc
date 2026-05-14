@@ -47,7 +47,6 @@ class GitHandler(CommandHandler):
         if status_output:
             for line in status_output.splitlines():
                 char = line[0] if line[0] != " " else (line[1] if line[1] != " " else "?")
-                color = status_color.get(char, "gray")
                 filename = line[3:]
                 emoji = {"A": "✨", "M": "📄", "D": "🗑", "R": "🔄", "?": "❓"}.get(char, "•")
                 lines.append(f"{emoji} `{filename}`")

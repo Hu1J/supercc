@@ -22,17 +22,21 @@ class CodexHandler(CommandHandler):
         parts = args.strip().split()
         first = parts[0].lower() if parts else "status"
 
+        config = context.get("config")
+        if not config:
+            return CommandResult(content="⚠️ Config 不可用")
+
         if first == "status":
-            status = get_codex_mcp_status(context.get("config"))
+            status = get_codex_mcp_status(config)
             return CommandResult(content=format_codex_status(status))
         if first in ("available", "availability", "ready"):
-            status = get_codex_mcp_status(context.get("config"))
+            status = get_codex_mcp_status(config)
             return CommandResult(content=format_codex_availability(status))
         if first in ("models", "model"):
             return CommandResult(content=format_codex_models())
         if first == "setup":
             from supercc.claude.codex_mcp import ensure_codex_mcp_configured
-            status = ensure_codex_mcp_configured(context.get("config"))
+            status = ensure_codex_mcp_configured(config)
             return CommandResult(content=format_codex_status(status))
         return CommandResult(
             content=(
