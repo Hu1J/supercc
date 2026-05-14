@@ -26,17 +26,21 @@ class CodexHandler(CommandHandler):
         if not config:
             return CommandResult(content="⚠️ Config 不可用")
 
+        codex_cfg = getattr(config, "codex", None)
+        if not codex_cfg:
+            return CommandResult(content="⚠️ Codex 未配置（config 中无 codex 字段）")
+
         if first == "status":
-            status = get_codex_mcp_status(config)
+            status = get_codex_mcp_status(codex_cfg)
             return CommandResult(content=format_codex_status(status))
         if first in ("available", "availability", "ready"):
-            status = get_codex_mcp_status(config)
+            status = get_codex_mcp_status(codex_cfg)
             return CommandResult(content=format_codex_availability(status))
         if first in ("models", "model"):
             return CommandResult(content=format_codex_models())
         if first == "setup":
             from supercc.claude.codex_mcp import ensure_codex_mcp_configured
-            status = ensure_codex_mcp_configured(config)
+            status = ensure_codex_mcp_configured(codex_cfg)
             return CommandResult(content=format_codex_status(status))
         return CommandResult(
             content=(
