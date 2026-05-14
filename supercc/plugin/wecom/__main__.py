@@ -30,17 +30,8 @@ logging.basicConfig(
 logger = logging.getLogger("wecom-plugin")
 
 
-async def main():
-    config_path = os.environ.get("SUPERCC_CONFIG", "")
-    data_dir = os.environ.get("SUPERCC_DATA", "")
-
-    if not config_path:
-        raise RuntimeError("SUPERCC_CONFIG environment variable is required")
-    if not data_dir:
-        raise RuntimeError("SUPERCC_DATA environment variable is required")
-
-    config = init_config(config_path)
-
+async def run_plugin(config, data_dir):
+    """WeCom 插件协程：在同进程 event loop 中运行。"""
     # WebSocket 凭证：优先使用扫码接入获得的 bot_id/secret，
     # 回退到手动输入时的 agent_id/corp_secret（向后兼容）
     ws_bot_id = config.channels.wecom.bot_id or config.channels.wecom.agent_id
@@ -82,8 +73,22 @@ async def main():
     await core_client.connect()
     logger.info("[WeComPlugin] Connected to core")
 
-    # 启动 WS 接收企微消息（阻塞）
-    ws_client.start()
+    # 启动 WS 接收企微消息（放到线程中执行，避免阻塞主事件循环）
+    await asyncio.to_thread(ws_client.start)
+
+
+async def main():
+    """独立进程入口（兼容旧模式）。"""
+    config_path = os.environ.get("SUPERCC_CONFIG", "")
+    data_dir = os.environ.get("SUPERCC_DATA", "")
+
+    if not config_path:
+        raise RuntimeError("SUPERCC_CONFIG environment variable is required")
+    if not data_dir:
+        raise RuntimeError("SUPERCC_DATA environment variable is required")
+
+    config = init_config(config_path)
+    await run_plugin(config, data_dir)
 
 
 if __name__ == "__main__":

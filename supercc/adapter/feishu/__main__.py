@@ -45,17 +45,8 @@ def _setup_file_logging(data_dir: str) -> None:
         logger.warning("Failed to add file logging: %s", e)
 
 
-async def main():
-    config_path = os.environ.get("SUPERCC_CONFIG", "")
-    data_dir = os.environ.get("SUPERCC_DATA", "")
-
-    if not config_path:
-        raise RuntimeError("SUPERCC_CONFIG environment variable is required")
-    if not data_dir:
-        raise RuntimeError("SUPERCC_DATA environment variable is required")
-
-    config = init_config(config_path)
-
+async def run_plugin(config, data_dir):
+    """Feishu 插件协程：在同进程 event loop 中运行。"""
     # 添加文件日志（写入 supercc.log）
     _setup_file_logging(data_dir)
 
@@ -103,12 +94,28 @@ async def main():
         bot_open_id=config.channels.feishu.bot_open_id,
         domain=config.channels.feishu.domain,
         on_message=on_message,
-        config_path=config_path,
+        config_path=config.get("config_path", "") if hasattr(config, "get") else "",
     )
 
     # 启动 WS 接收飞书消息（lark-oapi 用自己的 loop 阻塞）
     # 放到线程中执行，避免阻塞主事件循环
     await asyncio.to_thread(ws_client.start)
+
+
+async def main():
+    """独立进程入口（兼容旧模式）。"""
+    config_path = os.environ.get("SUPERCC_CONFIG", "")
+    data_dir = os.environ.get("SUPERCC_DATA", "")
+
+    if not config_path:
+        raise RuntimeError("SUPERCC_CONFIG environment variable is required")
+    if not data_dir:
+        raise RuntimeError("SUPERCC_DATA environment variable is required")
+
+    config = init_config(config_path)
+    # 给 config 附加 config_path，供 ws_client 使用
+    config.config_path = config_path
+    await run_plugin(config, data_dir)
 
 
 if __name__ == "__main__":
