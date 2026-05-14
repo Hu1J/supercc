@@ -3,24 +3,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
-
-
-@dataclass
-class CommandCard:
-    """CardKit 格式的卡片数据。"""
-    type: str = "markdown"
-    data: dict = field(default_factory=dict)
-
-    def to_dict(self) -> dict:
-        return {"type": self.type, "data": self.data}
 
 
 @dataclass
 class CommandResult:
-    """命令执行结果。plugin 据此决定渲染文本还是卡片。"""
+    """命令执行结果。Core 返回 content，Plugin 负责渲染决策。"""
     content: str = ""
-    card: Optional[CommandCard] = None
     extra: dict = field(default_factory=dict)
     event: str = "response"
 
@@ -55,6 +43,6 @@ class CommandHandler(ABC):
                 - data_dir: str
 
         Returns:
-            CommandResult: 含 content 或 card
+            CommandResult: 含 content（Plugin 用 should_use_card() 判断如何渲染）
         """
         ...

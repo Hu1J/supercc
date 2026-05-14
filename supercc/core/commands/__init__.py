@@ -1,5 +1,5 @@
 """Core slash command handlers."""
-from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.commands.base import CommandHandler, CommandResult
 from supercc.core.commands.codex import CodexHandler
 from supercc.core.commands.git import GitHandler
 from supercc.core.commands.help import HelpHandler
@@ -15,7 +15,6 @@ from supercc.core.commands.router import CommandRouter
 __all__ = [
     "CommandHandler",
     "CommandResult",
-    "CommandCard",
     "CodexHandler",
     "GitHandler",
     "HelpHandler",

@@ -223,24 +223,14 @@ class JsonRpcError:
 # ── Command Result ─────────────────────────────────────────────────────────────
 
 @dataclass
-class CommandCard:
-    """CardKit 格式的卡片数据。"""
-    type: str = "markdown"   # "markdown" | "interactive"
-    data: dict = field(default_factory=dict)
-
-
-@dataclass
 class CommandResult:
     """
     核心执行斜杠命令后的返回结果。
 
-    plugin 根据 card 是否为 None 来决定渲染方式：
-    - card is None → 把 content 当作文本消息发送
-    - card is not None → 把 card.data 作为 CardKit 卡片发送
+    所有内容都在 content 字段（markdown 文本），Plugin 用 should_use_card() 判断如何渲染。
     event 用于平台特有操作的信号（restart、update、switch）。
     """
     content: str = ""               # 纯文本内容
-    card: CommandCard | None = None  # 卡片内容（可选）
     event: str = "command"          # "command" | "restart" | "update" | "switch" | ...
     extra: dict = field(default_factory=dict)  # 额外参数（如 /switch 的 target_path）
 

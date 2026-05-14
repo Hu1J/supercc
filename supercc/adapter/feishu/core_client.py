@@ -298,16 +298,8 @@ class FeishuCoreWSClient:
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
-        card = params.get("extra", {}).get("card")
 
-        if not content and not card:
-            return
-
-        if card:
-            # Command result with card - flush any pending text, then send as interactive card
-            if message_id and message_id in self._accumulator_by_msg_id:
-                await self._accumulator_by_msg_id[message_id].flush()
-            await self.feishu.send_interactive_card(chat_id, content)
+        if not content:
             return
 
         if message_id and message_id in self._accumulator_by_msg_id:

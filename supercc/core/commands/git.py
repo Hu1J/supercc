@@ -1,6 +1,6 @@
 """Git 状态 — /git"""
 import subprocess
-from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.commands.base import CommandHandler, CommandResult
 from supercc.core.protocol import SessionKey
 
 
@@ -42,34 +42,25 @@ class GitHandler(CommandHandler):
             ["log", "--format=%cI %h %s", "-5"], project_path
         ).splitlines()
 
-        status_color = {
-            "A": "green", "M": "orange", "D": "red",
-            "R": "purple", "?": "gray",
-        }
-
-        card_lines = [f"🌟 **Git Status - {branch}**", "", "📝 **变更文件**"]
+        lines = [f"🌟 **Git Status - {branch}**", "", "📝 **变更文件**", ""]
 
         if status_output:
             for line in status_output.splitlines():
                 char = line[0] if line[0] != " " else (line[1] if line[1] != " " else "?")
                 color = status_color.get(char, "gray")
                 filename = line[3:]
-                card_lines.append(f"<font color='{color}'>{char}</font> {filename}")
+                emoji = {"A": "✨", "M": "📄", "D": "🗑", "R": "🔄", "?": "❓"}.get(char, "•")
+                lines.append(f"{emoji} `{filename}`")
         else:
-            card_lines.append("✅ 工作区干净，无待提交变更")
+            lines.append("✅ 工作区干净，无待提交变更")
 
-        card_lines.extend(["", "📋 **最近提交**", "", "| 时间 | Hash | 描述 |", "|------|------|------|"])
+        lines.extend(["", "📋 **最近提交**", "", "| 时间 | Hash | 描述 |", "|------|------|------|"])
         for log_line in log_lines:
             parts = log_line.split(" ", 2)
             if len(parts) >= 3:
                 dt = parts[0].replace("T", " ")[:16]
                 h = parts[1]
                 msg = parts[2]
-                card_lines.append(f"| {dt} | `{h}` | {msg} |")
+                lines.append(f"| {dt} | `{h}` | {msg} |")
 
-        card_data = {
-            "schema": "2.0",
-            "config": {"wide_screen_mode": True},
-            "body": {"elements": [{"tag": "markdown", "content": "\n".join(card_lines)}]},
-        }
-        return CommandResult(content="", card=CommandCard(type="interactive", data=card_data))
+        return CommandResult(content="\n".join(lines))

@@ -1,5 +1,5 @@
 """模型管理 — /model"""
-from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.commands.base import CommandHandler, CommandResult
 from supercc.core.protocol import SessionKey
 
 
@@ -92,19 +92,10 @@ class ModelHandler(CommandHandler):
         active_name = current_pid or "未设置"
         table_content = "\n".join(table_lines)
 
-        card_data = {
-            "schema": "2.0",
-            "config": {"wide_screen_mode": True},
-            "body": {
-                "elements": [{
-                    "tag": "markdown",
-                    "content": (
-                        f"## 🤖 模型配置\n"
-                        f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
-                        + table_content
-                        + "\n\n💡 切换模型：`/model switch <provider_id> <model_id>`"
-                    ),
-                }]
-            },
-        }
-        return CommandResult(content="", card=CommandCard(type="interactive", data=card_data))
+        content = (
+            f"## 🤖 模型配置\n"
+            f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
+            f"{table_content}\n\n"
+            f"💡 切换模型：`/model switch <provider_id> <model_id>`"
+        )
+        return CommandResult(content=content)

@@ -2,7 +2,7 @@
 import asyncio
 import os
 import re
-from supercc.core.commands.base import CommandHandler, CommandResult, CommandCard
+from supercc.core.commands.base import CommandHandler, CommandResult
 from supercc.core.protocol import SessionKey
 from supercc.core.session import SessionManager, DEFAULT_SESSIONS_DB_PATH
 
@@ -89,30 +89,19 @@ class StatusHandler(CommandHandler):
         project_skills = _count_skills(os.path.join(project_path, ".supercc", "skills"))
         global_skills = _count_skills(os.path.expanduser("~/.claude/skills"))
 
-        card_data = {
-            "schema": "2.0",
-            "config": {"wide_screen_mode": True},
-            "body": {
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": (
-                            f"{title}\n\n"
-                            f"| 项目 | 值 |\n"
-                            f"|------|----|\n"
-                            f"| 进程ID | `{os.getpid()}` |\n"
-                            f"| 会话ID | `{sdk_sid}` |\n"
-                            f"| 消息数 | {session.message_count if session else 0} |\n"
-                            f"| 累计费用 | `${session.total_cost if session else 0:.4f}` |\n"
-                            f"| 供应商 | {model_provider} |\n"
-                            f"| 模型ID | `{model_id}` |\n"
-                            f"| Git分支 | `{branch}` |\n"
-                            f"| 工作目录 | `{project_path}` |\n"
-                            f"| 项目技能数 | {project_skills} |\n"
-                            f"| 全局技能数 | {global_skills} |"
-                        ),
-                    },
-                ]
-            },
-        }
-        return CommandResult(content="", card=CommandCard(type="interactive", data=card_data))
+        table = (
+            f"{title}\n\n"
+            f"| 项目 | 值 |\n"
+            f"|------|----|\n"
+            f"| 进程ID | `{os.getpid()}` |\n"
+            f"| 会话ID | `{sdk_sid}` |\n"
+            f"| 消息数 | {session.message_count if session else 0} |\n"
+            f"| 累计费用 | `${session.total_cost if session else 0:.4f}` |\n"
+            f"| 供应商 | {model_provider} |\n"
+            f"| 模型ID | `{model_id}` |\n"
+            f"| Git分支 | `{branch}` |\n"
+            f"| 工作目录 | `{project_path}` |\n"
+            f"| 项目技能数 | {project_skills} |\n"
+            f"| 全局技能数 | {global_skills} |"
+        )
+        return CommandResult(content=table)

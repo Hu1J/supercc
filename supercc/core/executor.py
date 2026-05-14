@@ -187,8 +187,7 @@ class CoreExecutor:
                 "worker_pool": self.pool,
             }
             cmd_result = await self._router.dispatch(cmd_name, cmd_args, context)
-            extra = {"card": cmd_result.card.to_dict() if cmd_result.card else None}
-            extra.update(cmd_result.extra)
+            extra = dict(cmd_result.extra)
             return OutboundMessage(
                 event=cmd_result.event,
                 session_key=key,
