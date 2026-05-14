@@ -473,6 +473,15 @@ class FeishuCoreWSClient:
             else:
                 await self._safe_send(chat_id, msg_id, result)
 
+        elif tool_name == "Agent":
+            # Agent → 精美飞书卡片（用原始 tool_input，不要用 format_tool_call 的结果）
+            from supercc.adapter.feishu.format.agent_card import format_agent_card
+            card = format_agent_card(tool_input_raw, title="## 🔀 Agent")
+            try:
+                await self.feishu.send_interactive(chat_id, card, msg_id)
+            except Exception:
+                await self._safe_send(chat_id, msg_id, result if isinstance(result, str) else f"🤖 **Agent**")
+
         else:
             # 其他工具 → backtick 格式
             if isinstance(result, str):
