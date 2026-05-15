@@ -438,53 +438,15 @@ class CoreExecutor:
         if system_parts:
             parts.append("\n".join(system_parts))
 
+        # 插件注入的系统级指令（追加到末尾）
+        if inbound.system_prompt:
+            parts.append(inbound.system_prompt)
+
         return "\n\n".join(parts)
 
     def _build_prompt(self, inbound: InboundMessage) -> str:
-        """从 inbound 构建用户 prompt（群聊上下文 + 用户消息）。"""
-        extra = inbound.extra
-        parts = []
-
-        # ── @mention 规则 ────────────────────────────────────────────────
-        mention_rules = extra.get("mention_rules", "")
-        if mention_rules:
-            parts.append(mention_rules)
-
-        # ── 群聊上下文 ─────────────────────────────────────────────────
-        if extra.get("is_group_chat"):
-            group_name = extra.get("group_name", "")
-            parts.append(f"[群聊: {group_name}]")
-
-            members = extra.get("group_members", [])
-            if members:
-                member_lines = [
-                    "【群聊规则】必须在最终回复里艾特@{发送者}以及相关人员。"
-                    "使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。"
-                ]
-                for m in members[:50]:
-                    if isinstance(m, dict):
-                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
-                        name = m.get("name") or m.get("bot_name", "")
-                    else:
-                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
-                        name = getattr(m, "name", None) or ""
-                    if member_id and name:
-                        member_lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
-                parts.append("\n".join(member_lines))
-
-            quoted = extra.get("quoted_content", "")
-            if quoted:
-                parts.append(f"[引用消息] {quoted}")
-
-            history = extra.get("group_history", [])
-            if history:
-                parts.append("[最近消息]")
-                for h in history[-10:]:
-                    parts.append(f"  {h}")
-
-        # ── 用户消息 ────────────────────────────────────────────────────
-        parts.append(inbound.content)
-        return "\n\n".join(parts)
+        """Plugin 端已构建完整 prompt（包含群聊上下文），core 直接使用。"""
+        return inbound.content
 
     async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "", user_open_id: str = "") -> None:
         """触发记忆自进化（integration_mem）和技能自进化（integration_skill）。

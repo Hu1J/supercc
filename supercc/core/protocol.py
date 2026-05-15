@@ -76,6 +76,7 @@ class InboundMessage:
     thread_id: Optional[str] = None  # 平台 thread_id（消息流）
     timestamp: datetime = field(default_factory=_cst_now)
     extra: dict[str, Any] = field(default_factory=dict)
+    system_prompt: str = ""  # 插件注入的系统级指令，追加到 system prompt 末尾
 
 
 @dataclass

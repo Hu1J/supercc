@@ -724,10 +724,34 @@ class FeishuCoreWSClient:
             except Exception:
                 logger.error("_resolve_media_markdown failed\n%s", traceback.format_exc())
 
+        # ── 群聊 @mention 前缀剥离 ─────────────────────────────────────────
+        # 当机器人被 @mention 时，content 包含 "@_user_1 " 前缀，
+        # 这会导致命令检测（^/）失败。剥离后再送入 core 处理。
+        if incoming.is_group_chat and incoming.mention_bot and incoming.message_type == "text":
+            content = incoming.content
+            # 剥离形如 "@_user_1 " 的前缀（保留后续内容）
+            import re as _re
+            stripped = _re.sub(r"^@\S+\s+", "", content, count=1)
+            # 剥离 <at user_id="...">...</at> 标签（富文本格式）
+            stripped = _re.sub(r"<at[^>]*>.*?</at>", "", stripped, count=1)
+            if stripped != content:
+                incoming = dataclass_replace(incoming, content=stripped)
+                logger.info(f"[MENTION_STRIP] '{content}' -> '{stripped}'")
+
+        # ── 群聊上下文 enrichment（在 incoming 上构建 system_prompt）──────────
+        # 注意：_enrich_group_context 必须在 incoming_to_inbound 之前调用，
+        # 因为它写入 incoming.system_prompt，转换时再传入 InboundMessage
+        if incoming.is_group_chat:
+            try:
+                await self._enrich_group_context(incoming)
+            except Exception:
+                logger.error("_enrich_group_context failed\n%s", traceback.format_exc())
+
         inbound = incoming_to_inbound(
             incoming,
             bot_id=self.bot_id,
             project_path=self.project_path,
+            system_prompt=incoming.system_prompt,
         )
 
         # 群聊权限校验
@@ -758,11 +782,20 @@ class FeishuCoreWSClient:
             logger.info(f"group msg stored, hist_len={len(hist)}")
             return {}
 
-        # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
-        try:
-            await self._enrich_group_context(inbound, incoming)
-        except Exception:
-            logger.error("_enrich_group_context failed\n%s", traceback.format_exc())
+        # ── 构建完整 content（plugin 端一次性构建，core 直接使用）──────────
+        # system_prompt 已在 _enrich_group_context 中构建，传入 inbound.system_prompt
+        # content 只含动态部分：历史消息 + 用户消息
+        content_parts = []
+
+        if incoming.is_group_chat:
+            history = getattr(incoming, "group_history", [])
+            if history:
+                content_parts.append("[最近消息]")
+                for h in history[-10:]:
+                    content_parts.append(f"  {h}")
+
+        content_parts.append(inbound.content)
+        full_content = "\n\n".join(content_parts)
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
@@ -781,7 +814,8 @@ class FeishuCoreWSClient:
                 "user_open_id": inbound.user_open_id,
                 "platform": inbound.session_key.platform,
                 "project_path": inbound.session_key.project_path,
-                "content": inbound.content,
+                "content": full_content,
+                "system_prompt": inbound.system_prompt,
                 "message_type": inbound.message_type.value,
                 "is_group_chat": inbound.extra.get("is_group_chat", False),
                 "mention_bot": inbound.extra.get("mention_bot", False),
@@ -916,16 +950,47 @@ class FeishuCoreWSClient:
         safe_name = "".join(c for c in orig_name if c.isalnum() or c in "._-") or "file"
         return os.path.join(directory, f"{msg_id}_{safe_name}")
 
-    async def _enrich_group_context(self, inbound, incoming):
+    async def _enrich_group_context(self, incoming):
         """为群聊消息收集并注入上下文：历史、成员列表、引用消息、@mention规则。
 
         历史从内存（_group_history）中取；成员列表调用API；引用消息调用API。
+        system_prompt 写入 incoming.system_prompt（追加到 core system prompt 末尾）。
         """
-        if not inbound.extra.get("is_group_chat"):
+        if not incoming.is_group_chat:
             return
 
-        chat_id = inbound.session_key.chat_id
-        extra = inbound.extra
+        chat_id = incoming.chat_id
+
+        # ── 首次 @mention 时检查飞书权限，缺失则发授权卡片 ────────────────
+        # 权限不足时只通知，不阻塞后续处理
+        perm_key = f"_perm_checked_{chat_id}"
+        if not getattr(self, perm_key, False):
+            setattr(self, perm_key, True)
+            if incoming.mention_bot:
+                try:
+                    perm = await self.feishu.check_group_permissions(chat_id)
+                    auth_url = perm.get("auth_url", "")
+                    missing = []
+                    if not perm.get("history_ok"):
+                        missing.append("读取群聊历史（im:message）")
+                    if not perm.get("members_ok"):
+                        missing.append("读取群成员信息（im:chat.member:read）")
+                    if missing:
+                        card = {
+                            "schema": "2.0",
+                            "config": {"wide_screen_mode": True},
+                            "body": {
+                                "elements": [
+                                    {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权。"},
+                                    {"tag": "action", "actions": [
+                                        {"tag": "link", "text": "前往授权", "url": auth_url}
+                                    ]},
+                                ]
+                            }
+                        }
+                        await self.feishu.send_card(chat_id, card)
+                except Exception as ex:
+                    logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
 
         # 1) 群历史（从内存，媒体按需解析）
         # 内存中的消息（IncomingMessage 对象），图片/文件需下载到本地再注入
@@ -934,6 +999,9 @@ class FeishuCoreWSClient:
             history_lines = []
             for h_msg in hist:
                 h_msg_id = getattr(h_msg, "message_id", "") or (h_msg.get("message_id") if isinstance(h_msg, dict) else "")
+                # 跳过当前消息，避免重复注入
+                if h_msg_id == incoming.message_id:
+                    continue
                 h_user_open_id = getattr(h_msg, "user_open_id", "") or (h_msg.get("user_open_id") if isinstance(h_msg, dict) else "")
                 h_content = getattr(h_msg, "content", "") or (h_msg.get("content") if isinstance(h_msg, dict) else "")
                 h_msg_type = getattr(h_msg, "message_type", "text") or (h_msg.get("message_type") if isinstance(h_msg, dict) else "text")
@@ -968,37 +1036,43 @@ class FeishuCoreWSClient:
                 if text:
                     history_lines.append(f"{sender_name}: {text[:200]}")
             if history_lines:
-                extra["group_history"] = history_lines
+                incoming.group_history = history_lines
 
-        # 2) 群成员列表 + @mention 规则生成
+        # 2) 群成员列表 + @mention 规则生成（权限不足不影响 group_history）
         try:
             members = await self.feishu.get_chat_members(chat_id)
-            if members:
-                member_lines = []
-                sender_name = None
-                for m in members[:50]:
-                    if isinstance(m, dict):
-                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
-                        name = m.get("name") or m.get("bot_name", "")
-                    else:
-                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
-                        name = getattr(m, "name", None) or ""
-                    if member_id and name:
-                        member_lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
-                        if member_id == inbound.user_open_id and not sender_name:
-                            sender_name = name
-                extra["group_members"] = member_lines
-
-                # 生成 @mention 规则（含发送者姓名）
-                sender_display = sender_name or inbound.user_open_id
-                mention_rules = (
-                    f"【群聊规则】必须在最终回复里艾特@{sender_display}以及相关人员。"
-                    f"使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。\n"
-                    + "\n".join(member_lines)
-                )
-                extra["mention_rules"] = mention_rules
         except Exception as e:
-            logger.warning(f"failed to fetch group members: {e}")
+            members = None
+            logger.warning(f"[CHAT_MEMBERS] get_chat_members failed (权限不足): {e}")
+
+        system_parts = []
+
+        # 群名称
+        group_name = incoming.group_name
+        if group_name:
+            system_parts.append(f"[群聊: {group_name}]")
+
+        if members:
+            member_lines = []
+            sender_name = None
+            for m in members[:50]:
+                if isinstance(m, dict):
+                    member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                    name = m.get("name") or m.get("bot_name", "")
+                else:
+                    member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                    name = getattr(m, "name", None) or ""
+                if member_id and name:
+                    member_lines.append(f"  {name}: <at user_id=\"{member_id}\">{name}</at>")
+                    if member_id == incoming.user_open_id and not sender_name:
+                        sender_name = name
+            if member_lines:
+                system_parts.append("\n".join(member_lines))
+                sender_display = sender_name or incoming.user_open_id
+                system_parts.append(
+                    f"【群聊规则】必须在最终回复里艾特@{sender_display}以及相关人员。"
+                    f"使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。"
+                )
 
         # 3) 引用消息内容（parent_id → get_message）
         parent_id = getattr(incoming, "parent_id", "") or ""
@@ -1009,9 +1083,12 @@ class FeishuCoreWSClient:
                     body = quoted_msg.get("body", {})
                     quoted_text = body.get("content", "") if isinstance(body, dict) else ""
                     if quoted_text:
-                        extra["quoted_content"] = quoted_text[:500]
+                        system_parts.append(f"[引用消息] {quoted_text[:500]}")
             except Exception as e:
                 logger.warning(f"failed to fetch quoted message {parent_id}: {e}")
+
+        if system_parts:
+            incoming.system_prompt = "\n".join(system_parts)
 
     async def _send_event(self, method: str, params: dict):
         """发送 Event notification 到核心。"""

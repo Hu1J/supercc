@@ -155,6 +155,7 @@ class IncomingMessage:
     mention_bot: bool = False        # 机器人是否被 @CC（来自 mentions[] 数组）
     mention_ids: list[str] = field(default_factory=list)  # 所有被 @ 的用户 open_id 列表
     group_name: str = ""            # 群名称（群聊时）
+    system_prompt: str = ""          # 插件注入的系统级指令（追加到 system prompt 末尾）
 
 
 class FeishuClient:

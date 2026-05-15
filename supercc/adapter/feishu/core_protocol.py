@@ -19,6 +19,7 @@ def incoming_to_inbound(
     incoming: IncomingMessage,
     bot_id: str,
     project_path: str,
+    system_prompt: str = "",
 ) -> InboundMessage:
     """
     将 Feishu IncomingMessage 转换为核心 InboundMessage。
@@ -64,6 +65,7 @@ def incoming_to_inbound(
             "group_name": incoming.group_name,
             "chat_type": incoming.chat_type,
         },
+        system_prompt=system_prompt,
     )
 
 

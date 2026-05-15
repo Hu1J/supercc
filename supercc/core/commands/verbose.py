@@ -35,7 +35,11 @@ class VerboseHandler(CommandHandler):
                 f"- 🧠 记忆自优化：`{'开' if entry.mem else '关'}`",
                 f"- ⚙️ 过程消息：`{'开' if entry.step else '关'}`",
                 "",
-                "调整：/verbose on|off|skill on|off|mem on|off|step on|off",
+                "调整：",
+                "/verbose on|off — 全部开启/关闭",
+                "/verbose skill on|off — 🧰 Skill 自进化",
+                "/verbose mem on|off — 🧠 记忆自优化",
+                "/verbose step on|off — ⚙️ 过程消息",
             ]
             return CommandResult(content="\n".join(status))
 
@@ -58,7 +62,12 @@ class VerboseHandler(CommandHandler):
             entry.step = sub == "on"
             msg = f"⚙️ 过程消息已{'开启' if entry.step else '关闭'}"
         else:
-            msg = "❓ 用法：/verbose [on|off|skill on|off|mem on|off|step on|off]"
+            msg = ("❓ 用法不对。正确用法：\n"
+                   "/verbose — 查看当前配置\n"
+                   "/verbose on|off — 全部开启/关闭\n"
+                   "/verbose skill on|off — 🧰 Skill 自进化\n"
+                   "/verbose mem on|off — 🧠 记忆自优化\n"
+                   "/verbose step on|off — ⚙️ 过程消息")
 
         # 持久化到磁盘
         config_path = context.get("config_path", "")
