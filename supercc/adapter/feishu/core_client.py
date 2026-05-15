@@ -991,14 +991,14 @@ class FeishuCoreWSClient:
                         try:
                             await self.feishu.send_card(chat_id, card)
                         except Exception as card_err:
-                            # 卡片发送失败时降级为纯文本
+                            # 卡片发送失败时降级为 markdown
                             fallback = (
-                                "⚠️ 权限不足，无法正常服务\n\n"
+                                "⚠️ **权限不足，无法正常服务**\n\n"
                                 + "\n".join(f"- {m}" for m in missing)
-                                + f"\n\n授权链接：{auth_url}"
+                                + f"\n\n请管理员点击 [前往飞书开放平台授权]({auth_url})"
                             )
                             try:
-                                await self.feishu.send_text(chat_id, fallback)
+                                await self.feishu.send_post(chat_id, fallback)
                             except Exception:
                                 pass
                             logger.warning(f"[GROUP_PERM] card send failed, fallback text sent: {card_err}")
