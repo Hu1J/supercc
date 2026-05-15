@@ -5,7 +5,7 @@ from pathlib import Path
 
 from claude_agent_sdk import tool
 from supercc.claude.memory_manager import get_memory_manager
-from supercc.claude.message_context import get_current_chat_id, get_current_platform, get_current_user_open_id
+from supercc.claude.message_context import get_current_bot_id, get_current_chat_id, get_current_platform, get_current_user_open_id
 
 
 def _fmt_pref(p) -> str:
@@ -51,8 +51,9 @@ async def memory_add_user(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "无法获取当前用户身份，请确保在飞书私聊中使用"}], "is_error": True}
     mm = get_memory_manager()
     platform = get_current_platform()
+    bot_id = get_current_bot_id() or ""
     try:
-        p = mm.add_preference(user_open_id, title, content, keywords, platform=platform)
+        p = mm.add_preference(user_open_id, title, content, keywords, platform=platform, bot_id=bot_id)
     except ValueError as e:
         return {"content": [{"type": "text", "text": f"输入过长：{e}"}], "is_error": True}
     return {"content": [{"type": "text", "text": f"✅ 用户偏好已保存\n\n{_fmt_pref(p)}"}]}
@@ -67,9 +68,10 @@ async def memory_delete_user(args: dict) -> dict:
     mm = get_memory_manager()
     platform = get_current_platform()
     user_open_id = _get_user_open_id()
+    bot_id = get_current_bot_id() or ""
     if not user_open_id:
         return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
-    ok = mm.delete_preference(args["id"], user_open_id=user_open_id, platform=platform)
+    ok = mm.delete_preference(args["id"], user_open_id=user_open_id, platform=platform, bot_id=bot_id)
     if ok:
         return {"content": [{"type": "text", "text": f"🗑️ 用户偏好 {args['id']} 已删除。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -89,9 +91,10 @@ async def memory_update_user(args: dict) -> dict:
     mm = get_memory_manager()
     platform = get_current_platform()
     user_open_id = _get_user_open_id()
+    bot_id = get_current_bot_id() or ""
     if not user_open_id:
         return {"content": [{"type": "text", "text": "无法获取当前用户身份"}], "is_error": True}
-    ok = mm.update_preference(args["id"], title, content, keywords, user_open_id=user_open_id, platform=platform)
+    ok = mm.update_preference(args["id"], title, content, keywords, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
     if ok:
         return {"content": [{"type": "text", "text": f"✅ 用户偏好 {args['id']} 已更新。"}]}
     return {"content": [{"type": "text", "text": f"未找到 id={args['id']} 的用户偏好"}], "is_error": True}
@@ -106,8 +109,9 @@ async def memory_list_user(args: dict) -> dict:
     user_open_id = _get_user_open_id()
     mm = get_memory_manager()
     platform = get_current_platform()
+    bot_id = get_current_bot_id() or ""
     if user_open_id:
-        prefs = mm.get_preferences_by_user(user_open_id, platform=platform)
+        prefs = mm.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
     else:
         prefs = []
     if not prefs:
@@ -133,7 +137,8 @@ async def memory_search_user(args: dict) -> dict:
         return {"content": [{"type": "text", "text": "查询词不能为空"}], "is_error": True}
     mm = get_memory_manager()
     platform = get_current_platform()
-    results = mm.search_preferences(query, user_open_id=user_open_id, platform=platform, limit=5)
+    bot_id = get_current_bot_id() or ""
+    results = mm.search_preferences(query, user_open_id=user_open_id, platform=platform, bot_id=bot_id, limit=5)
     if not results:
         return {"content": [{"type": "text", "text": f"未找到与「{query}」相关的用户偏好。"}]}
     lines = [f"🔍 用户偏好搜索结果（共 {len(results)} 条）\n"]

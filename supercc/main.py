@@ -828,6 +828,11 @@ def _run_memory_command(args) -> None:
             return config.channels.feishu.allowed_users[0]
         return "cli-owner"
 
+    def _get_bot_id() -> str:
+        if config and hasattr(config.channels.feishu, "bot_id"):
+            return config.channels.feishu.bot_id or ""
+        return ""
+
     async def _send_feishu(text: str):
         if feishu_client and feishu_chat_id:
             await feishu_client.send_text(feishu_chat_id, text)
@@ -857,7 +862,7 @@ def _run_memory_command(args) -> None:
                 return
             title, content, keywords = parts[0], parts[1], parts[2]
             user_open_id = _get_user_open_id()
-            p = mm.add_preference(user_open_id, title, content, keywords)
+            p = mm.add_preference(user_open_id, title, content, keywords, bot_id=_get_bot_id())
             _print(f"✅ 用户偏好已保存 (id={p.id})")
 
         elif action == "del":
@@ -865,7 +870,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user del <id>")
                 return
             user_open_id = _get_user_open_id()
-            ok = mm.delete_preference(raw_args, user_open_id=user_open_id)
+            ok = mm.delete_preference(raw_args, user_open_id=user_open_id, bot_id=_get_bot_id())
             if ok:
                 _print(f"🗑️ 用户偏好 {raw_args} 已删除。")
             else:
@@ -878,7 +883,7 @@ def _run_memory_command(args) -> None:
                 return
             pref_id, title, content, keywords = parts[0], parts[1], parts[2], parts[3]
             user_open_id = _get_user_open_id()
-            ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id)
+            ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id, bot_id=_get_bot_id())
             if ok:
                 _print(f"✅ 用户偏好 {pref_id} 已更新")
             else:
@@ -886,7 +891,7 @@ def _run_memory_command(args) -> None:
 
         elif action == "list":
             user_open_id = _get_user_open_id()
-            prefs = mm.get_preferences_by_user(user_open_id, platform="feishu")
+            prefs = mm.get_preferences_by_user(user_open_id, platform="feishu", bot_id=_get_bot_id())
             if not prefs:
                 _print("📭 暂无用户偏好记录")
                 return
@@ -902,7 +907,7 @@ def _run_memory_command(args) -> None:
                 _print("用法: supercc memory user search <关键词>")
                 return
             user_open_id = _get_user_open_id()
-            results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu")
+            results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform="feishu", bot_id=_get_bot_id())
             if not results:
                 _print(f"未找到与「{raw_args}」相关的用户偏好")
                 return

@@ -6,7 +6,7 @@ import re
 
 from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
-from supercc.claude.message_context import get_current_user_open_id
+from supercc.claude.message_context import get_current_bot_id, get_current_user_open_id
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card
@@ -287,6 +287,7 @@ class ReplyFormatter:
         default_project_path: str = "",
         platform: str = "feishu",
         chat_id: str = "",
+        bot_id: str = "",
     ) -> _MemoryCardMarker | str:
         """格式化记忆 MCP 工具调用为卡片标记。
 
@@ -326,6 +327,7 @@ class ReplyFormatter:
             query = args.get("query", "")
             project_path = args.get("project_path", "") or default_project_path
             user_open_id = args.get("user_open_id", "") or get_current_user_open_id() or ""
+            bot_id = bot_id or args.get("bot_id", "") or get_current_bot_id() or ""
 
             if memory_manager is not None:
                 try:
@@ -344,9 +346,9 @@ class ReplyFormatter:
                     else:
                         # user scope — 必须提供 user_open_id，否则无法确定归属
                         if user_open_id:
-                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform)
+                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
                             if card_type == "search" and query:
-                                prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform)
+                                prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
                             entries = [{"id": p.id, "title": p.title,
                                         "content": p.content, "keywords": p.keywords} for p in prefs]
                         else:

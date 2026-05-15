@@ -58,6 +58,9 @@ class MemoryHandler(CommandHandler):
         user_open_id = context.get("user_open_id", "")
         platform = context.get("platform", "feishu")
         chat_id = context.get("chat_id", "")
+        bot_id = context.get("bot_id", "")
+        if not bot_id and context.get("session_key"):
+            bot_id = context["session_key"].bot_id or ""
         project_path = ""
         if context.get("session_key"):
             project_path = context["session_key"].project_path or ""
@@ -69,7 +72,7 @@ class MemoryHandler(CommandHandler):
 
         if scope == "user":
             if action == "list":
-                prefs = mm.get_preferences_by_user(user_open_id, platform=platform)
+                prefs = mm.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
                 if not prefs:
                     return CommandResult(content="📭 暂无用户偏好记录")
                 return CommandResult(content=_fmt_pref_table(prefs, len(prefs)))
@@ -80,12 +83,12 @@ class MemoryHandler(CommandHandler):
                 title, content, keywords = parts[0].strip(), parts[1].strip(), parts[2].strip()
                 if not title or not content or not keywords:
                     return CommandResult(content="title、content、keywords 三样必填")
-                p = mm.add_preference(user_open_id, title, content, keywords, platform=platform)
+                p = mm.add_preference(user_open_id, title, content, keywords, platform=platform, bot_id=bot_id)
                 return CommandResult(content=f"✅ 用户偏好已保存（ID: {p.id}）")
             if action == "del":
                 if not raw_args:
                     return CommandResult(content="用法: /memory user del <id>")
-                ok = mm.delete_preference(raw_args, user_open_id=user_open_id, platform=platform)
+                ok = mm.delete_preference(raw_args, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
                 return CommandResult(content=f"🗑️ 用户偏好 {raw_args} 已删除" if ok else f"未找到 id={raw_args}")
             if action == "update":
                 parts = raw_args.split("|", 2)
@@ -93,12 +96,12 @@ class MemoryHandler(CommandHandler):
                     return CommandResult(content="用法: /memory user update <id> <title>|<content>|<keywords>")
                 pref_id, title, content = parts[0].strip(), parts[1].strip(), parts[2].strip()
                 keywords = parts[3].strip() if len(parts) > 3 else ""
-                ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id, platform=platform)
+                ok = mm.update_preference(pref_id, title, content, keywords, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
                 return CommandResult(content=f"✅ 用户偏好 {pref_id} 已更新" if ok else f"未找到 id={pref_id}")
             if action == "search":
                 if not raw_args:
                     return CommandResult(content="用法: /memory user search <关键词>")
-                results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform=platform)
+                results = mm.search_preferences(raw_args, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
                 if not results:
                     return CommandResult(content=f"未找到与「{raw_args}」相关的用户偏好")
                 return CommandResult(content=_fmt_pref_table(results, len(results)))

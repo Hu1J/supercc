@@ -6,13 +6,15 @@ from contextvars import ContextVar
 _current_user_open_id: ContextVar[str | None] = ContextVar("current_user_open_id", default=None)
 _current_chat_id: ContextVar[str | None] = ContextVar("current_chat_id", default=None)
 _current_platform: ContextVar[str] = ContextVar("current_platform", default="feishu")
+_current_bot_id: ContextVar[str | None] = ContextVar("current_bot_id", default=None)
 
 
-def set_current_context(user_open_id: str, chat_id: str, platform: str = "feishu"):
+def set_current_context(user_open_id: str, chat_id: str, platform: str = "feishu", bot_id: str = ""):
     """在消息处理入口设置当前上下文。"""
     _current_user_open_id.set(user_open_id)
     _current_chat_id.set(chat_id)
     _current_platform.set(platform)
+    _current_bot_id.set(bot_id)
 
 
 def get_current_user_open_id() -> str | None:
@@ -25,3 +27,7 @@ def get_current_chat_id() -> str | None:
 
 def get_current_platform() -> str:
     return _current_platform.get()
+
+
+def get_current_bot_id() -> str | None:
+    return _current_bot_id.get()

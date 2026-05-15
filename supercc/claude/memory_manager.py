@@ -47,18 +47,20 @@ MEMORY_SYSTEM_GUIDE = """
 ## 项目记忆
 mcp__SuperCC__MemoryAddProj/MemoryDeleteProj/MemoryUpdateProj/MemoryListProj/MemorySearchProj
 
-## 用户偏好（MCP 自动获取当前用户身份）
+## 用户偏好（MCP 自动获取当前用户+机器人身份）
 记录用户工作风格、语言偏好、沟通习惯。如果不确定，就问用户。
+按 bot_id 隔离：不同机器人对同一用户的印象互为独立数据。
 mcp__SuperCC__MemoryAddUser/MemoryUpdateUser/MemoryDeleteUser/MemoryListUser/MemorySearchUser
 """
 
 
 @dataclass
 class UserPreference:
-    """用户偏好条目（按用户 + 平台隔离）"""
+    """用户偏好条目（按用户 + 平台 + bot_id 隔离）"""
     id: str = ""
     user_open_id: str = ""
     platform: str = "feishu"
+    bot_id: str = ""
     title: str = ""
     content: str = ""
     keywords: str = ""  # 逗号分隔
@@ -118,6 +120,9 @@ class MemoryManager:
     # 用户偏好内存缓存：{(db_path, user_open_id): [UserPreference, ...]}
     _prefs_cache: dict = {}
     _prefs_cache_lock = threading.Lock()
+    # 已执行过旧数据迁移的 bot_id 集合（防止重复复制）
+    _migrated_bot_ids: set = set()
+    _migrated_bot_ids_lock = threading.Lock()
 
     def _init_db(self):
         """创建/升级数据库：新建表或迁移已有表"""
@@ -147,6 +152,9 @@ class MemoryManager:
             if "user_open_id" not in pref_cols:
                 conn.execute("ALTER TABLE user_preferences ADD COLUMN user_open_id TEXT NOT NULL DEFAULT ''")
                 logger.info("migrated user_preferences: added user_open_id column")
+            if "bot_id" not in pref_cols:
+                conn.execute("ALTER TABLE user_preferences ADD COLUMN bot_id TEXT NOT NULL DEFAULT ''")
+                logger.info("migrated user_preferences: added bot_id column")
 
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS user_preferences_fts USING fts5(
@@ -188,6 +196,64 @@ class MemoryManager:
                 )
             """)
 
+    # ── 旧数据迁移（bot_id 隔离） ─────────────────────────────────────────────
+
+    def _ensure_old_prefs_migrated(self, bot_id: str) -> None:
+        """启动时复制：将 bot_id='' 的旧记录复制到当前 bot_id。
+
+        只有「有旧记录且当前 bot_id 无记录」时才执行复制，
+        每个 bot_id 只执行一次（_migrated_bot_ids 去重）。
+        """
+        if not bot_id:
+            return
+        with self._migrated_bot_ids_lock:
+            if bot_id in self._migrated_bot_ids:
+                return
+            self._migrated_bot_ids.add(bot_id)
+
+        with sqlite3.connect(self.db_path) as conn:
+            # 检查是否有旧记录（bot_id=''）
+            old_count = conn.execute(
+                "SELECT COUNT(*) FROM user_preferences WHERE bot_id = ''"
+            ).fetchone()[0]
+            if old_count == 0:
+                return
+
+            # 检查当前 bot_id 是否已有记录
+            cur_count = conn.execute(
+                "SELECT COUNT(*) FROM user_preferences WHERE bot_id = ?",
+                (bot_id,)
+            ).fetchone()[0]
+            if cur_count > 0:
+                return
+
+            # 复制全部旧记录
+            rows = conn.execute(
+                "SELECT id, user_open_id, platform, title, content, keywords, created_at, updated_at "
+                "FROM user_preferences WHERE bot_id = ''"
+            ).fetchall()
+
+            import uuid as _uuid
+            copied = 0
+            for row in rows:
+                new_id = _uuid.uuid4().hex[:8]
+                conn.execute(
+                    "INSERT INTO user_preferences (id, user_open_id, platform, bot_id, title, content, keywords, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (new_id, row[1], row[2], bot_id, row[3], row[4], row[5], row[6], row[7])
+                )
+                # 同步复制到 FTS
+                conn.execute(
+                    "INSERT INTO user_preferences_fts(id, title, content, keywords) VALUES (?, ?, ?, ?)",
+                    (new_id, row[3], f"{row[3]} {row[4]} {row[5]}", row[5])
+                )
+                copied += 1
+
+            logger.info(
+                "migrated %d user_preferences: bot_id='' → bot_id=%s",
+                copied, bot_id,
+            )
+
     # ── 用户偏好 ───────────────────────────────────────────────────────────────
 
     def add_preference(
@@ -197,8 +263,10 @@ class MemoryManager:
         content: str,
         keywords: str,
         platform: str = "feishu",
+        bot_id: str = "",
     ) -> UserPreference:
-        """添加一条用户偏好（按用户 + 平台隔离）"""
+        """添加一条用户偏好（按用户 + 平台 + bot_id 隔离）"""
+        self._ensure_old_prefs_migrated(bot_id)
         for name, val, max_len in (
             ("title", title, 500),
             ("content", content, 5000),
@@ -211,6 +279,7 @@ class MemoryManager:
             id=str(uuid.uuid4())[:8],
             user_open_id=user_open_id,
             platform=platform,
+            bot_id=bot_id,
             title=title,
             content=content,
             keywords=keywords,
@@ -219,9 +288,9 @@ class MemoryManager:
         )
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO user_preferences (id, user_open_id, platform, title, content, keywords, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (pref.id, pref.user_open_id, pref.platform, pref.title, pref.content,
+                "INSERT INTO user_preferences (id, user_open_id, platform, bot_id, title, content, keywords, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (pref.id, pref.user_open_id, pref.platform, pref.bot_id, pref.title, pref.content,
                  pref.keywords, pref.created_at, pref.updated_at)
             )
             conn.execute(
@@ -230,7 +299,7 @@ class MemoryManager:
             )
         # Invalidate user preference cache
         with self._prefs_cache_lock:
-            self._prefs_cache.pop((self.db_path, user_open_id, platform), None)
+            self._prefs_cache.pop((self.db_path, user_open_id, platform, bot_id), None)
         self._notify_system_prompt_stale()
         return pref
 
@@ -245,9 +314,10 @@ class MemoryManager:
             ).fetchall()
         return [UserPreference(**{k: v for k, v in dict(r).items() if k != "_rank"}) for r in rows]
 
-    def get_preferences_by_user(self, user_open_id: str, platform: str = "feishu") -> list[UserPreference]:
-        """获取指定用户的所有偏好（按创建时间倒序，带内存缓存）。"""
-        cache_key = (self.db_path, user_open_id, platform)
+    def get_preferences_by_user(self, user_open_id: str, platform: str = "feishu", bot_id: str = "") -> list[UserPreference]:
+        """获取指定用户的所有偏好（按创建时间倒序，带内存缓存）。按 bot_id 隔离。"""
+        self._ensure_old_prefs_migrated(bot_id)
+        cache_key = (self.db_path, user_open_id, platform, bot_id)
         with self._prefs_cache_lock:
             if cache_key in self._prefs_cache:
                 return list(self._prefs_cache[cache_key])
@@ -255,9 +325,9 @@ class MemoryManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, user_open_id, platform, title, content, keywords, created_at, updated_at "
-                "FROM user_preferences WHERE user_open_id = ? AND platform = ? ORDER BY created_at DESC",
-                (user_open_id, platform)
+                "SELECT id, user_open_id, platform, bot_id, title, content, keywords, created_at, updated_at "
+                "FROM user_preferences WHERE user_open_id = ? AND platform = ? AND bot_id = ? ORDER BY created_at DESC",
+                (user_open_id, platform, bot_id)
             ).fetchall()
         prefs = [UserPreference(**{k: v for k, v in dict(r).items() if k != "_rank"}) for r in rows]
 
@@ -270,15 +340,17 @@ class MemoryManager:
         query: str,
         user_open_id: Optional[str] = None,
         platform: str = "feishu",
+        bot_id: str = "",
         limit: int = 5,
     ) -> list[UserPreference]:
-        """全文搜索用户偏好：按 user_open_id + platform 过滤，keywords 优先（prefix 匹配），无结果再搜 title + content。"""
+        """全文搜索用户偏好：按 user_open_id + platform + bot_id 过滤。"""
+        self._ensure_old_prefs_migrated(bot_id)
         if not query.strip():
             return []
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
 
-            base_cols = "m.id, m.user_open_id, m.platform, m.title, m.content, m.keywords, m.created_at, m.updated_at"
+            base_cols = "m.id, m.user_open_id, m.platform, m.bot_id, m.title, m.content, m.keywords, m.created_at, m.updated_at"
 
             def _run(query_str: str):
                 if user_open_id:
@@ -286,17 +358,17 @@ class MemoryManager:
                         f"SELECT {base_cols}, bm25(user_preferences_fts) as _rank "
                         "FROM user_preferences_fts "
                         "JOIN user_preferences m ON user_preferences_fts.id = m.id "
-                        "WHERE user_preferences_fts MATCH ? AND m.user_open_id = ? AND m.platform = ? "
+                        "WHERE user_preferences_fts MATCH ? AND m.user_open_id = ? AND m.platform = ? AND m.bot_id = ? "
                         "ORDER BY _rank LIMIT ?",
-                        (query_str, user_open_id, platform, limit)
+                        (query_str, user_open_id, platform, bot_id, limit)
                     ).fetchall()
                 else:
                     return conn.execute(
                         f"SELECT {base_cols}, bm25(user_preferences_fts) as _rank "
                         "FROM user_preferences_fts "
                         "JOIN user_preferences m ON user_preferences_fts.id = m.id "
-                        "WHERE user_preferences_fts MATCH ? AND m.platform = ? ORDER BY _rank LIMIT ?",
-                        (query_str, platform, limit)
+                        "WHERE user_preferences_fts MATCH ? AND m.platform = ? AND m.bot_id = ? ORDER BY _rank LIMIT ?",
+                        (query_str, platform, bot_id, limit)
                     ).fetchall()
 
             rows = _run(query)
@@ -310,15 +382,17 @@ class MemoryManager:
         keywords: str,
         user_open_id: str,
         platform: str = "feishu",
+        bot_id: str = "",
     ) -> bool:
-        """更新一条用户偏好（必须提供 user_open_id，防止跨用户更新）"""
+        """更新一条用户偏好（必须提供 user_open_id + bot_id，防止跨用户更新）"""
+        self._ensure_old_prefs_migrated(bot_id)
         now = datetime.utcnow().isoformat()
         with sqlite3.connect(self.db_path) as conn:
             affected = conn.execute(
                 "UPDATE user_preferences "
                 "SET title=?, content=?, keywords=?, updated_at=? "
-                "WHERE id=? AND platform=? AND user_open_id=?",
-                (title, content, keywords, now, pref_id, platform, user_open_id)
+                "WHERE id=? AND platform=? AND user_open_id=? AND bot_id=?",
+                (title, content, keywords, now, pref_id, platform, user_open_id, bot_id)
             ).rowcount
             if affected > 0:
                 conn.execute(
@@ -328,7 +402,7 @@ class MemoryManager:
                     "INSERT INTO user_preferences_fts(id, title, content, keywords) VALUES (?, ?, ?, ?)",
                     (pref_id, title, f"{title} {content} {keywords}", keywords)
                 )
-        # Invalidate user preference cache (keyed by db_path + user_open_id + platform)
+        # Invalidate user preference cache (keyed by db_path + user_open_id + platform + bot_id)
         if user_open_id:
             with self._prefs_cache_lock:
                 self._prefs_cache = {
@@ -343,12 +417,14 @@ class MemoryManager:
         pref_id: str,
         user_open_id: str,
         platform: str = "feishu",
+        bot_id: str = "",
     ) -> bool:
-        """删除一条用户偏好（必须提供 user_open_id，防止跨用户删除）"""
+        """删除一条用户偏好（必须提供 user_open_id + bot_id，防止跨用户删除）"""
+        self._ensure_old_prefs_migrated(bot_id)
         with sqlite3.connect(self.db_path) as conn:
             affected = conn.execute(
-                "DELETE FROM user_preferences WHERE id=? AND platform=? AND user_open_id=?",
-                (pref_id, platform, user_open_id)
+                "DELETE FROM user_preferences WHERE id=? AND platform=? AND user_open_id=? AND bot_id=?",
+                (pref_id, platform, user_open_id, bot_id)
             ).rowcount
             conn.execute("DELETE FROM user_preferences_fts WHERE id = ?", (pref_id,))
         # Invalidate user preference cache
@@ -367,17 +443,18 @@ class MemoryManager:
         project_path: str | None = None,
         platform: str = "feishu",
         chat_id: str = "",
+        bot_id: str = "",
     ) -> str:
         """
         注入用户偏好和项目记忆到 prompt。
         用户偏好：最新 50 条，每条 content 截断 200 字。
         项目记忆：最新 5 条，仅 title。
-        按 platform + chat_id 隔离。
+        按 platform + chat_id + bot_id 隔离。
         """
         parts: list[str] = []
 
         # 用户偏好：全量，最新 50 条
-        prefs = self.get_preferences_by_user(user_open_id, platform=platform)
+        prefs = self.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
         if prefs:
             prefs = prefs[:50]
             lines = ["\n【用户偏好】", "---"]

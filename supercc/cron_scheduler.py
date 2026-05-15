@@ -655,6 +655,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         user_open_id=user_open_id,
         chat_id=chat_id,
         platform=job.get("platform", "feishu"),
+        bot_id=getattr(config.channels.feishu, "bot_id", ""),
     )
     _log("CONTEXT_SET")
 

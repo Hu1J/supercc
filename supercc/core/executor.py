@@ -143,6 +143,7 @@ class CoreExecutor:
             user_open_id=inbound.user_open_id or "",
             chat_id=key.chat_id,
             platform=key.platform,
+            bot_id=key.bot_id,
         )
 
         # ── 安全检查 ───────────────────────────────────────────────────────
@@ -429,6 +430,7 @@ class CoreExecutor:
                 project_path=key.project_path,
                 platform=key.platform,
                 chat_id=key.chat_id,
+                bot_id=key.bot_id,
             )
             if memory_ctx:
                 system_parts.append(memory_ctx)
@@ -474,7 +476,7 @@ class CoreExecutor:
 
         # ── MCP 工具上下文（background task 中 memory MCP 工具也依赖此）────────
         from supercc.claude.message_context import set_current_context
-        set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform)
+        set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform, bot_id=key.bot_id)
 
         # ── 记忆自进化（只推 memory MCP 工具卡片，不推文本流）───────────
         mem_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "mem")
