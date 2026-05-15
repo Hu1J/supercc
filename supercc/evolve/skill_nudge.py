@@ -255,6 +255,8 @@ async def _detect_skill_changes(
 ) -> None:
     """Compare before/after git state, detect changes (new/updated/deleted), notify user."""
     after_state = _get_skill_git_state(skills_dir)
+    logger.info(f"[skill_nudge] before_state={before_state}")
+    logger.info(f"[skill_nudge] after_state={after_state}")
 
     changed = []
     for skill_name, sha in after_state.items():
@@ -271,6 +273,7 @@ async def _detect_skill_changes(
             changed.append({"name": skill_name, "action": "🗑️ 删除", "commit": ""})
 
     if not changed:
+        logger.info("[skill_nudge] no git changes detected, skipping notification")
         return
 
     parts = []
@@ -283,8 +286,11 @@ async def _detect_skill_changes(
     if notify and chat_id and send_to_feishu:
         try:
             await send_to_feishu(chat_id, msg)
+            logger.info(f"[skill_nudge] notification sent: {msg}")
         except Exception as e:
             logger.warning(f"[skill_nudge] failed to send to Feishu: chat_id={chat_id!r}, error={e}")
+    else:
+        logger.info(f"[skill_nudge] changes detected but notify={notify}, chat_id={chat_id!r}, send_to_feishu={send_to_feishu}")
 
 
 async def trigger_skill_review(
