@@ -84,6 +84,9 @@ class Connection:
     alive: bool = True
 
 
+class _RestartNow(Exception):
+    """触发有序关闭的信号异常，由 _do_restart_sync 抛出，被 _handle_client_message 捕获。"""
+
 # ── WebSocket Server ────────────────────────────────────────────────────────
 
 class WsServer:
@@ -355,12 +358,17 @@ class WsServer:
                 event = resp.result.get("event", "")
             if event in ("restart", "update", "switch"):
                 extra = resp.result.get("extra", {}) if resp.result else {}
-                asyncio.get_running_loop().run_in_executor(
-                    None,
-                    self._do_restart_sync,
-                    event,
-                    extra,
-                )
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        self._do_restart_sync,
+                        event,
+                        extra,
+                    )
+                except _RestartNow:
+                    logger.info("[WsServer] restart requested, stopping event loop")
+                    asyncio.get_running_loop().stop()
+                    return
 
     async def _send_event(self, conn: Connection, method: str, params: dict):
         """向插件发送 Event notification（无 id）。"""
@@ -381,11 +389,9 @@ class WsServer:
     def _do_restart_sync(self, event: str, extra: dict):
         """在后台线程中执行 restart/update/switch，不阻塞 event loop。
 
-        使用 run_restart_cli（无 UI 版，feishu=None → 不发飞书通知）。
-        完成后 os._exit(0) 让旧 bridge 退出，新实例由 _start_bridge 拉起并成为独立 daemon。
+        完成后抛出 _RestartNow 异常，由主线程的 _handle_client_message 捕获，
+        再调用 loop.stop() 触发有序关闭。不要用 os._exit()（非 main 线程只杀线程不杀进程）。
         """
-        import os as _os
-
         acquired = self._restart_lock.acquire(blocking=False)
         if not acquired:
             logger.warning("[restart] restart already in progress, skipping")
@@ -420,8 +426,8 @@ class WsServer:
         finally:
             self._restart_lock.release()
 
-        # 旧 bridge 退出，让新实例接管
-        _os._exit(0)
+        # 抛出异常回到主线程，触发有序关闭
+        raise _RestartNow()
 
     # ── 服务器生命周期 ────────────────────────────────────────────────────
 
