@@ -401,11 +401,16 @@ class WsServer:
                     steps = list(run_update_cli(None))
                     logger.info("[update] completed %d steps", len(steps))
                 elif event == "switch":
+                    from supercc.switcher import run_switch_cli as switch_run, SwitchError as SwitchErr
                     target = extra.get("target_path", "")
-                    if target:
-                        _os.chdir(target)
-                    steps = list(run_restart_cli(None, project_path=target or None))
-                    logger.info("[switch] completed %d steps, target=%s", len(steps), target)
+                    if not target:
+                        logger.warning("[switch] no target_path in extra, skipping")
+                    else:
+                        try:
+                            steps = list(switch_run(target))
+                            logger.info("[switch] completed %d steps, target=%s", len(steps), target)
+                        except SwitchErr as e:
+                            logger.error("[switch] failed: %s", e)
                 else:
                     steps = list(run_restart_cli(None))
                     logger.info("[restart] completed %d steps", len(steps))

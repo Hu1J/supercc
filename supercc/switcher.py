@@ -169,13 +169,26 @@ def _start_bridge(target_path: str, timeout: float = 8.0) -> int:
     try:
         stdout_log = open(os.path.join(data_dir, "supercc-stdout.log"), "w")
         stderr_log = open(os.path.join(data_dir, "supercc-stderr.log"), "w")
-        proc = subprocess.Popen(
-            ["supercc", "start"],
-            cwd=target_path,
-            stdout=stdout_log,
-            stderr=stderr_log,
-            start_new_session=True,
-        )
+        # 跨平台：Unix 用 start_new_session，Windows 用 CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
+        import sys as _sys
+        if _sys.platform == "win32":
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            DETACHED_PROCESS = 0x00000008
+            proc = subprocess.Popen(
+                ["supercc", "start"],
+                cwd=target_path,
+                stdout=stdout_log,
+                stderr=stderr_log,
+                creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+            )
+        else:
+            proc = subprocess.Popen(
+                ["supercc", "start"],
+                cwd=target_path,
+                stdout=stdout_log,
+                stderr=stderr_log,
+                start_new_session=True,
+            )
 
         # Wait for pid file to appear
         start = time.time()
