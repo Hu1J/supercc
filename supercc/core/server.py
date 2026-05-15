@@ -379,7 +379,7 @@ class WsServer:
     # ── Restart / Update / Switch 触发（后台线程执行）─────────────────────
 
     def _do_restart_sync(self, event: str, extra: dict):
-        """在后台线程中执行 restart/update，不阻塞 event loop。
+        """在后台线程中执行 restart/update/switch，不阻塞 event loop。
 
         使用 run_restart_cli（无 UI 版，feishu=None → 不发飞书通知）。
         完成后 os._exit(0) 让旧 bridge 退出，新实例由 _start_bridge 拉起并成为独立 daemon。
@@ -400,10 +400,15 @@ class WsServer:
                 elif event == "update":
                     steps = list(run_update_cli(None))
                     logger.info("[update] completed %d steps", len(steps))
+                elif event == "switch":
+                    target = extra.get("target_path", "")
+                    if target:
+                        _os.chdir(target)
+                    steps = list(run_restart_cli(None, project_path=target or None))
+                    logger.info("[switch] completed %d steps, target=%s", len(steps), target)
                 else:
-                    # switch: 暂按 restart 处理
                     steps = list(run_restart_cli(None))
-                    logger.info("[switch] fallback to restart, completed %d steps", len(steps))
+                    logger.info("[restart] completed %d steps", len(steps))
             except RestartError as e:
                 logger.error("[restart] failed: %s", e)
                 return

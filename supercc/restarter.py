@@ -195,17 +195,22 @@ async def run_restart(file_lock, feishu: "FeishuClient",
         yield step_obj
 
 
-def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None):
+def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None, project_path: str | None = None):
     """CLI version of restart — yields RestartStep, optionally sends Feishu notifications.
 
     Args:
         file_lock: FileLock object acquired by main.py
         feishu: FeishuClient instance (optional, for notifications)
         chat_id: Feishu chat_id (optional, required if feishu is provided)
+        project_path: Target project directory to switch to before restarting.
+                      If None, restarts in current directory.
     """
     import asyncio
 
     async def _run():
+        if project_path:
+            os.chdir(project_path)
+
         if not feishu or not chat_id:
             for step in _restart_to(file_lock=file_lock):
                 yield step
@@ -501,13 +506,15 @@ async def run_update(file_lock, feishu: "FeishuClient",
     return True
 
 
-def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
+def run_update_cli(file_lock, feishu=None, chat_id: str | None = None, project_path: str | None = None):
     """CLI version of update — yields UpdateStep, optionally sends Feishu notifications.
 
     Args:
         file_lock: FileLock object acquired by main.py
         feishu: FeishuClient instance (optional, for notifications)
         chat_id: Feishu chat_id (optional, required if feishu is provided)
+        project_path: Target project directory to switch to before updating.
+                      If None, updates in current directory.
 
     When status == "skip", sends "already latest" card and returns immediately
     without sending progress cards.
@@ -517,6 +524,9 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None):
     logger = logging.getLogger(__name__)
 
     async def _run():
+        if project_path:
+            os.chdir(project_path)
+
         if not feishu or not chat_id:
             for step in _do_update(file_lock=file_lock):
                 yield step
