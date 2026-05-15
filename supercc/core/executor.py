@@ -286,7 +286,13 @@ class CoreExecutor:
                     await asyncio.sleep(0.5 * (attempt + 1))
             except Exception as e:
                 logger.error("[CoreExecutor] execute error for %s\n%s", key, traceback.format_exc())
-                result = f"错误: {e}"
+                result = f"""
+---
+
+⚠️ **系统执行错误**
+
+`{type(e).__name__}: {e}`
+"""
                 cost = 0.0
                 break
 
