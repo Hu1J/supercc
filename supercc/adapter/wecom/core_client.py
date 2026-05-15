@@ -199,6 +199,8 @@ class WeComCoreWSClient:
         self._pending_message_ids: dict[str, tuple[str, str]] = {}
         self._id_counter = 0
         self._sent_message_ids: set[str] = set()       # 幂等性（主动发送去重）
+        # 流式消息 ID 追踪（避免 RESPONSE 重复发送）
+        self._streamed_msg_ids: set[str] = set()
         # Stream accumulators keyed by message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
@@ -316,7 +318,13 @@ class WeComCoreWSClient:
         params = data.get("params", {})
 
         if method == Event.RESPONSE:
+            extra = params.get("extra", {})
+            session_info = extra.get("session_info", "")
             await self._render_and_send(params)
+            # session 切换通知（在 AI 响应后追加提示）
+            if session_info:
+                chat_id = params.get("chat_id", "")
+                await self.wecom.send_text(chat_id, session_info)
         elif method == Event.STREAM_CHUNK:
             # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)
@@ -330,19 +338,33 @@ class WeComCoreWSClient:
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
         message_id = params.get("message_id", "")
+        event = params.get("event", "")
 
         if not content:
             return
 
         # Buffer text chunks for efficient batched sending
         if message_id:
-            if message_id not in self._accumulator_by_msg_id:
+            if message_id in self._accumulator_by_msg_id:
+                # 已有 accumulator
+                self._streamed_msg_ids.add(message_id)
+                acc = self._accumulator_by_msg_id[message_id]
+                if event == Event.RESPONSE:
+                    # RESPONSE = 流式结束信号：立即 flush 并清理 accumulator
+                    await acc.flush()
+                    del self._accumulator_by_msg_id[message_id]
+                else:
+                    # STREAM_CHUNK：追加到缓冲区（accumulator 内部会定时 flush）
+                    await acc.add_text(content)
+            elif message_id:
+                # 首次收到该 message_id 的 chunk，创建 accumulator
+                self._streamed_msg_ids.add(message_id)
                 self._accumulator_by_msg_id[message_id] = StreamAccumulator(
                     chat_id=chat_id,
                     message_id=message_id,
                     send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
                 )
-            await self._accumulator_by_msg_id[message_id].add_text(content)
+                await self._accumulator_by_msg_id[message_id].add_text(content)
         else:
             # No message_id (e.g. final RESPONSE without streaming) - send directly
             await self.wecom.send_markdown(chat_id, content)
@@ -485,6 +507,17 @@ class WeComCoreWSClient:
             resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "file", sender, fname)
             if resolved:
                 msg["_resolved_content"] = resolved
+
+        # ── 群聊 @mention 前缀剥离 ─────────────────────────────────────────
+        # 当机器人被 @mention 时，content 可能包含 "@_user_1 " 前缀，
+        # 这会导致命令检测（^/）失败。剥离后再送入 core 处理。
+        if msg_type == "text":
+            import re as _re
+            text_content = msg.get("text", {}).get("content", "")
+            stripped = _re.sub(r"^@\S+\s+", "", text_content, count=1)
+            if stripped != text_content:
+                msg["text"] = msg.get("text", {}).copy()
+                msg["text"]["content"] = stripped
 
         inbound = incoming_to_inbound(
             msg,
