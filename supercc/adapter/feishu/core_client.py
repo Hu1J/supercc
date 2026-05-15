@@ -887,20 +887,55 @@ class FeishuCoreWSClient:
         data_dir = self._data_dir or ""
 
         if msg_type == "image":
+            # 优先尝试 simple image 格式（{"image_key": "..."}）
             file_key = content.get("image_key", "") if isinstance(content, dict) else ""
-            if not file_key:
+            if file_key:
+                try:
+                    base_path = self._make_image_path(data_dir, msg_id, file_key)
+                    data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
+                    save_path = base_path + ".png"
+                    with open(save_path, "wb") as f:
+                        f.write(data)
+                    logger.info(f"saved image to {save_path}")
+                    return f"![image]({save_path})"
+                except Exception as e:
+                    logger.warning(f"image download failed: {e}")
+                    return None
+
+            # Rich post 格式：{"content": [[{"tag": "img", ...}], [{"tag": "text", ...}], ...]}
+            # 包含多张图片和文字混合，逐块处理
+            rich_blocks = content.get("content", []) if isinstance(content, dict) else []
+            if rich_blocks and isinstance(rich_blocks, list):
+                parts = []
+                for block in rich_blocks:
+                    if not isinstance(block, list):
+                        continue
+                    for item in block:
+                        if not isinstance(item, dict):
+                            continue
+                        tag = item.get("tag", "")
+                        if tag == "img":
+                            img_key = item.get("image_key", "")
+                            if img_key:
+                                try:
+                                    base_path = self._make_image_path(data_dir, msg_id, img_key)
+                                    data = await self.feishu.download_media(msg_id, img_key, msg_type="image")
+                                    save_path = base_path + ".png"
+                                    with open(save_path, "wb") as f:
+                                        f.write(data)
+                                    logger.info(f"saved rich post image to {save_path}")
+                                    parts.append(f"![image]({save_path})")
+                                except Exception as e:
+                                    logger.warning(f"rich post image download failed: {e}")
+                        elif tag == "text":
+                            text = item.get("text", "")
+                            if text:
+                                parts.append(text)
+                if parts:
+                    return "\n".join(parts)
                 return None
-            try:
-                base_path = self._make_image_path(data_dir, msg_id, file_key)
-                data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
-                save_path = base_path + ".png"
-                with open(save_path, "wb") as f:
-                    f.write(data)
-                logger.info(f"saved image to {save_path}")
-                return f"![image]({save_path})"
-            except Exception as e:
-                logger.warning(f"image download failed: {e}")
-                return None
+
+            return None
 
         elif msg_type == "file":
             file_key = content.get("file_key", "") if isinstance(content, dict) else ""
