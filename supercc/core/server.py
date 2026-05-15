@@ -207,6 +207,8 @@ class WsServer:
             user_open_id=params.get("user_open_id") or None,
             thread_id=params.get("thread_id") or None,
             timestamp=_cst_now(),
+            system_prompt=params.get("system_prompt", ""),
+            group_context=params.get("group_context", ""),
             extra={
                 "raw": params.get("raw", ""),
                 "is_group_chat": params.get("is_group_chat", False),
@@ -214,7 +216,7 @@ class WsServer:
                 "mention_ids": params.get("mention_ids", []),
                 "group_name": params.get("group_name", ""),
                 "chat_type": params.get("chat_type", "p2p"),
-                **params.get("extra", {}),  # 合并 platform 特有字段（group_history/mention_rules等）
+                **params.get("extra", {}),  # 合并 platform 特有字段（group_members等）
             },
         )
 

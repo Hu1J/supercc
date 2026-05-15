@@ -720,8 +720,11 @@ class FeishuCoreWSClient:
             # 剥离 <at user_id="...">...</at> 标签（富文本格式）
             stripped = _re.sub(r"<at[^>]*>.*?</at>", "", stripped, count=1)
             if stripped != content:
-                incoming = dataclass_replace(incoming, content=stripped)
-                logger.info(f"[MENTION_STRIP] '{content}' -> '{stripped}'")
+                if stripped.strip():
+                    incoming = dataclass_replace(incoming, content=stripped)
+                    logger.info(f"[MENTION_STRIP] '{content}' -> '{stripped}'")
+                else:
+                    logger.info(f"[MENTION_STRIP] skipped (empty after strip) '{content}'")
 
         # ── 群聊上下文 enrichment（在 incoming 上构建 system_prompt）──────────
         # 注意：_enrich_group_context 必须在 incoming_to_inbound 之前调用，
@@ -737,6 +740,8 @@ class FeishuCoreWSClient:
             bot_id=self.bot_id,
             project_path=self.project_path,
             system_prompt=incoming.system_prompt,
+            group_members=getattr(incoming, "group_members", None),
+            group_context=getattr(incoming, "group_context", ""),
         )
 
         # ── 群聊所有消息：记录到 _group_history ────────────────────────────
@@ -752,20 +757,11 @@ class FeishuCoreWSClient:
         if not await self._check_group_permissions(inbound, incoming):
             return {}
 
-        # ── 构建完整 content（plugin 端一次性构建，core 直接使用）──────────
-        # system_prompt 已在 _enrich_group_context 中构建，传入 inbound.system_prompt
-        # content 只含动态部分：历史消息 + 用户消息
-        content_parts = []
-
-        if incoming.is_group_chat:
-            history = getattr(incoming, "group_history", [])
-            if history:
-                content_parts.append("[最近消息]")
-                for h in history[-10:]:
-                    content_parts.append(f"  {h}")
-
-        content_parts.append(inbound.content)
-        full_content = "\n\n".join(content_parts)
+        # ── 构建完整 content ─────────────────────────────────────────
+        # content 是纯用户消息，不拼入群聊历史。
+        # 群聊上下文（[最近消息]等）由 core 的 _build_prompt 从 extra.group_history 注入，
+        # 这样 core 才能正确检测斜杠命令（_is_command 要求 content 以 / 开头）。
+        full_content = inbound.content
 
         # 添加 typing indicator: OK reaction 表示 AI 开始处理
         try:
@@ -786,6 +782,7 @@ class FeishuCoreWSClient:
                 "project_path": inbound.session_key.project_path,
                 "content": full_content,
                 "system_prompt": inbound.system_prompt,
+                "group_context": inbound.group_context or "",
                 "message_type": inbound.message_type.value,
                 "is_group_chat": inbound.extra.get("is_group_chat", False),
                 "mention_bot": inbound.extra.get("mention_bot", False),
@@ -795,6 +792,7 @@ class FeishuCoreWSClient:
                 "extra": inbound.extra,
             },
         )
+        logger.info(f"[SEND_TO_CORE] content={full_content[:100]!r} mention_bot={inbound.extra.get('mention_bot', False)}")
 
         # 最多重试 2 次（ConnectionClosedError、TypeError 均重试）
         for attempt in range(2):
@@ -1061,10 +1059,30 @@ class FeishuCoreWSClient:
         except Exception as e:
             members = None
             logger.warning(f"[GROUP] get_chat_members failed: {e}")
+        # 归一化为 plain dict，避免 lark SDK ListMember 对象无法 JSON 序列化
+        incoming.group_members = []
+        for m in (members or []):
+            if isinstance(m, dict):
+                incoming.group_members.append({
+                    "member_id": m.get("member_id", ""),
+                    "open_id": m.get("open_id", ""),
+                    "name": m.get("name", ""),
+                    "bot_id": m.get("bot_id", ""),
+                    "bot_name": m.get("bot_name", ""),
+                })
+            else:
+                incoming.group_members.append({
+                    "member_id": getattr(m, "member_id", ""),
+                    "open_id": getattr(m, "open_id", ""),
+                    "name": getattr(m, "name", ""),
+                    "bot_id": getattr(m, "bot_id", ""),
+                    "bot_name": getattr(m, "bot_name", ""),
+                })
 
         # 2) 群历史（从内存，媒体按需解析）
         # 用 name_by_id 解析发送者姓名，不再单独调 get_user_name API
         hist = self._group_history.get(chat_id, [])
+        history_context = None
         if hist:
             history_lines = []
             for h_msg in hist:
@@ -1101,7 +1119,9 @@ class FeishuCoreWSClient:
                 if text:
                     history_lines.append(f"{sender_name}: {text[:200]}")
             if history_lines:
-                incoming.group_history = history_lines
+                history_context = "[最近消息]\n  " + "\n  ".join(history_lines)
+            else:
+                history_context = None
 
         system_parts = []
 
@@ -1136,7 +1156,8 @@ class FeishuCoreWSClient:
                     f"使用飞书 @ 格式如：<at user_id=\"open_id\">姓名</at>。不得遗漏。"
                 )
 
-        # 3) 引用消息内容（parent_id → get_message）
+        # 3) 引用消息内容（parent_id → get_message）- 进 group_context
+        context_parts = []
         parent_id = getattr(incoming, "parent_id", "") or ""
         if parent_id:
             try:
@@ -1145,12 +1166,18 @@ class FeishuCoreWSClient:
                     body = quoted_msg.get("body", {})
                     quoted_text = body.get("content", "") if isinstance(body, dict) else ""
                     if quoted_text:
-                        system_parts.append(f"[引用消息] {quoted_text[:500]}")
+                        context_parts.append(f"[引用消息] {quoted_text[:500]}")
             except Exception as e:
                 logger.warning(f"failed to fetch quoted message {parent_id}: {e}")
 
+        # 4) 群聊历史（[最近消息]）- 进 group_context
+        if history_context:
+            context_parts.append(history_context)
+
         if system_parts:
             incoming.system_prompt = "\n".join(system_parts)
+        if context_parts:
+            incoming.group_context = "\n".join(context_parts)
 
     async def _send_event(self, method: str, params: dict):
         """发送 Event notification 到核心。"""

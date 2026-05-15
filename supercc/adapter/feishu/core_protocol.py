@@ -20,12 +20,17 @@ def incoming_to_inbound(
     bot_id: str,
     project_path: str,
     system_prompt: str = "",
+    group_members: list | None = None,
+    group_context: str = "",
 ) -> InboundMessage:
     """
     将 Feishu IncomingMessage 转换为核心 InboundMessage。
 
     bot_id: 从配置读取的飞书机器人 open_id
     project_path: 从配置读取的项目路径
+    system_prompt: 插件注入的群聊指令（群名/成员/@规则），core 追加到 system prompt
+    group_members: 群成员列表（raw dict 格式），core 用于 @mention 自动补全检测
+    group_context: 群聊对话上下文（历史/引用），非指令时前置到 user prompt
     """
     key = SessionKey(
         bot_id=bot_id,
@@ -64,8 +69,10 @@ def incoming_to_inbound(
             "mention_ids": incoming.mention_ids,
             "group_name": incoming.group_name,
             "chat_type": incoming.chat_type,
+            "group_members": group_members or [],
         },
         system_prompt=system_prompt,
+        group_context=group_context,
     )
 
 

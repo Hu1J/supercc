@@ -445,7 +445,13 @@ class CoreExecutor:
         return "\n\n".join(parts)
 
     def _build_prompt(self, inbound: InboundMessage) -> str:
-        """Plugin 端已构建完整 prompt（包含群聊上下文），core 直接使用。"""
+        """构建用户 prompt。
+
+        非指令且群聊上下文非空时，将 group_context 前置到 content，
+        让 Claude 直接在对话上下文中看到历史消息。
+        """
+        if inbound.group_context and not _is_command(inbound.content):
+            return inbound.group_context + "\n\n" + inbound.content
         return inbound.content
 
     async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "", user_open_id: str = "") -> None:
