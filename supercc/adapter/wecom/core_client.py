@@ -421,7 +421,14 @@ class WeComCoreWSClient:
             if resolved:
                 msg["_resolved_content"] = resolved
 
-        inbound = incoming_to_inbound(msg, bot_id=self.bot_id, project_path=self.project_path)
+        inbound = incoming_to_inbound(
+            msg,
+            bot_id=self.bot_id,
+            project_path=self.project_path,
+            system_prompt="",
+            group_members=None,
+            group_context="",
+        )
 
         # 群聊权限校验
         if not await self._check_group_permissions(inbound):

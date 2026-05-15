@@ -24,9 +24,18 @@ def incoming_to_inbound(
     msg: dict,
     bot_id: str,
     project_path: str,
+    system_prompt: str = "",
+    group_members: list | None = None,
+    group_context: str = "",
 ) -> InboundMessage:
     """
     将 WeCom 消息字典转换为核心 InboundMessage。
+
+    bot_id: 从配置读取的企业微信机器人 agent_id
+    project_path: 从配置读取的项目路径
+    system_prompt: 插件注入的群聊指令（群名/成员/@规则），core 追加到 system prompt
+    group_members: 群成员列表，core 用于 @mention 自动补全检测
+    group_context: 群聊对话上下文（历史/引用），非指令时前置到 user prompt
 
     WeCom 入站消息格式:
     {
@@ -99,12 +108,15 @@ def incoming_to_inbound(
             "mention_ids": msg.get("mentioned_list", []),
             "group_name": "",
             "chat_type": msg.get("chattype", "single"),
+            "group_members": group_members or [],
             # 企业微信特有字段
             "room_id": msg.get("roomid", ""),
             "sender_id": msg.get("from", {}).get("userid", ""),
             # 媒体下载字段（image/file 消息有 url + aeskey）
             **extra_fields,
         },
+        system_prompt=system_prompt,
+        group_context=group_context,
     )
 
 
