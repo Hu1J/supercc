@@ -7,6 +7,7 @@ import contextvars
 import json
 import logging
 import secrets
+import threading
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
@@ -110,6 +111,7 @@ class WsServer:
         self._server: Optional[Any] = None
         self._running = asyncio.Event()
         self._executor = executor
+        self._restart_lock = threading.Lock()  # 防止并发 restart/update
 
         # 注册核心方法
         self._setup_core_methods()
@@ -346,6 +348,20 @@ class WsServer:
             except Exception:
                 logger.warning("[WsServer] failed to send response, connection may be dead")
 
+            # 响应发出后，检查是否需要 restart/update/switch
+            # event 在 resp.result（success response）或 resp.error 中
+            event: str = ""
+            if resp.result is not None and isinstance(resp.result, dict):
+                event = resp.result.get("event", "")
+            if event in ("restart", "update", "switch"):
+                extra = resp.result.get("extra", {}) if resp.result else {}
+                asyncio.get_running_loop().run_in_executor(
+                    None,
+                    self._do_restart_sync,
+                    event,
+                    extra,
+                )
+
     async def _send_event(self, conn: Connection, method: str, params: dict):
         """向插件发送 Event notification（无 id）。"""
         frame = {"jsonrpc": "2.0", "method": method, "params": params}
@@ -359,6 +375,43 @@ class WsServer:
         for conn in self._connections.values():
             if key in conn.subscribed_keys:
                 await self._send_event(conn, method, params)
+
+    # ── Restart / Update / Switch 触发（后台线程执行）─────────────────────
+
+    def _do_restart_sync(self, event: str, extra: dict):
+        """在后台线程中执行 restart/update，不阻塞 event loop。
+
+        使用 run_restart_cli（无 UI 版，feishu=None → 不发飞书通知）。
+        完成后 os._exit(0) 让旧 bridge 退出，新实例由 _start_bridge 拉起并成为独立 daemon。
+        """
+        import os as _os
+
+        acquired = self._restart_lock.acquire(blocking=False)
+        if not acquired:
+            logger.warning("[restart] restart already in progress, skipping")
+            return
+
+        try:
+            from supercc.restarter import run_restart_cli, run_update_cli, RestartError
+            try:
+                if event == "restart":
+                    steps = list(run_restart_cli(None))
+                    logger.info("[restart] completed %d steps", len(steps))
+                elif event == "update":
+                    steps = list(run_update_cli(None))
+                    logger.info("[update] completed %d steps", len(steps))
+                else:
+                    # switch: 暂按 restart 处理
+                    steps = list(run_restart_cli(None))
+                    logger.info("[switch] fallback to restart, completed %d steps", len(steps))
+            except RestartError as e:
+                logger.error("[restart] failed: %s", e)
+                return
+        finally:
+            self._restart_lock.release()
+
+        # 旧 bridge 退出，让新实例接管
+        _os._exit(0)
 
     # ── 服务器生命周期 ────────────────────────────────────────────────────
 
