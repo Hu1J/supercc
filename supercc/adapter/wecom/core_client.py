@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import traceback
 from typing import Any
 
@@ -208,6 +209,8 @@ class WeComCoreWSClient:
 
         # WeCom 格式化管线
         self.formatter = WeComReplyFormatter()
+        # 重连互斥锁（防止 _reconnect 和 _read_loop 并发调用）
+        self._reconnect_lock = asyncio.Lock()
 
     async def connect(self):
         """连接核心 WebSocket 服务。"""
@@ -216,19 +219,81 @@ class WeComCoreWSClient:
         self._running = True
         logger.info("[WeComCore] Connected to core")
         asyncio.create_task(self._read_loop())
+        asyncio.create_task(self._ping_loop())
 
     async def _read_loop(self):
-        """持续读取核心发来的消息。"""
+        """持续读取核心发来的消息。连接断开时自动重连（自愈循环）。"""
         import websockets
-        while self._running and self._ws:
+        while self._running:
+            ws = self._ws
+            if ws is None:
+                await asyncio.sleep(1)
+                continue
             try:
-                msg = await self._ws.recv()
+                msg = await ws.recv()
                 data = json.loads(msg)
                 await self._handle_core_message(data)
             except websockets.exceptions.ConnectionClosed:
-                break
+                if self._running:
+                    logger.warning("[WeComCore] Connection closed, reconnecting...")
+                    await self._reconnect()
+                else:
+                    break
             except Exception:
                 logger.error("[WeComCore] Error reading message\n%s", traceback.format_exc())
+
+    async def _reconnect(self, jitter: bool = True):
+        """断开旧连接，重新连接核心 WebSocket。
+
+        可安全地从 _read_loop 和 _do_send 同时调用（_reconnect_lock 保证互斥）。
+        jitter=True 时重连前加 0~3s 随机延迟（防多插件同时重连 core）。"""
+        import websockets
+        if jitter:
+            await asyncio.sleep(random.uniform(0, 3))
+        async with self._reconnect_lock:
+            if self._ws:
+                try:
+                    if self._ws.close_code is None:
+                        return
+                except Exception:
+                    pass
+            old_ws = self._ws
+            self._ws = None
+            if old_ws:
+                try:
+                    await old_ws.close()
+                except Exception:
+                    pass
+            self._ws = await websockets.connect(self.core_url)
+            logger.info("[WeComCore] Reconnected to core")
+
+    async def _ping_loop(self):
+        """定期 ping core，检测连接是否健康。超时则自动重连。
+
+        应用层 ping（通过 JSON-RPC core.ping），比 TCP ping 更能反映
+        完整的发送-处理-响应链路是否正常。"""
+        import websockets
+        while self._running:
+            await asyncio.sleep(30)
+            ws = self._ws
+            if ws is None:
+                continue
+            future = asyncio.Future()
+            req_id = str(self._next_id())
+            self._pending_responses[req_id] = future
+            try:
+                await ws.send(json.dumps(
+                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}}
+                ))
+                await asyncio.wait_for(future, timeout=30)
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+                logger.warning("[WeComCore] ping timeout, reconnecting...")
+                self._pending_responses.pop(req_id, None)
+                await self._reconnect(jitter=False)
+            except Exception:
+                self._pending_responses.pop(req_id, None)
+            else:
+                self._pending_responses.pop(req_id, None)
 
     async def _handle_core_message(self, data: dict):
         if "id" in data:
