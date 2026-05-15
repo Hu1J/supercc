@@ -995,7 +995,9 @@ class FeishuCoreWSClient:
                             fallback = (
                                 "⚠️ **权限不足，无法正常服务**\n\n"
                                 + "\n".join(f"- {m}" for m in missing)
-                                + f"\n\n请管理员点击 [前往飞书开放平台授权]({auth_url})"
+                                + "\n\n请管理员点击 [前往飞书开放平台授权]("
+                                + auth_url
+                                + ")"
                             )
                             try:
                                 await self.feishu.send_post(chat_id, fallback)
