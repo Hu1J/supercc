@@ -282,7 +282,7 @@ def format_codex_models(include_header: bool = True) -> str:
         lines.append(f"| `{model}` | {note} |")
     lines.extend([
         "",
-        "在 `config.yaml` 中设置 `codex.model` 后运行 `/codex setup` 或重启 SuperCC 生效。",
+        "在 `config.json` 中设置 `codex.model` 后运行 `/codex setup` 或重启 SuperCC 生效。",
     ])
     return "\n".join(lines)
 

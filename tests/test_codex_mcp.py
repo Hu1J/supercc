@@ -217,7 +217,7 @@ def test_format_codex_status_for_missing_cli():
 
     assert "missing_cli" in text
     assert "gpt-5.5" in text
-    assert "config.yaml" in text
+    assert "config.json" in text
     assert "gpt-5.4" in text
 
 
