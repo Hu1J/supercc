@@ -392,7 +392,7 @@ class WsServer:
             return
 
         try:
-            from supercc.restarter import run_restart_cli, run_update_cli, RestartError
+            from supercc.core.commands.restart_impl import run_restart_cli, run_update_cli, RestartError
             try:
                 if event == "restart":
                     steps = list(run_restart_cli(None))
@@ -401,7 +401,7 @@ class WsServer:
                     steps = list(run_update_cli(None))
                     logger.info("[update] completed %d steps", len(steps))
                 elif event == "switch":
-                    from supercc.switcher import run_switch_cli as switch_run, SwitchError as SwitchErr
+                    from supercc.core.commands.switch_impl import run_switch_cli as switch_run, SwitchError as SwitchErr
                     target = extra.get("target_path", "")
                     if not target:
                         logger.warning("[switch] no target_path in extra, skipping")

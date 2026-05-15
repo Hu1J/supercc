@@ -64,7 +64,7 @@ class StatusHandler(CommandHandler):
         # 版本更新检查
         title = f"🐲 **SuperCC v{__version__}**"
         try:
-            from supercc.restarter import check_version
+            from supercc.core.commands.restart_impl import check_version
             current_ver, latest_ver = await asyncio.to_thread(check_version)
             def _ver_gt(current: str, latest: str) -> bool:
                 def nums(v):

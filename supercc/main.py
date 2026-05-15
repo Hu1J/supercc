@@ -1629,7 +1629,7 @@ def main(args=None):
         return
 
     if command == "restart":
-        from supercc.restarter import run_restart_cli, RestartError as RestartErr
+        from supercc.core.commands.restart_impl import run_restart_cli, RestartError as RestartErr
         try:
             for step in run_restart_cli(_active_lock):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
@@ -1646,7 +1646,7 @@ def main(args=None):
         return
 
     if command == "update":
-        from supercc.restarter import run_update_cli, RestartError as UpdateErr
+        from supercc.core.commands.restart_impl import run_update_cli, RestartError as UpdateErr
         try:
             for step in run_update_cli(_active_lock):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
@@ -1691,7 +1691,7 @@ def main(args=None):
         return
 
     if command == "switch":
-        from supercc.switcher import SwitchError, run_switch_cli
+        from supercc.core.commands.switch_impl import SwitchError, run_switch_cli
         target = os.path.abspath(args.target)
 
         # Try to load current project's config + Feishu client for notifications

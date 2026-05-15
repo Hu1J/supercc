@@ -1,4 +1,7 @@
-"""Restart and update — hot restart / hot upgrade for supercc."""
+"""Restart and update — hot restart / hot upgrade for supercc.
+
+原 supercc/restarter.py，移入 core/commands/ 作为 core 正式模块。
+"""
 from __future__ import annotations
 
 import os

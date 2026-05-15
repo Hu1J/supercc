@@ -1,4 +1,7 @@
-"""Project switcher — stops current SuperCC, starts target SuperCC with rewritten config."""
+"""Project switcher — stops current SuperCC, starts target SuperCC with rewritten config.
+
+原 supercc/switcher.py，移入 core/commands/ 作为 core 正式模块。
+"""
 from __future__ import annotations
 
 import os
