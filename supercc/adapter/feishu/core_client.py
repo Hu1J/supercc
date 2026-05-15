@@ -18,6 +18,7 @@ from supercc.adapter.feishu.core_protocol import incoming_to_inbound
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter, should_use_card
 from supercc.adapter.feishu.format.questionnaire_card import format_questionnaire_card
 from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+from supercc.adapter.feishu.media import make_image_path, make_file_path, save_bytes
 from dataclasses import replace as dataclass_replace
 
 logger = logging.getLogger("feishu")
@@ -604,25 +605,8 @@ class FeishuCoreWSClient:
                     pass
                 return False
 
+            # 群聊但没有 @CC：静默忽略，不发任何通知
             if getattr(entry, "require_mention", True) and not inbound.extra.get("mention_bot", False):
-                # 群聊但没有 @CC
-                reason = "请 @CC 我来使用 SuperCC。"
-                try:
-                    card = {
-                        "schema": "2.0",
-                        "config": {"wide_screen_mode": True},
-                        "header": {
-                            "title": {"tag": "plain_text", "content": "需要 @CC"},
-                        },
-                        "body": {
-                            "elements": [
-                                {"tag": "markdown", "content": reason},
-                            ]
-                        },
-                    }
-                    await self.feishu.send_card(key.chat_id, card)
-                except Exception:
-                    pass
                 return False
 
             allow_from = getattr(entry, "allow_from", [])
@@ -754,17 +738,17 @@ class FeishuCoreWSClient:
             system_prompt=incoming.system_prompt,
         )
 
-        # 群聊权限校验
-        if not await self._check_group_permissions(inbound, incoming):
-            return {}
-
-        # ── 群聊非@mention消息：只存内存，通知core更新session ─────────────────
-        if inbound.extra.get("is_group_chat") and not inbound.extra.get("mention_bot"):
+        # ── 群聊所有消息：记录到 _group_history ────────────────────────────
+        # 无论是否 @mention，所有群聊消息都要记录到 _group_history，
+        # 以便为后续 @mention 消息提供会话上下文。
+        if inbound.extra.get("is_group_chat"):
             hist = self._group_history.setdefault(inbound.session_key.chat_id, [])
             hist.append(incoming)
             if len(hist) > self._MAX_GROUP_HISTORY:
-                hist[:] = hist[-self._MAX_GROUP_HISTORY:]
-            logger.info(f"group msg stored (no mention), hist_len={len(hist)}")
+                hist.pop(0)
+
+        # 群聊权限校验
+        if not await self._check_group_permissions(inbound, incoming):
             return {}
 
         # ── 构建完整 content（plugin 端一次性构建，core 直接使用）──────────
@@ -931,23 +915,21 @@ class FeishuCoreWSClient:
                     elif tag == "img":
                         image_key = el.get("image_key", "")
                         if image_key:
-                            base_path = self._make_image_path(data_dir, msg_id, image_key)
-                            data = await self.feishu.download_media(msg_id, image_key, msg_type="image")
+                            base_path = make_image_path(data_dir, msg_id, image_key)
                             save_path = base_path + ".png"
-                            with open(save_path, "wb") as f:
-                                f.write(data)
-                            logger.info(f"[media] saved rich post image to {save_path}")
+                            logger.info(f"[media] downloading image key={image_key} → {save_path}")
+                            data = await self.feishu.download_media(msg_id, image_key, msg_type="image")
+                            save_bytes(save_path, data)
                             chunks.append(f"![image]({save_path})")
                     elif tag == "media":
                         file_key = el.get("file_key", "")
                         if file_key:
                             orig_name = el.get("file_name", "file")
                             file_type = el.get("file_type", "bin")
-                            save_path = self._make_file_path(data_dir, msg_id, orig_name, file_type)
+                            save_path = make_file_path(data_dir, msg_id, orig_name, file_type)
+                            logger.info(f"[media] downloading file key={file_key} name={orig_name!r} → {save_path}")
                             data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
-                            with open(save_path, "wb") as f:
-                                f.write(data)
-                            logger.info(f"[media] saved rich post file to {save_path}")
+                            save_bytes(save_path, data)
                             chunks.append(f"[File: {save_path}] ({orig_name})")
                     elif tag == "a":
                         chunks.append(f"[{el.get('text') or ''}]({el.get('href') or ''})")
@@ -973,12 +955,11 @@ class FeishuCoreWSClient:
             if "image_key" in content:
                 # Simple 格式：只有一张图片
                 file_key = content.get("image_key", "")
-                base_path = self._make_image_path(data_dir, msg_id, file_key)
-                data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
+                base_path = make_image_path(data_dir, msg_id, file_key)
                 save_path = base_path + ".png"
-                with open(save_path, "wb") as f:
-                    f.write(data)
-                logger.info(f"[media] saved simple image to {save_path}")
+                logger.info(f"[media] downloading image key={file_key} → {save_path}")
+                data = await self.feishu.download_media(msg_id, file_key, msg_type="image")
+                save_bytes(save_path, data)
                 return f"![image]({save_path})"
             elif "content" in content:
                 # Rich post 格式：多图+穿插文字
@@ -993,11 +974,10 @@ class FeishuCoreWSClient:
                 file_key = content.get("file_key", "")
                 orig_name = content.get("file_name", "file")
                 file_type = content.get("file_type", "bin")
-                save_path = self._make_file_path(data_dir, msg_id, orig_name, file_type)
+                save_path = make_file_path(data_dir, msg_id, orig_name, file_type)
+                logger.info(f"[media] downloading file key={file_key} name={orig_name!r} → {save_path}")
                 data = await self.feishu.download_media(msg_id, file_key, msg_type="file")
-                with open(save_path, "wb") as f:
-                    f.write(data)
-                logger.info(f"[media] saved file to {save_path}")
+                save_bytes(save_path, data)
                 return f"[File: {save_path}] ({orig_name})"
             elif "content" in content:
                 result = await _post_to_markdown(content)
@@ -1006,20 +986,6 @@ class FeishuCoreWSClient:
                 return None
 
         return None
-
-    def _make_image_path(self, data_dir: str, msg_id: str, image_key: str) -> str:
-        import hashlib, os
-        key_hash = hashlib.md5(image_key.encode()).hexdigest()[:8]
-        directory = os.path.join(data_dir, ".supercc", "media") if data_dir else "/tmp/supercc_media"
-        os.makedirs(directory, exist_ok=True)
-        return os.path.join(directory, f"{msg_id}_{key_hash}")
-
-    def _make_file_path(self, data_dir: str, msg_id: str, orig_name: str, file_type: str) -> str:
-        import os
-        directory = os.path.join(data_dir, ".supercc", "media") if data_dir else "/tmp/supercc_media"
-        os.makedirs(directory, exist_ok=True)
-        safe_name = "".join(c for c in orig_name if c.isalnum() or c in "._-") or "file"
-        return os.path.join(directory, f"{msg_id}_{safe_name}")
 
     async def _enrich_group_context(self, incoming):
         """为群聊消息收集并注入上下文：历史、成员列表、引用消息、@mention规则。

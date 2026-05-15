@@ -67,6 +67,7 @@ async def run_plugin(config, data_dir):
         feishu_client=feishu,
         bot_id=config.channels.feishu.bot_open_id,
         project_path=config.claude.approved_directory,
+        data_dir=data_dir,
         groups=config.channels.feishu.groups,
         allowed_users=config.channels.feishu.allowed_users,
     )

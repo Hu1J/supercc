@@ -1,12 +1,14 @@
 """Media file utilities — path generation, saving, MIME type mapping."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
 from pathlib import Path
 from typing import Tuple
 
+logger = logging.getLogger("feishu")
 
 # MIME type → 文件扩展名
 MIME_TO_EXT = {
@@ -107,6 +109,7 @@ def save_bytes(path: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(data)
+    logger.info(f"[media] wrote {len(data):,} bytes → {path}")
 
 
 # 扩展名 → 飞书 file_type

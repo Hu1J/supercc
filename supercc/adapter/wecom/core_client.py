@@ -8,6 +8,7 @@ import traceback
 from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
+from supercc.adapter.feishu.media import save_bytes
 from supercc.adapter.wecom.client import WeComClient
 from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to_renderable
 from wecom_aibot_sdk import generate_req_id
@@ -512,8 +513,6 @@ class WeComCoreWSClient:
             if msg_type == "image":
                 ext = ".png"
                 save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
-                with open(save_path, "wb") as f:
-                    f.write(data)
             else:
                 # file: 保留原扩展名
                 if file_name:
@@ -523,11 +522,10 @@ class WeComCoreWSClient:
                 else:
                     ext = ".bin"
                 save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
-                with open(save_path, "wb") as f:
-                    f.write(data)
 
+            logger.info(f"[WeComCore] downloading {msg_type} to {save_path}")
+            save_bytes(save_path, data)
             self._media_cache[msg_id] = save_path
-            logger.info(f"[WeComCore] downloaded {msg_type} to {save_path}")
 
             if msg_type == "image":
                 return f"{sender}: ![image]({save_path})"
