@@ -270,9 +270,25 @@ class FeishuWSClient:
                     chat_type=chat_type,
                     mention_bot=mention_bot,
                     mention_ids=mention_ids,
-                    group_name=str(getattr(message, "chat_name", "") or ""),
+                    group_name="",
                 )
-                logger.info(f"Received message from {user_open_id}: type={msg_type!r} parent_id={getattr(message, 'parent_id', '')!r} raw_content={content_str!r}")
+                # fetch group_name via get_chat_name (async, call from sync context)
+                if is_group_chat:
+                    chat_id = getattr(message, "chat_id", "") or ""
+                    if chat_id:
+                        try:
+                            loop = asyncio.get_running_loop()
+                            fut = asyncio.run_coroutine_threadsafe(
+                                self.feishu.get_chat_name(chat_id), loop
+                            )
+                            gname = fut.result(timeout=5) or ""
+                        except Exception:
+                            gname = ""
+                        if gname:
+                            incoming.group_name = gname
+                    logger.info(f"Received message from {user_open_id}: type={msg_type!r} parent_id={getattr(message, 'parent_id', '')!r} raw_content={content_str!r}{f' group_name={gname!r}' if gname else ''}")
+                else:
+                    logger.info(f"Received message from {user_open_id}: type={msg_type!r} parent_id={getattr(message, 'parent_id', '')!r} raw_content={content_str!r}")
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:

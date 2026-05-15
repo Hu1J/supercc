@@ -607,6 +607,7 @@ class FeishuCoreWSClient:
 
             # 群聊但没有 @CC：静默忽略，不发任何通知
             if getattr(entry, "require_mention", True) and not inbound.extra.get("mention_bot", False):
+                logger.info(f"[GROUP] skip (no mention) chat_id={key.chat_id}")
                 return False
 
             allow_from = getattr(entry, "allow_from", [])
@@ -1044,8 +1045,25 @@ class FeishuCoreWSClient:
                 except Exception as ex:
                     logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
 
-        # 1) 群历史（从内存，媒体按需解析）
-        # 内存中的消息（IncomingMessage 对象），图片/文件需下载到本地再注入
+        # 1) 先拉成员列表，建立 open_id → name 映射（复用，节省 API 调用）
+        name_by_id: dict[str, str] = {}
+        try:
+            members = await self.feishu.get_chat_members(chat_id)
+            for m in members:
+                if isinstance(m, dict):
+                    member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                    name = m.get("name") or m.get("bot_name", "")
+                else:
+                    member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                    name = getattr(m, "name", None) or ""
+                if member_id and name:
+                    name_by_id[member_id] = name
+        except Exception as e:
+            members = None
+            logger.warning(f"[GROUP] get_chat_members failed: {e}")
+
+        # 2) 群历史（从内存，媒体按需解析）
+        # 用 name_by_id 解析发送者姓名，不再单独调 get_user_name API
         hist = self._group_history.get(chat_id, [])
         if hist:
             history_lines = []
@@ -1074,33 +1092,25 @@ class FeishuCoreWSClient:
                             elif isinstance(h_msg, dict):
                                 h_msg["content"] = resolved
                     except Exception as e:
-                        logger.warning(f"resolve media failed for {h_msg_id}: {e}")
+                        logger.warning(f"[GROUP] resolve media failed for {h_msg_id}: {e}")
                         text = f"{h_content} (媒体下载失败)" if h_content else ""
 
-                # 获取发送者姓名
-                sender_name = h_user_open_id
-                if h_user_open_id:
-                    try:
-                        sender_name = await self.feishu.get_user_name(h_user_open_id)
-                    except Exception:
-                        pass
+                # 发送者姓名优先从成员列表查，兜底用 open_id
+                sender_name = name_by_id.get(h_user_open_id) or h_user_open_id
 
                 if text:
                     history_lines.append(f"{sender_name}: {text[:200]}")
             if history_lines:
                 incoming.group_history = history_lines
 
-        # 2) 群成员列表 + @mention 规则生成（权限不足不影响 group_history）
-        try:
-            members = await self.feishu.get_chat_members(chat_id)
-        except Exception as e:
-            members = None
-            logger.warning(f"[CHAT_MEMBERS] get_chat_members failed (权限不足): {e}")
-
         system_parts = []
 
-        # 群名称
-        group_name = incoming.group_name
+        # 群名称（从 API 查一次，FeishuClient 内部缓存）
+        group_name = ""
+        try:
+            group_name = await self.feishu.get_chat_name(chat_id)
+        except Exception:
+            pass
         if group_name:
             system_parts.append(f"[群聊: {group_name}]")
 

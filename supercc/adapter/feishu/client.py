@@ -172,6 +172,7 @@ class FeishuClient:
         self.data_dir = data_dir
         self._client = None
         self._user_name_cache: dict[str, str] = {}  # open_id -> display_name
+        self._chat_name_cache: dict[str, str] = {}  # chat_id -> group_name
 
     def _get_client(self):
         if self._client is None:
@@ -863,6 +864,32 @@ class FeishuClient:
             logger.warning(f"[CHAT_MEMBERS] bots error: {e}")
 
         return all_members
+
+    async def get_chat_name(self, chat_id: str) -> str:
+        """Fetch group chat name by chat_id. Results are cached per chat_id."""
+        if not chat_id:
+            return ""
+        if chat_id in self._chat_name_cache:
+            return self._chat_name_cache[chat_id]
+        import lark_oapi as lark
+        client = self._get_client()
+        try:
+            request = (
+                lark.im.v1.GetChatRequest.builder()
+                .chat_id(chat_id)
+                .build()
+            )
+            resp = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.chats.get, request)
+            )
+            if resp.success() and resp.data:
+                name = getattr(resp.data, "name", "") or ""
+                self._chat_name_cache[chat_id] = name
+                return name
+        except Exception:
+            pass
+        self._chat_name_cache[chat_id] = ""
+        return ""
 
     async def get_user_name(self, open_id: str) -> str:
         """Fetch user display name by open_id. Results are cached.
