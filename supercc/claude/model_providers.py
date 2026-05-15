@@ -95,8 +95,8 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.deepseek.com/anthropic",
         auth_type="bearer",
         models=[
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
+            "deepseek-v4-pro[1m]",
+            "deepseek-v4-flash[1m]",
             "deepseek-chat",
             "deepseek-reasoner",
         ],
@@ -124,6 +124,9 @@ PROVIDERS: dict[str, Provider] = {
         base_url="https://api.anthropic.com",
         auth_type="bearer",
         models=[
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
             "claude-opus-4-5",
             "claude-sonnet-4-5",
             "claude-sonnet-4-4",
@@ -138,7 +141,7 @@ PROVIDERS: dict[str, Provider] = {
 
     "openrouter": Provider(
         id="openrouter",
-        base_url="https://openrouter.ai/api/v1",
+        base_url="https://openrouter.ai/api",
         auth_type="bearer",
         models=[
             "anthropic/claude-3.5-sonnet",
