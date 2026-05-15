@@ -764,22 +764,7 @@ class FeishuCoreWSClient:
             hist.append(incoming)
             if len(hist) > self._MAX_GROUP_HISTORY:
                 hist[:] = hist[-self._MAX_GROUP_HISTORY:]
-            try:
-                notify_req = JsonRpcRequest(
-                    id=self._next_id(),
-                    method="feishu.notify",
-                    params={
-                        "chat_id": inbound.session_key.chat_id,
-                        "user_open_id": inbound.user_open_id or "",
-                        "platform": inbound.session_key.platform,
-                        "project_path": inbound.session_key.project_path,
-                        "content": inbound.content,
-                    },
-                )
-                await self._ws.send(json.dumps(notify_req.to_dict()))
-            except Exception:
-                pass
-            logger.info(f"group msg stored, hist_len={len(hist)}")
+            logger.info(f"group msg stored (no mention), hist_len={len(hist)}")
             return {}
 
         # ── 构建完整 content（plugin 端一次性构建，core 直接使用）──────────
