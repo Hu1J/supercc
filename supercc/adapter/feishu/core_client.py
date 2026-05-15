@@ -983,12 +983,25 @@ class FeishuCoreWSClient:
                                 "elements": [
                                     {"tag": "markdown", "content": "## ⚠️ 权限不足，无法正常服务\n\n当前机器人缺少以下权限：\n\n" + "\n".join(f"- {m}" for m in missing) + "\n\n请管理员点击下方按钮前往授权。"},
                                     {"tag": "action", "actions": [
-                                        {"tag": "link", "text": "前往授权", "url": auth_url}
+                                        {"tag": "button", "text": "前往授权", "url": auth_url}
                                     ]},
                                 ]
                             }
                         }
-                        await self.feishu.send_card(chat_id, card)
+                        try:
+                            await self.feishu.send_card(chat_id, card)
+                        except Exception as card_err:
+                            # 卡片发送失败时降级为纯文本
+                            fallback = (
+                                "⚠️ 权限不足，无法正常服务\n\n"
+                                + "\n".join(f"- {m}" for m in missing)
+                                + f"\n\n授权链接：{auth_url}"
+                            )
+                            try:
+                                await self.feishu.send_text(chat_id, fallback)
+                            except Exception:
+                                pass
+                            logger.warning(f"[GROUP_PERM] card send failed, fallback text sent: {card_err}")
                 except Exception as ex:
                     logger.warning(f"[GROUP_PERM] permission check failed: {ex}")
 
