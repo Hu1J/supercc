@@ -483,10 +483,13 @@ class CoreExecutor:
                 )
 
                 async def mem_stream_callback(msg: Any) -> None:
-                    # mem_enabled=False 时完全静默，不打印不推送
+                    # 文本响应：始终记录到日志（不推送）
+                    if msg.content:
+                        logger.info("[Background] memory review text: %s", msg.content[:500])
+                    # mem_enabled=False 时不推送 tool call
                     if not mem_enabled:
                         return
-                    # 只推 memory MCP 工具调用（卡片），不推文本流
+                    # 只推 memory MCP 工具调用（卡片），不推普通文本流
                     # 白名单：只有 mcp__SuperCC__Memory* 才推送
                     if msg.tool_name and msg.tool_name.startswith("mcp__SuperCC__Memory"):
                         logger.info("[Background] memory review tool: %s", msg.tool_name)
@@ -530,9 +533,10 @@ class CoreExecutor:
                     "不需要问我任何问题。"
                 )
 
-                # 空的 stream callback：技能自进化不推送中间过程，只等最终通知
+                # 文本响应：始终记录到日志（不推送）
                 async def skill_stream_callback(msg: Any) -> None:
-                    pass
+                    if msg.content:
+                        logger.info("[Background] skill review text: %s", msg.content[:500])
 
                 await worker.integration_skill.query(
                     prompt=skill_prompt,
