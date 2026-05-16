@@ -8,7 +8,7 @@ from typing import Optional
 
 import httpx
 
-from .models import SkillMeta
+from supercc.core.skill_search.models import SkillMeta
 
 logger = logging.getLogger(__name__)
 

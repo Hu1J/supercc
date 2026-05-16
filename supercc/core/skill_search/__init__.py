@@ -9,8 +9,8 @@ from __future__ import annotations
 import threading
 from typing import Optional
 
-from .registry import SkillSearchRegistry
-from .sources import (
+from supercc.core.skill_search.registry import SkillSearchRegistry
+from supercc.core.skill_search.sources import (
     SkillsShSource,
     GitHubSource,
     HermesIndexSource,
