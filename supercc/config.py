@@ -13,7 +13,6 @@ SESSIONS_DB_PATH = str(Path.home() / ".supercc" / "sessions.db")
 
 # ── 全局单例 ──────────────────────────────────────────────────────────────────
 _cfg_instance: Config | None = None
-_cfg_path: str | None = None
 
 
 def init_config(path: str, data_dir: str = "") -> Config:
@@ -22,9 +21,9 @@ def init_config(path: str, data_dir: str = "") -> Config:
     应用启动时调用一次，之后所有地方用 get_config() 获取同一对象。
     所有变更直接修改返回的 cfg 对象，最后 write_config(cfg) 写回磁盘。
     """
-    global _cfg_instance, _cfg_path
+    global _cfg_instance
     _cfg_instance = load_config(path, data_dir)
-    _cfg_path = path
+    _cfg_instance.cfg_path = path  # attach path for reload_config
     return _cfg_instance
 
 
@@ -38,14 +37,32 @@ def get_config() -> Config:
     return _cfg_instance
 
 
+def reload_config() -> Config:
+    """重新从磁盘加载 config.json，丢弃当前内存缓存。
+
+    用于 external 修改了 config.json 后让当前进程看到最新数据（如 pairing approve 后）。
+    """
+    global _cfg_instance
+    if _cfg_instance is None:
+        raise RuntimeError("Config not initialized. Call init_config(path) first.")
+    cfg_path = getattr(_cfg_instance, "cfg_path", None)
+    if not cfg_path:
+        raise RuntimeError("Config path unknown. Call init_config(path) first.")
+    data_dir = getattr(_cfg_instance, "data_dir", "") or ""
+    _cfg_instance = load_config(cfg_path, data_dir)
+    _cfg_instance.cfg_path = cfg_path
+    return _cfg_instance
+
+
 def write_config(cfg: Config) -> None:
     """将 cfg 对象写回磁盘（使用 init_config 时保存的路径）。
 
     所有对 config 的变更完成后调用此方法持久化。
     """
-    if _cfg_path is None:
-        raise RuntimeError("Config path not set. Call init_config(path) first.")
-    _write_config_to_path(_cfg_path, cfg)
+    cfg_path = getattr(cfg, "cfg_path", None)
+    if not cfg_path:
+        raise RuntimeError("Config path unknown. Call init_config(path) first.")
+    _write_config_to_path(cfg_path, cfg)
 
 
 @dataclass

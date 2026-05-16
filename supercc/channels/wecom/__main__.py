@@ -106,7 +106,7 @@ async def main():
     if not data_dir:
         raise RuntimeError("SUPERCC_DATA environment variable is required")
 
-    config = init_config(config_path)
+    config = init_config(config_path, data_dir)
     await run_plugin(config, data_dir)
 
 

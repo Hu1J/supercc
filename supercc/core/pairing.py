@@ -9,7 +9,6 @@ Security features:
   - 8-char codes from 32-char unambiguous alphabet (no 0/O/1/I)
   - Cryptographic randomness via secrets.choice()
   - 1-hour code expiry
-  - Max 3 pending codes per platform
   - Rate limiting: 1 request per user per 10 minutes
   - File permissions: chmod 0600 on all data files
 
@@ -33,19 +32,28 @@ CODE_LENGTH = 8
 CODE_TTL_SECONDS = 3600             # Codes expire after 1 hour
 RATE_LIMIT_SECONDS = 600            # 1 request per user per 10 minutes
 
-# Limits
-MAX_PENDING_PER_PLATFORM = 3        # Max pending codes per platform
+# No hard limit on pending codes — each code is unique, expiry handles cleanup
 
 
 def _get_pairing_dir() -> Path:
     """Get the pairing directory for the current project."""
-    from supercc.config import resolve_config_path
+    import supercc.config as _cfg_module
     try:
-        _, data_dir = resolve_config_path()
+        cfg = getattr(_cfg_module, "get_config", lambda: None)()
+        if cfg:
+            dd = getattr(cfg, "data_dir", "") or ""
+            if dd:
+                return Path(dd) / "pairing"
     except Exception:
-        # Fallback to ~/.supercc if no project config
-        return Path.home() / ".supercc" / "pairing"
-    return Path(data_dir) / "pairing"
+        pass
+    # fallback: resolve_config_path 用 SUPERCC_DATA 环境变量
+    try:
+        _, dd = getattr(_cfg_module, "resolve_config_path", lambda: ("", ""))()
+        if dd:
+            return Path(dd) / "pairing"
+    except Exception:
+        pass
+    return Path.home() / ".supercc" / "pairing"
 
 
 def _secure_write(path: Path, data: str) -> None:
@@ -171,7 +179,6 @@ class PairingStore:
 
         Returns the code string, or None if:
           - User is rate-limited (too recent request)
-          - Max pending codes reached for this platform
         """
         with self._lock:
             self._cleanup_expired(platform)
@@ -180,10 +187,8 @@ class PairingStore:
             if self._is_rate_limited(platform, user_id):
                 return None
 
-            # Check max pending
+            # Load pending requests
             pending = self._load_json(self._pending_path(platform))
-            if len(pending) >= MAX_PENDING_PER_PLATFORM:
-                return None
 
             # Generate cryptographically random code
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))

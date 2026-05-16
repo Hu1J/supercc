@@ -740,17 +740,14 @@ class WeComCoreWSClient:
         else:
             # P2P 白名单 + pairing 系统
             user_id = inbound.user_open_id
-            # 先检查静态白名单
-            if self._allowed_users and user_id not in self._allowed_users:
-                # 不在白名单，再检查 pairing 系统的 approved 用户
-                try:
-                    from supercc.core.pairing import get_pairing_store
-                    store = get_pairing_store()
-                    is_approved = store.is_approved("wecom", user_id)
-                except Exception:
-                    is_approved = False
-
-                if not is_approved:
+            # 重新加载 config（pairing approve 后 config.json 已更新）
+            from supercc.config import reload_config
+            cfg = reload_config()
+            channel_cfg = getattr(cfg.channels, "wecom", None)
+            allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
+            # 先检查静态白名单（空列表 = 不设限，所有人都走配对检查）
+            do_pairing_check = not allowed_users or user_id not in allowed_users
+            if do_pairing_check:
                     # 未授权用户，生成 pairing code 并发送
                     try:
                         from supercc.core.pairing import get_pairing_store
@@ -763,7 +760,7 @@ class WeComCoreWSClient:
                                 f"```\nsupercc pairing approve {code}\n```"
                             )
                         else:
-                            reason = "你不在允许使用列表中。\n\n可能已达到最大等待数量，请稍后再试。"
+                            reason = "你不在允许使用列表中。\n\n配对码已生成，请联系管理员执行 approve。"
                     except Exception:
                         reason = "你不在允许使用列表中。\n\n配对系统暂时不可用，请联系机器人所有者。"
 

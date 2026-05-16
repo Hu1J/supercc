@@ -114,7 +114,7 @@ async def main():
     if not data_dir:
         raise RuntimeError("SUPERCC_DATA environment variable is required")
 
-    config = init_config(config_path)
+    config = init_config(config_path, data_dir)
     # 给 config 附加 config_path，供 ws_client 使用
     config.config_path = config_path
     await run_plugin(config, data_dir)
