@@ -1177,8 +1177,8 @@ def _run_config_command(args) -> None:
             raw_args = " ".join(raw_args)
         # Route to existing handlers with action = model_action
         action = model_action
-        # Re-enter the same function logic for model actions
-        # (list/add/switch/delete/providers)
+        # Fall through to existing handlers (list/add/switch/delete/providers)
+        # Each handler returns or falls through to the next
 
     if action == "core":
         core_action = getattr(args, "core_action", None)
