@@ -162,6 +162,7 @@ class Config:
     verbose: dict[str, dict[str, VerboseChannelEntry]] = field(default_factory=dict)
     data_dir: str = ""
     bypass_accepted: bool = False
+    daemon: bool = False
 
 
 def _migrate_yaml_to_json(yaml_path: str, json_path: str) -> dict:
@@ -287,6 +288,7 @@ def load_config(path: str, data_dir: str = "") -> Config:
         verbose=verbose,
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
+        daemon=raw.get("daemon", False),
     )
 
     # 校验 approved_directory 不能为空
@@ -414,6 +416,7 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
             for platform, chat_entries in cfg.verbose.items()
         },
         "bypass_accepted": cfg.bypass_accepted,
+        "daemon": cfg.daemon,
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
