@@ -1,12 +1,59 @@
-"""Agent 响应飞书卡片 — 将 Claude 的最终响应渲染为精美的 Interactive Card。"""
+"""Agent / Codex 响应飞书卡片 — 继承 common.format 基类，覆盖 render() 为 CardKit。"""
 from __future__ import annotations
-
 import json
 
-from supercc.adapter.feishu.format.reply_formatter import optimize_markdown_style
+from supercc.adapter.common.format.agent import _AgentCardMarker, _CodexMarker
+from supercc.adapter.feishu.format.markdown_util import optimize_markdown_style
+
+
+class FeishuAgentCardMarker(_AgentCardMarker):
+    """Agent 卡片 — 飞书平台覆盖 render() 输出 CardKit dict。"""
+
+    def render(self) -> dict:
+        """构建 Agent 飞书卡片。"""
+        data = self.data
+        if data and isinstance(data, dict):
+            parts = ["## 🤖 Agent"]
+            for key, value in data.items():
+                parts.append(f"**{key}**: {value}")
+                parts.append("\n---\n")
+            content = "\n".join(parts)
+        else:
+            content = optimize_markdown_style(self.tool_input or "", card_version=2)
+            content = f"## 🤖 Agent\n\n{content}"
+
+        return {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": content},
+                ]
+            },
+        }
+
+
+class FeishuCodexMarker(_CodexMarker):
+    """Codex 卡片 — 飞书平台覆盖 render() 输出 CardKit dict。"""
+
+    def render(self) -> dict:
+        """构建 Codex 事件飞书卡片。"""
+        title = f"## 🤖 Codex - {self._event_label()}"
+        body = optimize_markdown_style(self.content or "", card_version=2)
+        content = title if not body else f"{title}\n\n{body}"
+        return {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": content},
+                ]
+            },
+        }
 
 
 def _codex_event_label(event_type: str, extra: dict | None = None) -> str:
+    """Codex 事件标签（复用于 format_codex_card）。"""
     tool_name = (extra or {}).get("tool_name") or ""
     tool_icons = {
         "Read": "📖",
@@ -44,44 +91,17 @@ def _codex_event_label(event_type: str, extra: dict | None = None) -> str:
     return event_type or "event"
 
 
-def format_codex_card(event_type: str, content: str = "", extra: dict | None = None) -> dict:
-    """构建 Codex 事件飞书卡片。
-
-    统一标题格式：`## 🤖 Codex - <label>`，正文直接展示内容，不再包一层
-    `content:` / `tool:` 键值文本。
-    """
-    title = f"## 🤖 Codex - {_codex_event_label(event_type, extra)}"
-    body = optimize_markdown_style(content or "", card_version=2)
-    content = title if not body else f"{title}\n\n{body}"
-    return {
-        "schema": "2.0",
-        "config": {"wide_screen_mode": True},
-        "body": {
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "content": content,
-                },
-            ]
-        },
-    }
-
-
 def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
-    """构建 Agent / Plan 响应飞书卡片。
-
-    tool_input 为 dict 时直接解析；为 JSON 字符串时解析为 key-value 对，
-    字段间用 `--` 分割；非 JSON 时直接渲染为 markdown。
-    """
-    # 尝试解析 JSON
-    data = None
+    """构建 Agent 飞书卡片（供 core_client.py 直接调用）。"""
     if isinstance(text, dict):
         data = text
     elif text and text.strip().startswith("{"):
         try:
             data = json.loads(text)
         except (json.JSONDecodeError, TypeError):
-            pass
+            data = None
+    else:
+        data = None
 
     if data and isinstance(data, dict):
         parts = [title]
@@ -90,7 +110,6 @@ def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
             parts.append("\n---\n")
         content = "\n".join(parts)
     else:
-        # 非 JSON：直接走 markdown 优化
         content = optimize_markdown_style(text or "", card_version=2)
         content = f"{title}\n\n{content}"
 
@@ -99,10 +118,23 @@ def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
         "config": {"wide_screen_mode": True},
         "body": {
             "elements": [
-                {
-                    "tag": "markdown",
-                    "content": content,
-                },
+                {"tag": "markdown", "content": content},
+            ]
+        },
+    }
+
+
+def format_codex_card(event_type: str, content: str = "", extra: dict | None = None) -> dict:
+    """构建 Codex 事件飞书卡片（供 core_client.py 直接调用）。"""
+    title = f"## 🤖 Codex - {_codex_event_label(event_type, extra)}"
+    body = optimize_markdown_style(content or "", card_version=2)
+    card_content = title if not body else f"{title}\n\n{body}"
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": card_content},
             ]
         },
     }

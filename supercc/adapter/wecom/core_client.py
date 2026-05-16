@@ -10,6 +10,7 @@ from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.adapter.feishu.media import save_bytes
+from supercc.adapter.common.format import MemoryCardMarker
 from supercc.adapter.wecom.client import WeComClient
 from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to_renderable
 from wecom_aibot_sdk import generate_req_id
@@ -46,24 +47,118 @@ class WeComReplyFormatter:
         "CronLogs": "⏰",
     }
 
-    def format_tool_call(self, tool_name: str, tool_input: str | None = None) -> str:
-        """Format a tool call notification as markdown text."""
+    def _format_memory_tool(
+        self,
+        tool_name: str,
+        tool_input: str,
+        memory_manager=None,
+        default_project_path: str = "",
+        platform: str = "wecom",
+        chat_id: str = "",
+    ) -> MemoryCardMarker | None:
+        """格式化记忆 MCP 工具调用为卡片标记（WeCom markdown 版本）。"""
+        try:
+            args = json.loads(tool_input) if tool_input else {}
+        except json.JSONDecodeError:
+            args = {}
+
+        short = tool_name.replace("mcp__SuperCC__", "")
+        scope = "proj" if "Proj" in short else "user"
+        card_type = short.lower().replace("mcp__supercc__memory", "")
+        if card_type == "add":
+            card_type = "add"
+        elif card_type == "update":
+            card_type = "update"
+        elif card_type == "delete":
+            card_type = "delete"
+        elif card_type == "list":
+            card_type = "list"
+        elif card_type == "search":
+            card_type = "search"
+
+        project_path = args.get("project_path", "") or default_project_path
+        query = args.get("query", "")
+        entries = []
+
+        if memory_manager is not None:
+            try:
+                if scope == "proj":
+                    if card_type == "list":
+                        mems = memory_manager.get_project_memories(project_path, platform=platform, chat_id=chat_id)
+                        entries = [{"id": m.id, "title": m.title,
+                                    "content": m.content, "keywords": m.keywords} for m in mems]
+                    elif card_type == "search" and query:
+                        results = memory_manager.search_project_memories(query, project_path, platform=platform, chat_id=chat_id)
+                        entries = [{"id": r.memory.id, "title": r.memory.title,
+                                    "content": r.memory.content,
+                                    "keywords": r.memory.keywords} for r in results]
+                else:
+                    # user scope
+                    user_open_id = args.get("user_open_id", "")
+                    bot_id = args.get("bot_id", "")
+                    if user_open_id:
+                        if card_type == "list":
+                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
+                            entries = [{"id": p.id, "title": p.title,
+                                        "content": p.content, "keywords": p.keywords} for p in prefs]
+                        elif card_type == "search" and query:
+                            prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform=platform, bot_id=bot_id)
+                            entries = [{"id": p.id, "title": p.title,
+                                        "content": p.content, "keywords": p.keywords} for p in prefs]
+            except Exception:
+                pass
+
+        # add/update/delete 的 fallback：直接从入参构造条目
+        if not entries and card_type in ("add", "update"):
+            entries = [{
+                "title": args.get("title", ""),
+                "content": args.get("content", ""),
+                "keywords": args.get("keywords", ""),
+                "id": args.get("id", "") or "(新增)"}]
+        elif not entries and card_type == "delete":
+            entries = [{"id": args.get("id", "") or ""}]
+
+        return MemoryCardMarker(tool_name, card_type, entries, tool_input)
+
+    def format_tool_call(
+        self,
+        tool_name: str,
+        tool_input: str | None = None,
+        memory_manager=None,
+        default_project_path: str = "",
+        platform: str = "wecom",
+        chat_id: str = "",
+    ) -> str | MemoryCardMarker:
+        """Format a tool call notification as markdown text or MemoryCardMarker."""
         if tool_input is None:
             tool_input = ""
 
         icon = self.ICONS.get(tool_name, "🤖")
         short_name = tool_name.replace("mcp__SuperCC__", "")
 
-        # Edit/Write → code block
-        if tool_name in ("Edit", "Write"):
-            if tool_input.strip():
-                try:
-                    data = json.loads(tool_input)
-                    file_path = data.get("file_path", "unknown")
-                    return f"{icon} **{short_name}** — `{file_path}`"
-                except json.JSONDecodeError:
-                    pass
-            return f"{icon} **{short_name}**"
+        # Edit → diff markdown
+        if tool_name == "Edit":
+            from supercc.adapter.wecom.format.edit_diff import format_edit_markdown
+            try:
+                data = json.loads(tool_input)
+                file_path = data.get("file_path", "unknown")
+                diff_lines = data.get("diff_lines", [])
+                return format_edit_markdown(file_path, diff_lines)
+            except (json.JSONDecodeError, KeyError):
+                return f"{icon} **{short_name}**"
+
+        # Write → diff markdown
+        if tool_name == "Write":
+            from supercc.adapter.wecom.format.edit_diff import format_write_markdown
+            try:
+                data = json.loads(tool_input)
+                file_path = data.get("file_path", "unknown")
+                content = data.get("content", [])
+                if isinstance(content, str):
+                    content = content.splitlines()
+                return format_write_markdown(file_path, content)
+            except (json.JSONDecodeError, KeyError):
+                return f"{icon} **{short_name}**"
 
         # Bash → code block
         if tool_name == "Bash":
@@ -105,6 +200,40 @@ class WeComReplyFormatter:
             except json.JSONDecodeError:
                 path = tool_input
             return f"{icon} **Read** — `{path}`"
+
+        # AskUserQuestion → 问卷 markdown
+        if tool_name == "AskUserQuestion":
+            from supercc.adapter.wecom.format.questionnaire_card import format_questionnaire_markdown
+            return format_questionnaire_markdown(tool_input)
+
+        # Agent → Agent markdown
+        if tool_name == "Agent":
+            from supercc.adapter.wecom.format.agent_card import format_agent_markdown
+            return format_agent_markdown(tool_input)
+
+        # mcp__codex__codex → Codex markdown
+        if tool_name == "mcp__codex__codex":
+            from supercc.adapter.wecom.format.agent_card import format_codex_markdown
+            try:
+                data = json.loads(tool_input) if tool_input else {}
+            except json.JSONDecodeError:
+                data = {}
+            event_type = data.get("event_type", "text")
+            content = data.get("content", tool_input or "")
+            extra = {"model": data.get("model", "")} if data.get("model") else None
+            return format_codex_markdown(event_type, content, extra)
+
+        # Memory MCP tools → MemoryCardMarker（需查库）
+        if tool_name and tool_name.startswith("mcp__SuperCC__Memory"):
+            marker = self._format_memory_tool(
+                tool_name, tool_input,
+                memory_manager=memory_manager,
+                default_project_path=default_project_path,
+                platform=platform,
+                chat_id=chat_id,
+            )
+            if marker is not None:
+                return marker
 
         # Default: icon + name + first 100 chars of input
         msg = f"{icon} **{short_name}**"
@@ -216,6 +345,12 @@ class WeComCoreWSClient:
         self.formatter = WeComReplyFormatter()
         # 重连互斥锁（防止 _reconnect 和 _read_loop 并发调用）
         self._reconnect_lock = asyncio.Lock()
+        # Memory Manager（MCP 工具执行器）
+        try:
+            from supercc.claude.memory_manager import get_memory_manager
+            self._memory_manager = get_memory_manager()
+        except Exception:
+            self._memory_manager = None
 
     async def _send_auth(self):
         """发送 auth 消息到核心，完成身份认证。"""
@@ -526,7 +661,28 @@ class WeComCoreWSClient:
             await acc.flush()
 
         # 格式化工具调用通知（TOOL_RESULT 回给 core 做记录，用户通知由 core 的 WS 推送）
-        result_content = self.formatter.format_tool_call(tool_name, tool_input)
+        result = self.formatter.format_tool_call(
+            tool_name, tool_input,
+            memory_manager=self._memory_manager,
+            default_project_path=self.project_path,
+            platform="wecom",
+            chat_id=chat_id,
+        )
+
+        # MemoryCardMarker → 渲染为 markdown 并发送
+        if isinstance(result, MemoryCardMarker):
+            text = result.render()
+            try:
+                await self.wecom.send_markdown(chat_id, text)
+            except Exception:
+                try:
+                    await self.wecom.send_text(chat_id, text[:2000])
+                except Exception:
+                    pass
+            result_content = f"🧠 **{tool_name.replace('mcp__SuperCC__', '')}**"
+        else:
+            result_content = result
+
         await self._send_event(Event.TOOL_RESULT, {
             "tool_call_id": tool_call_id,
             "content": result_content,

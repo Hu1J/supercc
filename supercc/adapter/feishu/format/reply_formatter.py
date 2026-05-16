@@ -4,115 +4,16 @@ from __future__ import annotations
 import json
 import re
 
-from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker, _MemoryCardMarker
+from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker
+from supercc.adapter.common.format import MemoryCardMarker
 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.adapter.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
+from supercc.adapter.feishu.format.markdown_util import optimize_markdown_style, _count_tables_outside_code_blocks
 from supercc.claude.message_context import get_current_bot_id, get_current_user_open_id
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096
 # Feishu CardKit limit for markdown tables per card
 FEISHU_CARD_TABLE_LIMIT = 230099
-
-# Placeholder marker for protected code blocks during markdown optimization
-_CODE_BLOCK_MARK = "___CB_"
-_CODE_BLOCK_MARK_END = "___"
-
-
-def optimize_markdown_style(text: str, card_version: int = 2) -> str:
-    """Optimize Markdown for Feishu rendering (port of markdown-style.js).
-
-    - Headings: H1 → H4, H2~H6 → H5
-    - Table spacing: adds <br> before/after tables
-    - Code blocks: wrapped with <br> for separation
-    - Strips non-img_ image URLs (Feishu CardKit only accepts img_xxx keys)
-    """
-    try:
-        text = _optimize_markdown_style_impl(text, card_version)
-        text = _strip_invalid_image_keys(text)
-        return text
-    except Exception:
-        return text
-
-
-def _optimize_markdown_style_impl(text: str, card_version: int = 2) -> str:
-    # 1. Protect code blocks with placeholders
-    code_blocks: list[str] = []
-    def _code_block_replacer(m):
-        code_blocks.append(m.group(0))
-        return f"{_CODE_BLOCK_MARK}{len(code_blocks) - 1}{_CODE_BLOCK_MARK_END}"
-    r = re.sub(r"```[\s\S]*?```", _code_block_replacer, text)
-
-    # 2. Heading level reduction (only if H1-H3 exist in original)
-    if re.search(r"^#{1,3} ", text, re.MULTILINE):
-        r = re.sub(r"^#{2,6} (.+)$", r"##### \1", r, flags=re.MULTILINE)  # H2-H6 → H5
-        r = re.sub(r"^# (.+)$", r"#### \1", r, flags=re.MULTILINE)         # H1 → H4
-
-    if card_version >= 2:
-        # 3. Spacing between consecutive headings
-        r = re.sub(r"^(#{4,5} .+)\n{1,2}(#{4,5} )", r"\1\n<br>\n\2", r, flags=re.MULTILINE)
-
-        # 4. Table spacing
-        # 4a: non-table line directly before table row → add blank line first
-        r = re.sub(r"^([^|\n].*)\n(\|.+\|)", r"\1\n\n\2", r, flags=re.MULTILINE)
-        # 4b: add <br> before table
-        r = re.sub(r"\n\n((?:\|.+\|[^\S\n]*\n?)+)", r"\n\n<br>\n\n\1", r)
-        # 4c: REMOVED — <br> after table was causing extra blank rows in Feishu
-        # The \n at end of last table row + trailing \n after <br> created double \n
-        # Feishu markdown renderer handles table-to-text spacing natively
-        # 4d: reduce extra blank lines when non-heading/non-bold text precedes table
-        r = re.sub(
-            r"^((?!#{4,5} )(?!\*\*).+)\n\n(<br>)\n\n(\|)",
-            r"\1\n\2\n\3",
-            r,
-            flags=re.MULTILINE,
-        )
-        # 4d2: bold text before table — keep blank line after bold
-        r = re.sub(
-            r"^(\*\*.+)\n\n(<br>)\n\n(\|)",
-            r"\1\n\2\n\n\3",
-            r,
-            flags=re.MULTILINE,
-        )
-        # 4e: reduce blank lines when non-heading/non-bold text follows table
-        r = re.sub(
-            r"(\|[^\n]*\n)\n(<br>\n)((?!#{4,5} )(?!\*\*))",
-            r"\1\2\3",
-            r,
-        )
-
-        # 5. Restore code blocks — no <br> wrapper needed; Feishu CardKit
-        # renders fenced code blocks with native spacing, and <br> creates
-        # visible extra blank lines above/below the block.
-        for i, block in enumerate(code_blocks):
-            r = r.replace(f"{_CODE_BLOCK_MARK}{i}{_CODE_BLOCK_MARK_END}", block)
-    else:
-        # 5. Restore code blocks (no <br>)
-        for i, block in enumerate(code_blocks):
-            r = r.replace(f"{_CODE_BLOCK_MARK}{i}{_CODE_BLOCK_MARK_END}", block)
-
-    # 6. Collapse 3+ consecutive newlines to 2
-    r = re.sub(r"\n{3,}", r"\n\n", r)
-    return r
-
-
-def _strip_invalid_image_keys(text: str) -> str:
-    """Strip markdown image syntax where URL is not a Feishu img_xxx key.
-
-    Feishu CardKit only accepts img_xxx image keys (uploaded via media API).
-    HTTP URLs and local paths in markdown images cause CardKit error 200570.
-    We strip them so the text renders without the broken image.
-    """
-    if "!(" not in text:
-        return text
-
-    def _replacer(m: re.Match) -> str:
-        url = m.group(2)
-        # Keep only Feishu image keys (img_v3_xxx format)
-        if url.startswith("img_"):
-            return m.group(0)
-        return ""
-
-    return re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", _replacer, text)
-
 
 def should_use_card(text: str) -> bool:
     """Decide whether to send as Feishu Interactive Card vs post.
@@ -189,7 +90,7 @@ class ReplyFormatter:
         tool_name: str,
         tool_input: str | None = None,
         **kwargs,
-    ) -> str | _DiffMarker | list[_DiffMarker] | _MemoryCardMarker:
+    ) -> str | _DiffMarker | list[_DiffMarker] | MemoryCardMarker | _AskUserQuestionMarker | FeishuAgentCardMarker | FeishuCodexMarker:
         """Format a tool call notification for the user.
 
         Returns _DiffMarker for Edit/Write tools (to trigger colored card rendering),
@@ -288,7 +189,7 @@ class ReplyFormatter:
         platform: str = "feishu",
         chat_id: str = "",
         bot_id: str = "",
-    ) -> _MemoryCardMarker | str:
+    ) -> MemoryCardMarker | str:
         """格式化记忆 MCP 工具调用为卡片标记。
 
         card_type 决定 stream_callback 如何渲染：
@@ -370,7 +271,7 @@ class ReplyFormatter:
                         "keywords": args.get("keywords", ""),
                         "id": args.get("id", "") or "(新增)"}]
 
-        return _MemoryCardMarker(tool_name, card_type, entries, tool_input)
+        return MemoryCardMarker(tool_name, card_type, entries, tool_input)
 
     def _format_bash_tool(self, tool_input: str) -> str:
         """Format Bash tool call as a markdown code block.
@@ -423,61 +324,22 @@ class ReplyFormatter:
             path_line = f"`{file_path}`"
         return f"{icon} {title}\n{path_line}"
 
-    def _format_agent_tool(self, tool_input: str) -> str:
-        """Format Agent (sub-agent) tool call for sub-agent execution.
+    def _format_agent_tool(self, tool_input: str) -> FeishuAgentCardMarker:
+        """Format Agent (sub-agent) tool call → FeishuAgentCardMarker。"""
+        return FeishuAgentCardMarker("Agent", tool_input)
 
-        Shows a concise summary of what the agent was asked to do,
-        without overwhelming the user with raw JSON.
-        """
-        if not tool_input:
-            return "🧠 **Agent**"
+    def _format_codex_tool(self, tool_input: str) -> FeishuCodexMarker:
+        """Format mcp__codex__codex tool call → FeishuCodexMarker。"""
         try:
-            data = json.loads(tool_input)
+            data = json.loads(tool_input) if tool_input else {}
         except (json.JSONDecodeError, TypeError):
             data = {}
-
-        description = data.get("description", "")
-        prompt = data.get("prompt", "")
-        icon = self.tool_icons.get("Agent", "🧠")
-
-        if description:
-            header = f"{icon} **Agent** — {description}"
-        else:
-            header = f"{icon} **Agent**"
-
-        if prompt:
-            cleaned = prompt.strip()[:300]
-            if len(prompt) > 300:
-                cleaned += "..."
-            return f"{header}\n`{cleaned}`"
-
-        return header
-
-    def _format_codex_tool(self, tool_input: str) -> str:
-        """Format mcp__codex__codex tool call for Codex CLI execution."""
-        if not tool_input:
-            return "⚡ **Codex**"
-        try:
-            data = json.loads(tool_input)
-        except (json.JSONDecodeError, TypeError):
-            data = {}
-
-        prompt = data.get("prompt", tool_input)
+        prompt = data.get("prompt", tool_input or "")
         model = data.get("model", "")
-        icon = self.tool_icons.get("mcp__codex__codex", "⚡")
+        event_type = "text"
+        extra = {"model": model} if model else None
+        return FeishuCodexMarker(event_type, prompt, extra, tool_input)
 
-        if model:
-            header = f"{icon} **Codex** (model: {model})"
-        else:
-            header = f"{icon} **Codex**"
-
-        if prompt:
-            cleaned = prompt.strip()[:300]
-            if len(prompt) > 300:
-                cleaned += "..."
-            return f"{header}\n`{cleaned}`"
-
-        return header
 
     def _format_todowrite_tool(self, tool_input: str) -> str:
         """Format TodoWrite tool call as a markdown table."""

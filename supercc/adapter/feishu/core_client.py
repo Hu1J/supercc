@@ -16,8 +16,10 @@ from supercc.core.protocol import (
 from supercc.adapter.feishu.client import IncomingMessage
 from supercc.adapter.feishu.core_protocol import incoming_to_inbound
 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter, should_use_card
-from supercc.adapter.feishu.format.questionnaire_card import format_questionnaire_card
-from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+from supercc.adapter.feishu.format.edit_diff import _DiffMarker
+from supercc.adapter.common.format import MemoryCardMarker
+from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.adapter.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
 from supercc.adapter.feishu.media import make_image_path, make_file_path, save_bytes
 from dataclasses import replace as dataclass_replace
 
@@ -473,7 +475,7 @@ class FeishuCoreWSClient:
 
         使用 ReplyFormatter 格式化工具结果，支持：
         - _DiffMarker → Edit Diff 彩色卡片
-        - _MemoryCardMarker → 记忆工具卡片
+        - MemoryCardMarker → 记忆工具卡片
         - _AskUserQuestionMarker → 问卷卡片
         - 其他 → backtick 格式 safe send
         """
@@ -560,7 +562,7 @@ class FeishuCoreWSClient:
                                 fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
                             await self._safe_send(chat_id, msg_id, fallback)
 
-        elif isinstance(result, _MemoryCardMarker):
+        elif isinstance(result, MemoryCardMarker):
             # 记忆工具 → CardKit 格式，reply 到原始消息
             card = self._render_memory_card(result)
             try:
@@ -568,31 +570,29 @@ class FeishuCoreWSClient:
             except Exception:
                 await self._safe_send(chat_id, msg_id, str(card))
 
-        elif isinstance(result, str) and tool_name.startswith("mcp__SuperCC__AskUserQuestion"):
-            # AskUserQuestion → 尝试渲染为问卷卡片
-            from supercc.adapter.feishu.format.questionnaire_card import parse_ask_user_question
-            qdata = parse_ask_user_question(tool_input_str)
-            if qdata is not None:
-                # 包装为 _AskUserQuestionMarker 以复用 format_questionnaire_card
-                from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
-                marker = _AskUserQuestionMarker(tool_name, tool_input_str)
-                marker.data = qdata
-                card = format_questionnaire_card(marker)
-                try:
-                    await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
-                except Exception:
-                    await self._safe_send(chat_id, msg_id, result)
-            else:
-                await self._safe_send(chat_id, msg_id, result)
+        elif isinstance(result, _AskUserQuestionMarker):
+            # AskUserQuestion → 渲染为问卷卡片
+            card = result.render()
+            try:
+                await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
+            except Exception:
+                await self._safe_send(chat_id, msg_id, result.render())
 
-        elif tool_name == "Agent":
-            # Agent → 精美飞书卡片（用原始 tool_input，不要用 format_tool_call 的结果）
-            from supercc.adapter.feishu.format.agent_card import format_agent_card
-            card = format_agent_card(tool_input_raw, title="## 🔀 Agent")
+        elif isinstance(result, FeishuAgentCardMarker):
+            # Agent → 精美飞书卡片
+            card = result.render()
             try:
                 await self.feishu.send_interactive(chat_id, card, msg_id)
             except Exception:
-                await self._safe_send(chat_id, msg_id, result if isinstance(result, str) else f"🤖 **Agent**")
+                await self._safe_send(chat_id, msg_id, result.render())
+
+        elif isinstance(result, FeishuCodexMarker):
+            # Codex → 精美飞书卡片
+            card = result.render()
+            try:
+                await self.feishu.send_interactive(chat_id, card, msg_id)
+            except Exception:
+                await self._safe_send(chat_id, msg_id, result.render())
 
         else:
             # 其他工具 → backtick 格式
@@ -608,8 +608,8 @@ class FeishuCoreWSClient:
             "chat_id": chat_id,
         })
 
-    def _render_memory_card(self, marker: _MemoryCardMarker) -> dict:
-        """将 _MemoryCardMarker 渲染为 CardKit 原生格式。"""
+    def _render_memory_card(self, marker: MemoryCardMarker) -> dict:
+        """将 MemoryCardMarker 渲染为 CardKit 原生格式。"""
         try:
             args = json.loads(marker.tool_input) if marker.tool_input else {}
         except json.JSONDecodeError:

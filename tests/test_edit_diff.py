@@ -3,18 +3,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # edited by bridge test
-from supercc.adapter.feishu.format.edit_diff import (
+from supercc.adapter.common.format.diff import (
     colorize_diff,
     _lcs_diff,
     _truncate_diff,
+    DiffLine,
+    MAX_DIFF_LINES,
+)
+from supercc.adapter.feishu.format.edit_diff import (
     format_edit_card,
     format_write_card,
     build_edit_marker,
     build_write_marker,
     _DiffMarker,
-    DiffLine,
     COLOR_RED, COLOR_GREEN, COLOR_GREY,
-    MAX_DIFF_LINES,
 )
 
 
