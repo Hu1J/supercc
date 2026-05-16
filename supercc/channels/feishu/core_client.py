@@ -237,11 +237,11 @@ class FeishuCoreWSClient:
             self._pending_responses[req_id] = future
             try:
                 await ws.send(json.dumps(
-                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}}
+                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}, "platform": "feishu"}
                 ))
-                await asyncio.wait_for(future, timeout=30)
+                await asyncio.wait_for(future, timeout=60)
             except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
-                logger.warning("ping timeout, reconnecting...")
+                logger.warning("ping timeout (60s), reconnecting...")
                 self._pending_responses.pop(req_id, None)
                 await self._reconnect(jitter=False)
             except Exception:
@@ -936,8 +936,9 @@ class FeishuCoreWSClient:
                 # 同步响应（如命令结果、/restart、/update、/switch）
                 # 不走 Event.RESPONSE，直接在 JSON-RPC Response 中返回
                 if result:
-                    result_event = result.get("event", "")
-                    result_content = result.get("content", "")
+                    inner = result.get("result", result)  # JSON-RPC result 包装层
+                    result_event = inner.get("event", "") if isinstance(inner, dict) else ""
+                    result_content = inner.get("content", "") if isinstance(inner, dict) else ""
                     if result_event in ("restart", "update", "switch"):
                         # 确认消息告知用户已收到指令，核心正在处理
                         msg_id = result.get("message_id", incoming.message_id)

@@ -336,8 +336,8 @@ class WsServer:
                 await conn.ws.close()
             return
 
-        # 非 auth 消息检查是否已认证
-        platform = raw.get("platform", "unknown")
+        # 非 auth 消息检查是否已认证（优先用消息体内的 platform，否则用连接注册时的 platform，最后用 unknown）
+        platform = raw.get("platform") or conn.platform or "unknown"
         if platform not in self._plugin_authenticated:
             logger.warning("[WsServer] unauthenticated request from platform=%s method=%s",
                            platform, raw.get("method", ""))

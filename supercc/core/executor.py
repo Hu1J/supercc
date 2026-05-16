@@ -62,30 +62,9 @@ class CoreExecutor:
         from supercc.core.commands.router import CommandRouter
         self._router = CommandRouter()
 
-        # 安全组件初始化
-        self._init_security(config)
-
         # push_fn：由 server.py 在调用 execute() 时传入，用于推送 WebSocket 帧到正确连接
         # 签名: Callable[[OutboundMessage], Awaitable[None]]
         self._push_fn: Callable[[OutboundMessage], Awaitable[None]] | None = None
-
-    def _init_security(self, config: Any):
-        """根据 config 初始化 SecurityValidator（Authenticator 按 platform 懒加载）。"""
-        self._config = config
-        if config is None:
-            self._security_validator = None
-            return
-
-        # SecurityValidator（与平台无关，全局一份）
-        claude_cfg = getattr(config, "claude", None)
-        approved_dir = ""
-        if claude_cfg:
-            approved_dir = getattr(claude_cfg, "approved_directory", "")
-        if approved_dir:
-            from supercc.core.security.validator import SecurityValidator
-            self._security_validator = SecurityValidator(approved_dir)
-        else:
-            self._security_validator = None
 
     def _is_verbose_enabled(self, platform: str, chat_id: str, msg_type: str) -> bool:
         """检查该 chat_id 是否开启了某类消息。默认全开。"""
@@ -158,18 +137,6 @@ class CoreExecutor:
                     session_key=key,
                     message_id=inbound.message_id,
                     content="⛔ 抱歉，你不在允许使用列表中。",
-                    message_type=MessageType.TEXT,
-                )
-
-        # 2) SecurityValidator: 内容安全检查（命令和普通消息都检查）
-        if self._security_validator and inbound.content:
-            ok, err_msg = self._security_validator.validate(inbound.content)
-            if not ok:
-                return OutboundMessage(
-                    event="command",
-                    session_key=key,
-                    message_id=inbound.message_id,
-                    content=f"⛔ 内容安全检查失败: {err_msg}",
                     message_type=MessageType.TEXT,
                 )
 

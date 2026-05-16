@@ -25,8 +25,8 @@ def _build_restart_argv(event: str) -> list[str]:
     """Build argv for restart/update subprocess (POSIX). Windows uses Popen separately."""
     if event == "update":
         return ["supercc", "update"]
-    # restart and switch both use `supercc start`
-    return ["supercc", "start"]
+    # restart and switch both use `supercc gateway run`
+    return ["supercc", "gateway", "run"]
 
 
 # Step labels for CLI display (short, single line)
@@ -628,7 +628,19 @@ def _cleanup_and_replace(event: str, project_path: str = "") -> None:
     # unlink PID 文件
     Path(pid_file).unlink(missing_ok=True)
 
-    argv = _build_restart_argv(event)
+    # 检查 daemon 模式：如果是服务托管，用 gateway start（会启动 daemon subprocess）
+    # 否则用 gateway run（前台模式）
+    try:
+        from supercc.config import get_config
+        cfg = get_config()
+        is_daemon = cfg.daemon
+    except Exception:
+        is_daemon = False
+
+    if is_daemon:
+        argv = ["supercc", "gateway", "start"]
+    else:
+        argv = _build_restart_argv(event)
 
     if sys.platform == "win32":
         import subprocess as _subprocess

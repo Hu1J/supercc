@@ -443,11 +443,11 @@ class WeComCoreWSClient:
             self._pending_responses[req_id] = future
             try:
                 await ws.send(json.dumps(
-                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}}
+                    {"jsonrpc": "2.0", "id": req_id, "method": "core.ping", "params": {}, "platform": "wecom"}
                 ))
-                await asyncio.wait_for(future, timeout=30)
+                await asyncio.wait_for(future, timeout=60)
             except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
-                logger.warning("[WeComCore] ping timeout, reconnecting...")
+                logger.warning("[WeComCore] ping timeout (60s), reconnecting...")
                 self._pending_responses.pop(req_id, None)
                 await self._reconnect(jitter=False)
             except Exception:
@@ -874,6 +874,18 @@ class WeComCoreWSClient:
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
         await self._ws.send(json.dumps(req.to_dict()))
         result = await future
+        # restart/update/switch 首次确认消息
+        if result:
+            inner = result.get("result", result)
+            result_event = inner.get("event", "") if isinstance(inner, dict) else ""
+            result_content = inner.get("content", "") if isinstance(inner, dict) else ""
+            if result_event in ("restart", "update", "switch"):
+                msg_id, chat_id = inbound.message_id, inbound.session_key.chat_id
+                if msg_id in self._streamed_msg_ids:
+                    logger.info("[command] /%s skip (streamed)", result_event)
+                else:
+                    logger.info("[command] /%s forwarding confirmation", result_event)
+                    await self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}...")
         return result or {}
 
     async def _download_and_resolve_media(

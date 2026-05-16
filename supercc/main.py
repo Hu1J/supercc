@@ -389,6 +389,14 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         cfg.daemon = is_daemon
         write_config(cfg)
 
+    # 打印启动模式 & 警告
+    if is_daemon:
+        logger.info("[SuperCC] 运行模式: daemon (服务托管)，PID 文件管理已启用")
+    else:
+        logger.info("[SuperCC] 运行模式: standalone (独立进程)")
+        if foreground:
+            logger.warning("[SuperCC] ⚠️  前台模式运行，进程不会持久化。如需持久运行，请使用: supercc gateway start")
+
     # Startup: initialize model env singleton with global ~/.supercc/model.json
     from supercc.core.models.model_config import init_model_env, ensure_project_model_config
     init_model_env(config.claude.approved_directory)
@@ -398,6 +406,13 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
     _ensure_codex_mcp(config)
 
     _ensure_agents_md(config.claude.approved_directory)
+
+    # 清空日志文件（每次启动重新开始）
+    try:
+        log_path = os.path.join(data_dir, "supercc.log")
+        open(log_path, "w").close()
+    except Exception:
+        pass
 
     # Write PID file for process management (skip in foreground mode)
     if not foreground:
