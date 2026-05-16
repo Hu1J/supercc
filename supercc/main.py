@@ -898,7 +898,7 @@ def _run_config_interactive() -> None:
             print(f"\n✅ 已切换到 **{entry.name}**")
             print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
             print(f"   端点: `{entry.env.ANTHROPIC_BASE_URL}`")
-            print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc restart` 命令重启。\n")
+            print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc gateway restart` 命令重启。\n")
 
         elif choice == "delete":
             models = get_all_models()
