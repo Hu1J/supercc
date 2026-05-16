@@ -64,7 +64,7 @@ def run_onboard_flow() -> bool:
     _print_step(2, TOTAL_STEPS, "选择平台")
 
     platform_choice = questionary.select(
-        "请选择要配置的聊天平台（后续可随时通过 `supercc plugin` 命令修改）",
+        "请选择要配置的聊天平台（后续可随时通过 `supercc config` 修改）",
         choices=[
             questionary.Choice("飞书 (Feishu)", value="feishu"),
             questionary.Choice("企业微信 (WeCom)", value="wecom"),
@@ -226,9 +226,9 @@ def run_onboard_flow() -> bool:
     print("=" * 60)
     print()
     print("下一步：")
-    print("  • 使用 `supercc start` 启动 SuperCC")
+    print("  • 使用 `supercc gateway run` 启动 SuperCC")
     print("  • 使用 `supercc config` 管理模型配置")
-    print("  • 使用 `supercc plugin status` 查看插件状态")
+    print("  • 查看插件状态请编辑 config.json 中 channels.xxx.enabled 字段")
     print()
 
     return True
