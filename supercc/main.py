@@ -720,8 +720,10 @@ def _run_config_interactive() -> None:
         ).ask()
         if choice == "continue" or choice is None:
             if dirty[0]:
-                print("\n⚠️  配置已变更，需重启 SuperCC 才能生效。")
-                print("   运行 `supercc gateway restart` 重启。\n")
+                print("\n⚠️  配置已变更，正在重启 SuperCC...\n")
+                from supercc.gateway.cli import run_gateway_restart
+                run_gateway_restart()
+                return
             break
         elif choice == "model":
             _run_config_model_interactive(dirty)
