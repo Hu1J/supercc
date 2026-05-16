@@ -149,6 +149,9 @@ class VerboseChannelEntry:
 class CoreConfig:
     host: str = "127.0.0.1"
     port: int = 28888
+    token: str = ""           # Plugin 连接凭证
+    username: str = ""        # 账号密码模式
+    password: str = ""        # 账号密码模式
 
 
 @dataclass
@@ -289,6 +292,13 @@ def load_config(path: str, data_dir: str = "") -> Config:
         data_dir=data_dir,
         bypass_accepted=raw.get("bypass_accepted", False),
         daemon=raw.get("daemon", False),
+        core=CoreConfig(
+            host=raw.get("core", {}).get("host", "127.0.0.1"),
+            port=raw.get("core", {}).get("port", 28888),
+            token=raw.get("core", {}).get("token", ""),
+            username=raw.get("core", {}).get("username", ""),
+            password=raw.get("core", {}).get("password", ""),
+        ),
     )
 
     # 校验 approved_directory 不能为空
@@ -417,6 +427,13 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
         },
         "bypass_accepted": cfg.bypass_accepted,
         "daemon": cfg.daemon,
+        "core": {
+            "host": cfg.core.host,
+            "port": cfg.core.port,
+            "token": cfg.core.token,
+            "username": cfg.core.username,
+            "password": cfg.core.password,
+        },
     }
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
