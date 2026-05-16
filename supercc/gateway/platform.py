@@ -24,13 +24,20 @@ def get_platform() -> str:
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
 
+def _resolve_supercc() -> str:
+    """返回当前环境 supercc console script 绝对路径。"""
+    python_path = Path(sys.executable)
+    return str(python_path.parent / "supercc")
+
+
 def _get_start_script(data_dir: str) -> str:
     """生成 bridge 启动脚本内容。"""
     project_dir = Path(data_dir).resolve().parent
+    supercc_path = _resolve_supercc()
     return (
         f"#!/bin/bash\n"
         f"cd {project_dir}\n"
-        f"exec supercc gateway start\n"
+        f"exec {supercc_path} gateway start\n"
     )
 
 
@@ -266,10 +273,11 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     task_name = f"SuperCC Main ({slug})"
     script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
     project_dir = Path(data_dir).resolve().parent
+    supercc_path = _resolve_supercc()
     script_content = (
         f'@echo off\n'
         f'cd /d "{project_dir}"\n'
-        f'supercc gateway start\n'
+        f'"{supercc_path}" gateway start\n'
     )
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
