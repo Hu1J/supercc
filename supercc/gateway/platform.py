@@ -12,11 +12,6 @@ from pathlib import Path
 
 class ServiceType:
     MAIN = "main"
-    FEISHU = "feishu"
-    WECOM = "wecom"
-
-
-SERVICE_TYPES = [ServiceType.MAIN, ServiceType.FEISHU, ServiceType.WECOM]
 
 
 def get_platform() -> str:
@@ -36,35 +31,17 @@ def _resolve_supercc() -> str:
     return str(python_path.parent / "supercc")
 
 
-def _get_start_script(data_dir: str, channel: str) -> str:
-    """生成指定 channel 的启动脚本内容。"""
+def _get_start_script(data_dir: str) -> str:
+    """生成 bridge 启动脚本内容。"""
     project_dir = Path(data_dir).resolve().parent
-    if channel == ServiceType.MAIN:
-        config_path = str(Path(data_dir) / "config.json")
-        return (
-            f"#!/bin/bash\n"
-            f"cd {project_dir}\n"
-            f"exec python -m supercc main --core-only "
-            f"--config {config_path} "
-            f"--data-dir {data_dir}\n"
-        )
-    elif channel == ServiceType.FEISHU:
-        return (
-            f"#!/bin/bash\n"
-            f"cd {project_dir}\n"
-            f"export SUPERCC_CONFIG={data_dir}/config.json\n"
-            f"export SUPERCC_DATA={data_dir}\n"
-            f"exec python -m supercc.adapter.feishu\n"
-        )
-    elif channel == ServiceType.WECOM:
-        return (
-            f"#!/bin/bash\n"
-            f"cd {project_dir}\n"
-            f"export SUPERCC_CONFIG={data_dir}/config.json\n"
-            f"export SUPERCC_DATA={data_dir}\n"
-            f"exec python -m supercc.adapter.wecom\n"
-        )
-    raise ValueError(f"Unknown channel: {channel}")
+    config_path = str(Path(data_dir) / "config.json")
+    return (
+        f"#!/bin/bash\n"
+        f"cd {project_dir}\n"
+        f"exec python -m supercc main --core-only "
+        f"--config {config_path} "
+        f"--data-dir {data_dir}\n"
+    )
 
 
 def _slug_to_dns_safe(slug: str) -> str:
@@ -76,19 +53,19 @@ def _slug_to_dns_safe(slug: str) -> str:
 
 # ── macOS: launchd plist ──────────────────────────────────────────────────────
 
-def install_mac(data_dir: str, project_slug: str, channel: str) -> None:
+def install_mac(data_dir: str, project_slug: str) -> None:
     """安装 macOS LaunchAgent。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
 
-    plist_name = f"com.supercc.{channel}.{slug}"
-    script_name = f"com.supercc.{channel}.{slug}.sh"
+    plist_name = f"com.supercc.main.{slug}"
+    script_name = f"com.supercc.main.{slug}.sh"
     plist_path = plist_dir / f"{plist_name}.plist"
     script_path = plist_dir / script_name
 
     # 写入启动脚本
-    script_path.write_text(_get_start_script(data_dir, channel), encoding="utf-8")
+    script_path.write_text(_get_start_script(data_dir), encoding="utf-8")
     os.chmod(script_path, 0o755)
 
     # 写入 plist
@@ -126,11 +103,11 @@ def install_mac(data_dir: str, project_slug: str, channel: str) -> None:
         print(f"✅ Gateway 已安装到 macOS LaunchAgent: {plist_path}")
 
 
-def uninstall_mac(data_dir: str, project_slug: str, channel: str) -> None:
+def uninstall_mac(data_dir: str, project_slug: str) -> None:
     """卸载 macOS LaunchAgent（unload + 删除 plist + 删除脚本）。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
-    plist_name = f"com.supercc.{channel}.{slug}"
+    plist_name = f"com.supercc.main.{slug}"
     plist_path = plist_dir / f"{plist_name}.plist"
     script_path = plist_dir / f"{plist_name}.sh"
 
@@ -144,11 +121,11 @@ def uninstall_mac(data_dir: str, project_slug: str, channel: str) -> None:
     print("✅ Gateway 已从 macOS LaunchAgent 卸载")
 
 
-def stop_mac(data_dir: str, project_slug: str, channel: str) -> None:
+def stop_mac(data_dir: str, project_slug: str) -> None:
     """停止 macOS LaunchAgent 服务（仅 unload，不删除 plist）。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
-    plist_path = plist_dir / f"com.supercc.{channel}.{slug}.plist"
+    plist_path = plist_dir / f"com.supercc.main.{slug}.plist"
 
     # 读取 PID（用于等待进程退出）
     pid_file = Path(data_dir) / "supercc.pid"
@@ -190,23 +167,23 @@ def stop_mac(data_dir: str, project_slug: str, channel: str) -> None:
 
 # ── Linux: systemd user service ───────────────────────────────────────────────
 
-def install_linux(data_dir: str, project_slug: str, channel: str) -> None:
+def install_linux(data_dir: str, project_slug: str) -> None:
     """安装 systemd user service。"""
     slug = _slug_to_dns_safe(project_slug)
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
 
-    service_name = f"supercc-{channel}-{slug}"
+    service_name = f"supercc-main-{slug}"
     service_path = service_dir / f"{service_name}.service"
     script_path = service_dir / f"{service_name}.sh"
 
     # 写入启动脚本
-    script_path.write_text(_get_start_script(data_dir, channel), encoding="utf-8")
+    script_path.write_text(_get_start_script(data_dir), encoding="utf-8")
     os.chmod(script_path, 0o755)
 
     # 写入 service 文件
     service_content = f"""[Unit]
-Description=SuperCC {channel.title()} ({slug})
+Description=SuperCC Main ({slug})
 
 [Service]
 ExecStart={script_path}
@@ -233,11 +210,11 @@ WantedBy=default.target
         print(f"✅ Gateway 已安装为 systemd user service: {service_path}")
 
 
-def uninstall_linux(data_dir: str, project_slug: str, channel: str) -> None:
+def uninstall_linux(data_dir: str, project_slug: str) -> None:
     """卸载 systemd user service（disable + 删除文件）。"""
     slug = _slug_to_dns_safe(project_slug)
     service_dir = Path.home() / ".config" / "systemd" / "user"
-    service_name = f"supercc-{channel}-{slug}"
+    service_name = f"supercc-main-{slug}"
     service_path = service_dir / f"{service_name}.service"
     script_path = service_dir / f"{service_name}.sh"
 
@@ -249,10 +226,10 @@ def uninstall_linux(data_dir: str, project_slug: str, channel: str) -> None:
     print("✅ Gateway 已从 systemd user service 卸载")
 
 
-def stop_linux(data_dir: str, project_slug: str, channel: str) -> None:
+def stop_linux(data_dir: str, project_slug: str) -> None:
     """停止 systemd user service（仅 stop，不 disable）。"""
     slug = _slug_to_dns_safe(project_slug)
-    service_name = f"supercc-{channel}-{slug}"
+    service_name = f"supercc-main-{slug}"
 
     # 读取 PID（用于等待进程退出）
     pid_file = Path(data_dir) / "supercc.pid"
@@ -293,37 +270,18 @@ def stop_linux(data_dir: str, project_slug: str, channel: str) -> None:
 
 # ── Windows: Task Scheduler ─────────────────────────────────────────────────────
 
-def install_windows(data_dir: str, project_slug: str, channel: str) -> None:
+def install_windows(data_dir: str, project_slug: str) -> None:
     """安装 Windows Task Scheduler 任务。"""
     slug = _slug_to_dns_safe(project_slug)
-    task_name = f"SuperCC {channel.title()} ({slug})"
-    script_path = Path.home() / ".supercc" / f"supercc-{channel}-{slug}.bat"
+    task_name = f"SuperCC Main ({slug})"
+    script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
     project_dir = Path(data_dir).resolve().parent
-    if channel == ServiceType.MAIN:
-        config_path = str(Path(data_dir) / "config.json")
-        script_content = (
-            f'@echo off\n'
-            f'cd /d "{project_dir}"\n'
-            f'python -m supercc main --core-only --config {config_path} --data-dir {data_dir}\n'
-        )
-    elif channel == ServiceType.FEISHU:
-        script_content = (
-            f'@echo off\n'
-            f'cd /d "{project_dir}"\n'
-            f'set SUPERCC_CONFIG={data_dir}\\config.json\n'
-            f'set SUPERCC_DATA={data_dir}\n'
-            f'python -m supercc.adapter.feishu\n'
-        )
-    elif channel == ServiceType.WECOM:
-        script_content = (
-            f'@echo off\n'
-            f'cd /d "{project_dir}"\n'
-            f'set SUPERCC_CONFIG={data_dir}\\config.json\n'
-            f'set SUPERCC_DATA={data_dir}\n'
-            f'python -m supercc.adapter.wecom\n'
-        )
-    else:
-        raise ValueError(f"Unknown channel: {channel}")
+    config_path = str(Path(data_dir) / "config.json")
+    script_content = (
+        f'@echo off\n'
+        f'cd /d "{project_dir}"\n'
+        f'python -m supercc main --core-only --config {config_path} --data-dir {data_dir}\n'
+    )
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
 
@@ -359,15 +317,15 @@ def install_windows(data_dir: str, project_slug: str, channel: str) -> None:
         print(f"✅ Gateway 已安装为 Windows Task Scheduler 任务: {task_name}")
 
 
-def stop_windows(data_dir: str, project_slug: str, channel: str) -> None:
+def stop_windows(data_dir: str, project_slug: str) -> None:
     """Windows Task Scheduler 任务没有"停止"概念（只在触发时运行）。"""
     print("⚠️  Windows 不支持 stop（Task Scheduler 任务非持久运行），请使用 uninstall")
 
 
-def uninstall_windows(data_dir: str, project_slug: str, channel: str) -> None:
+def uninstall_windows(data_dir: str, project_slug: str) -> None:
     """卸载 Windows Task Scheduler 任务。"""
     slug = _slug_to_dns_safe(project_slug)
-    task_name = f"SuperCC {channel.title()} ({slug})"
+    task_name = f"SuperCC Main ({slug})"
     failed = []
     for variant in [task_name, f"{task_name} (Startup)"]:
         r = subprocess.run(
@@ -376,7 +334,7 @@ def uninstall_windows(data_dir: str, project_slug: str, channel: str) -> None:
         )
         if r.returncode != 0:
             failed.append(variant)
-    script_path = Path.home() / ".supercc" / f"supercc-{channel}-{slug}.bat"
+    script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
     script_path.unlink(missing_ok=True)
     Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
     if failed:
@@ -387,28 +345,28 @@ def uninstall_windows(data_dir: str, project_slug: str, channel: str) -> None:
 
 # ── 统一入口 ─────────────────────────────────────────────────────────────────
 
-def install_service(data_dir: str, project_slug: str, channel: str = ServiceType.MAIN) -> None:
+def install_service(data_dir: str, project_slug: str) -> None:
     """根据当前平台安装 gateway 服务。"""
     p = get_platform()
     if p == "macos":
-        install_mac(data_dir, project_slug, channel)
+        install_mac(data_dir, project_slug)
     elif p == "linux":
-        install_linux(data_dir, project_slug, channel)
+        install_linux(data_dir, project_slug)
     elif p == "windows":
-        install_windows(data_dir, project_slug, channel)
+        install_windows(data_dir, project_slug)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
 
 
-def stop_service(data_dir: str, project_slug: str, channel: str = ServiceType.MAIN) -> None:
+def stop_service(data_dir: str, project_slug: str) -> None:
     """根据当前平台停止 gateway 服务（仅 stop，不删除 plist/脚本）。"""
     p = get_platform()
     if p == "macos":
-        stop_mac(data_dir, project_slug, channel)
+        stop_mac(data_dir, project_slug)
     elif p == "linux":
-        stop_linux(data_dir, project_slug, channel)
+        stop_linux(data_dir, project_slug)
     elif p == "windows":
-        stop_windows(data_dir, project_slug, channel)
+        stop_windows(data_dir, project_slug)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
 
