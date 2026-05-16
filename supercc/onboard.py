@@ -130,6 +130,28 @@ def run_onboard_flow() -> bool:
             except Exception as e:
                 print(f"⚠️  企业微信配置出错：{e}（稍后可手动配置）\n")
 
+    # ── Auth mode selection (Plugin→Core) ────────────────────────────────────
+    _print_step(3, TOTAL_STEPS, "配置认证方式")
+
+    import secrets
+    print("选择 plugin 连接 core WS 时的认证方式（可多选）：")
+    print("1. Token 认证（自动生成，推荐）")
+    print("2. 账号密码认证")
+
+    auth_choice = input("请选择（1/2/1,2）：").strip()
+
+    token = ""
+    username = ""
+    password = ""
+
+    if "1" in auth_choice:
+        token = secrets.token_urlsafe(32)
+        print(f"已生成 Token: {token}")
+
+    if "2" in auth_choice:
+        username = input("请输入用户名：").strip()
+        password = input("请输入密码：").strip()
+
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'━' * 60}")
     print(" 确认配置")
@@ -146,6 +168,11 @@ def run_onboard_flow() -> bool:
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
     print(f"企业微信: {'已配置' if wecom_configured else '未配置'}")
 
+    if token:
+        print(f"认证: Token（{token[:8]}...）")
+    if username:
+        print(f"认证: 用户名密码（{username}）")
+
     print()
 
     confirm = questionary.confirm(
@@ -160,12 +187,17 @@ def run_onboard_flow() -> bool:
         print("\n❌ 已取消安装引导")
         return False
 
-    # ── Save bypass accepted ──────────────────────────────────────────────────
-    from supercc.config import init_config, accept_bypass_warning
+    # ── Save bypass accepted + auth config ────────────────────────────────────
+    from supercc.config import init_config, accept_bypass_warning, get_config, write_config
     try:
         cfg_path, _ = resolve_config_path()
         init_config(cfg_path)
+        cfg = get_config()
+        cfg.core.token = token
+        cfg.core.username = username
+        cfg.core.password = password
         accept_bypass_warning(cfg_path)
+        write_config(cfg)
     except Exception:
         pass
 
