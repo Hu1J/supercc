@@ -320,7 +320,7 @@ def install_windows(data_dir: str, project_slug: str, channel: str) -> None:
             f'cd /d "{project_dir}"\n'
             f'set SUPERCC_CONFIG={data_dir}\\config.json\n'
             f'set SUPERCC_DATA={data_dir}\n'
-            f'python -m supercc.plugin.wecom\n'
+            f'python -m supercc.adapter.wecom\n'
         )
     else:
         raise ValueError(f"Unknown channel: {channel}")
