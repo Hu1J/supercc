@@ -354,8 +354,8 @@ class WsServer:
                 pass
             return
 
-        # 订阅 connect/info 方法走快速路径
-        if req.method in ("connect", "ping"):
+        # 订阅 connect 方法走快速路径（ping 走注册的处理程序 core.ping）
+        if req.method == "connect" and req.method not in self.router._handlers:
             resp = JsonRpcResponse(id=req.id, result={"status": "ok"})
             try:
                 await conn.ws.send(json.dumps(resp.to_dict()))
@@ -420,11 +420,56 @@ class WsServer:
     async def start(self):
         """启动 WebSocket 服务器。"""
         import websockets
+
+        # websockets 15.x: handler receives (connection,) only, no path param.
+        # Path is captured via process_request and looked up in _conn_path.
+        self._conn_path: dict[int, str] = {}
+
+        async def _ws_handler(connection: Any):
+            """WebSocket 连接处理器（15.x 签名，无 path 参数）。"""
+            path = self._conn_path.pop(id(connection), "/unknown/unknown")
+            parts = path.strip("/").split("/")
+            plugin_id = parts[0] if len(parts) > 0 else "unknown"
+            platform = parts[1] if len(parts) > 1 else plugin_id
+
+            conn = await self._register_connection(connection, plugin_id, platform)
+            conn_id = None
+            for cid, c in self._connections.items():
+                if c is conn:
+                    conn_id = cid
+                    break
+
+            try:
+                async for raw_msg in connection:
+                    try:
+                        data = json.loads(raw_msg)
+                    except json.JSONDecodeError:
+                        resp = JsonRpcResponse(
+                            error=JsonRpcError(code=ErrorCode.PARSE_ERROR, message="Invalid JSON")
+                        )
+                        await connection.send(json.dumps(resp.to_dict()))
+                        continue
+
+                    asyncio.create_task(self._handle_client_message(conn, data))
+
+            except websockets.exceptions.ConnectionClosed:
+                logger.info(f"[WsServer] Connection closed: {conn_id}")
+            finally:
+                if conn_id:
+                    await self._unregister_connection(conn_id)
+
+        async def _process_request(connection: Any, request: Any) -> Any | None:
+            """Capture URI path from HTTP upgrade request (15.x 兼容)。"""
+            # request.path is a str attribute of the Request dataclass
+            self._conn_path[id(connection)] = getattr(request, "path", "/unknown/unknown")
+            return None
+
         self._server = await websockets.serve(
-            self._ws_handler,
+            _ws_handler,
             self.host,
             self.port,
             reuse_address=True,
+            process_request=_process_request,
         )
         self._running.set()
         logger.info(f"[WsServer] Listening on ws://{self.host}:{self.port}")
