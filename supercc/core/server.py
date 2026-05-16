@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import secrets
 import threading
 import traceback
@@ -83,9 +84,6 @@ class Connection:
     subscribed_keys: set[SessionKey] = field(default_factory=set)
     alive: bool = True
 
-
-class _RestartNow(Exception):
-    """触发有序关闭的信号异常，由 _do_restart_sync 抛出，被 _handle_client_message 捕获。"""
 
 # ── WebSocket Server ────────────────────────────────────────────────────────
 
@@ -352,23 +350,24 @@ class WsServer:
                 logger.warning("[WsServer] failed to send response, connection may be dead")
 
             # 响应发出后，检查是否需要 restart/update/switch
-            # event 在 resp.result（success response）或 resp.error 中
             event: str = ""
             if resp.result is not None and isinstance(resp.result, dict):
                 event = resp.result.get("event", "")
-            if event in ("restart", "update", "switch"):
-                extra = resp.result.get("extra", {}) if resp.result else {}
-                try:
-                    await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        self._do_restart_sync,
-                        event,
-                        extra,
-                    )
-                except _RestartNow:
-                    logger.info("[WsServer] restart requested, stopping event loop")
-                    asyncio.get_running_loop().stop()
+            if event in ("restart", "update"):
+                # 防止并发
+                if not self._restart_lock.acquire(blocking=False):
+                    logger.warning("[WsServer] restart already in progress, skipping")
                     return
+
+                project_path = req.params.get("project_path", "")
+                extra = resp.result.get("extra", {}) if resp.result else {}
+                target_path = extra.get("target_path", "") or project_path
+
+                # restart/update 用 os.execvp 原地替换进程
+                from supercc.core.commands.restart_impl import _cleanup_and_replace
+                _cleanup_and_replace(event, target_path)
+                # 以下代码永不执行
+                return
 
     async def _send_event(self, conn: Connection, method: str, params: dict):
         """向插件发送 Event notification（无 id）。"""
@@ -384,51 +383,6 @@ class WsServer:
             if key in conn.subscribed_keys:
                 await self._send_event(conn, method, params)
 
-    # ── Restart / Update / Switch 触发（后台线程执行）─────────────────────
-
-    def _do_restart_sync(self, event: str, extra: dict):
-        """在后台线程中执行 restart/update/switch，不阻塞 event loop。
-
-        完成后抛出 _RestartNow 异常，由主线程的 _handle_client_message 捕获，
-        再调用 loop.stop() 触发有序关闭。不要用 os._exit()（非 main 线程只杀线程不杀进程）。
-        """
-        acquired = self._restart_lock.acquire(blocking=False)
-        if not acquired:
-            logger.warning("[restart] restart already in progress, skipping")
-            return
-
-        try:
-            from supercc.core.commands.restart_impl import run_restart_cli, run_update_cli, RestartError
-            try:
-                if event == "restart":
-                    steps = list(run_restart_cli(None))
-                    logger.info("[restart] completed %d steps", len(steps))
-                elif event == "update":
-                    steps = list(run_update_cli(None))
-                    logger.info("[update] completed %d steps", len(steps))
-                elif event == "switch":
-                    from supercc.core.commands.switch_impl import run_switch_cli as switch_run, SwitchError as SwitchErr
-                    target = extra.get("target_path", "")
-                    if not target:
-                        logger.warning("[switch] no target_path in extra, skipping")
-                    else:
-                        try:
-                            steps = list(switch_run(target))
-                            logger.info("[switch] completed %d steps, target=%s", len(steps), target)
-                        except SwitchErr as e:
-                            logger.error("[switch] failed: %s", e)
-                else:
-                    steps = list(run_restart_cli(None))
-                    logger.info("[restart] completed %d steps", len(steps))
-            except RestartError as e:
-                logger.error("[restart] failed: %s", e)
-                return
-        finally:
-            self._restart_lock.release()
-
-        # 抛出异常回到主线程，触发有序关闭
-        raise _RestartNow()
-
     # ── 服务器生命周期 ────────────────────────────────────────────────────
 
     async def start(self):
@@ -438,6 +392,7 @@ class WsServer:
             self._ws_handler,
             self.host,
             self.port,
+            reuse_address=True,
         )
         self._running.set()
         logger.info(f"[WsServer] Listening on ws://{self.host}:{self.port}")
