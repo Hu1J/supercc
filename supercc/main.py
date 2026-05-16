@@ -1556,6 +1556,7 @@ def main(args=None):
     # config
     config_parser = subparsers.add_parser("config", help="Manage model configurations")
     config_subparsers = config_parser.add_subparsers(dest="config_action", help="Action")
+    config_subparsers.required = False  # 允许 `supercc config` 回车进入交互菜单
 
     ca_list = config_subparsers.add_parser("list", help="List all models")
     ca_list.add_argument("config_args", nargs="*", default=[], help="(ignored)")
@@ -1749,6 +1750,8 @@ def main(args=None):
             run_gateway_stop,
             run_gateway_status,
             run_gateway_uninstall,
+            run_gateway_run,
+            run_gateway_restart,
         )
         action = getattr(args, "gateway_action", None)
         if action == "install":
@@ -1761,6 +1764,10 @@ def main(args=None):
             run_gateway_status()
         elif action == "uninstall":
             run_gateway_uninstall()
+        elif action == "run":
+            run_gateway_run()
+        elif action == "restart":
+            run_gateway_restart()
         else:
             run_gateway_status()
         return
