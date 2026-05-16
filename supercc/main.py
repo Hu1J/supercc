@@ -1715,25 +1715,6 @@ def main(args=None):
             sys.exit(1)
         return
 
-    if command == "stop":
-        # Read PID from current directory's .supercc/ directory
-        try:
-            _, data_dir = resolve_config_path()
-        except Exception:
-            print("当前目录未初始化，无法停止。")
-            return
-        pid_file = os.path.join(data_dir, "supercc.pid")
-        if not os.path.exists(pid_file):
-            print("当前目录无运行中的 SuperCC 实例。")
-            return
-        try:
-            pid = int(Path(pid_file).read_text().strip())
-        except (ValueError, OSError):
-            print("PID 文件损坏，无法停止。")
-            return
-        stop_bridge(pid)
-        return
-
     if command == "send":
         from supercc.main import run_send_command
         run_send_command(args.files, args.config)
