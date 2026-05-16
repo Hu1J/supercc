@@ -1394,6 +1394,11 @@ def main(args=None):
             asyncio.run(start_bridge(cfg_path, data_dir))
         return
 
+    # `supercc` with no arguments shows help
+    if command is None:
+        parser.print_help()
+        return
+
     # Default: start (both `supercc` and `supercc start`)
     is_installed, yaml_exists = detect_config()
     if not is_installed:
