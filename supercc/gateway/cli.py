@@ -59,3 +59,29 @@ def run_gateway_status() -> None:
         print("✅ 平台服务已安装（开机自启动）")
     else:
         print("❌ 平台服务未安装（不会开机自启动）")
+
+
+def run_gateway_run() -> None:
+    """gateway run 子命令：前台阻塞运行，不获取 filelock。
+    适合开发调试，Ctrl+C 退出。
+    """
+    from supercc.config import resolve_config_path, init_config
+    cfg_path, data_dir = resolve_config_path()
+    init_config(cfg_path)
+    import asyncio
+    from supercc.main import start_bridge
+    asyncio.run(start_bridge(cfg_path, data_dir, foreground=True))
+
+
+def run_gateway_restart() -> None:
+    """gateway restart 子命令：热重启当前实例。"""
+    from supercc.core.commands.restart_impl import run_restart_cli
+    import sys
+    try:
+        for step in run_restart_cli(None):
+            print(f"[{step.step}/{step.total}] {step.label}: {step.detail or ''}")
+            if step.status == "final":
+                break
+    except Exception as e:
+        print(f"Restart failed: {e}", file=sys.stderr)
+        sys.exit(1)
