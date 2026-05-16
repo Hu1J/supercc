@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from claude_agent_sdk import tool
-from supercc.skill_search import get_skill_search_registry
-from supercc.skill_search.models import SkillMeta
+from supercc.core.skill_search import get_skill_search_registry
+from supercc.core.skill_search.models import SkillMeta
 
 
 SKILL_SEARCH_GUIDE = """
