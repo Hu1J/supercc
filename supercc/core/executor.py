@@ -125,24 +125,22 @@ class CoreExecutor:
             bot_id=key.bot_id,
         )
 
-        # ── 安全检查 ───────────────────────────────────────────────────────
-
-        # 1) Authenticator: P2P 白名单检查（按 platform 查找 allowed_users）
-        authenticator = self._get_authenticator_for_platform(key.platform)
-        if authenticator and inbound.user_open_id:
-            auth_result = authenticator.authenticate(inbound.user_open_id)
-            if not auth_result.authorized:
-                return OutboundMessage(
-                    event="command",
-                    session_key=key,
-                    message_id=inbound.message_id,
-                    content="⛔ 抱歉，你不在允许使用列表中。",
-                    message_type=MessageType.TEXT,
-                )
-
         # ── 斜杠命令检测 ───────────────────────────────────────────────────
 
         if _is_command(inbound.content):
+            # ── 指令权限校验：只有 allowed_users 才能执行指令 ─────────────────
+            authenticator = self._get_authenticator_for_platform(key.platform)
+            if authenticator and inbound.user_open_id:
+                auth_result = authenticator.authenticate(inbound.user_open_id)
+                if not auth_result.authorized:
+                    return OutboundMessage(
+                        event="command",
+                        session_key=key,
+                        message_id=inbound.message_id,
+                        content="⛔ 抱歉，你不在允许使用指令的用户列表中。",
+                        message_type=MessageType.TEXT,
+                    )
+
             cmd_name, cmd_args = _parse_command(inbound.content)
             context = {
                 "session_key": key,

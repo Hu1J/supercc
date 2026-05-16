@@ -718,34 +718,8 @@ class FeishuCoreWSClient:
                 logger.info(f"[GROUP] skip (no mention) chat_id={key.chat_id}")
                 return False
 
-            # ── 全局 allowed_users 检查（私聊/群聊统一强制）──────────────────
-            from supercc.config import reload_config
-            cfg = reload_config()
-            channel_cfg = getattr(cfg.channels, "feishu", None)
-            allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
-            user_id = inbound.user_open_id
-            if allowed_users and user_id not in allowed_users:
-                reason = "你不在允许使用列表中。"
-                try:
-                    card = {
-                        "schema": "2.0",
-                        "config": {"wide_screen_mode": True},
-                        "header": {
-                            "title": {"tag": "plain_text", "content": "⛔ 无访问权限"},
-                        },
-                        "body": {
-                            "elements": [
-                                {"tag": "markdown", "content": reason},
-                            ]
-                        },
-                    }
-                    await self.feishu.send_card(key.chat_id, card)
-                except Exception:
-                    pass
-                return False
-
             allow_from = getattr(entry, "allow_from", [])
-            if allow_from and user_id not in allow_from:
+            if allow_from and inbound.user_open_id not in allow_from:
                 reason = "你在该群中没有使用权限。"
                 try:
                     card = {
