@@ -681,7 +681,17 @@ class WeComCoreWSClient:
                     pass
             result_content = f"🧠 **{tool_name.replace('mcp__SuperCC__', '')}**"
         else:
-            result_content = result
+            # 格式化文本（Agent/Codex/Edit/Write/AskUserQuestion 等）→ 发送给用户
+            text = str(result) if result else ""
+            if text:
+                try:
+                    await self.wecom.send_markdown(chat_id, text)
+                except Exception:
+                    try:
+                        await self.wecom.send_text(chat_id, text[:2000])
+                    except Exception:
+                        pass
+            result_content = text
 
         await self._send_event(Event.TOOL_RESULT, {
             "tool_call_id": tool_call_id,
