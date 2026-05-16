@@ -1137,7 +1137,7 @@ def _run_config_command(args) -> None:
         print(f"✅ 已切换到 **{entry.name}**\n")
         print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
         print(f"   端点: `{entry.env.ANTHROPIC_BASE_URL}`")
-        print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc restart` 命令重启。")
+        print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc gateway restart` 命令重启。")
         return
 
     if action == "delete":
