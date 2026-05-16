@@ -4,7 +4,7 @@ from __future__ import annotations
 from claude_agent_sdk import create_sdk_mcp_server
 
 # 导入已装饰的工具对象（SdkMcpTool），直接使用
-from supercc.claude.memory_tools import (
+from supercc.core.mcps.memory_tools import (
     memory_add_user,
     memory_delete_user,
     memory_update_user,
@@ -16,7 +16,7 @@ from supercc.claude.memory_tools import (
     memory_list_proj,
     memory_search_proj,
 )
-from supercc.claude.cron_tools import (
+from supercc.core.mcps.cron_tools import (
     cron_create,
     cron_list,
     cron_delete,
@@ -25,15 +25,15 @@ from supercc.claude.cron_tools import (
     cron_trigger,
     cron_logs,
 )
-from supercc.claude.skill_search_tools import skill_search
-from supercc.claude.model_tools import (
+from supercc.core.claude.skill_search_tools import skill_search
+from supercc.core.mcps.model_tools import (
     add_custom_provider_tool,
     list_models,
     set_model_tool,
 )
-from supercc.claude.feishu_file_tools import feishu_send_file, get_chat_members
-from supercc.claude.feishu_history_tools import feishu_chat_history
-from supercc.claude.wecom_tools import wecom_send_file
+from supercc.core.mcps.feishu_file_tools import feishu_send_file, get_chat_members
+from supercc.core.mcps.feishu_history_tools import feishu_chat_history
+from supercc.core.claude.wecom_tools import wecom_send_file
 
 
 def get_supercc_mcp_server(include_feishu: bool = True, include_wecom: bool = False):

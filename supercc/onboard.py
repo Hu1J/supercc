@@ -7,7 +7,7 @@ from pathlib import Path
 
 import questionary
 
-from supercc.claude.model_config import (
+from supercc.core.models.model_config import (
     ModelEnv,
     init_model_env,
     update_provider_api_key,
@@ -16,7 +16,7 @@ from supercc.claude.model_config import (
     get_all_providers,
     is_configured,
 )
-from supercc.claude.model_providers import PROVIDERS
+from supercc.core.models.model_providers import PROVIDERS
 
 
 def _print_step(step: int, total: int, title: str) -> None:
@@ -174,7 +174,7 @@ def run_onboard_flow() -> bool:
     print(" 确认配置")
     print(f"{'━' * 60}\n")
 
-    from supercc.claude.model_config import get_active_model_for_project
+    from supercc.core.models.model_config import get_active_model_for_project
     project_path = str(Path(data_dir).resolve().parent)  # 项目根路径
     pid, mid = get_active_model_for_project(project_path)
     if pid:
@@ -390,7 +390,7 @@ def _do_model_config_step() -> None:
             env.ANTHROPIC_AUTH_TOKEN = token
 
         # 自定义供应商存到 model.json
-        from supercc.claude.model_config import _load_json, _save_json
+        from supercc.core.models.model_config import _load_json, _save_json
         raw = _load_json()
         providers_raw = raw.get("providers", {})
         providers_raw[provider_name] = {

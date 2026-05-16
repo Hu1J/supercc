@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from supercc.claude.codex_exec import CodexRunTailingRunner, CodexStreamEvent
+from supercc.core.mcps.codex_exec import CodexRunTailingRunner, CodexStreamEvent
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class ClaudeIntegration:
         """
         # 检测 model 配置是否已切换（auth_token、base_url、model 任一变化都需重建）
         try:
-            from supercc.claude.model_config import get_model_env
+            from supercc.core.models.model_config import get_model_env
             env = get_model_env()
             current_config = (
                 env.ANTHROPIC_AUTH_TOKEN if env else "",
@@ -114,7 +114,7 @@ class ClaudeIntegration:
             pass
 
         from claude_agent_sdk import ClaudeAgentOptions
-        from supercc.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
+        from supercc.core.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
 
         # 一次性标志消耗：/new 设置后，只对下一次 query 生效，之后清除
         if self._new_session_requested:
@@ -136,7 +136,7 @@ class ClaudeIntegration:
         }
         try:
             from supercc.config import get_config
-            from supercc.claude.codex_mcp import (
+            from supercc.core.mcps.codex_mcp import (
                 build_supercc_codex_mcp_config,
             )
 
@@ -163,7 +163,7 @@ class ClaudeIntegration:
         model_settings_json: str | None = None
         model_config: tuple[str, str, str] | None = None  # (auth_token, base_url, model)
         try:
-            from supercc.claude.model_config import get_model_env
+            from supercc.core.models.model_config import get_model_env
             env = get_model_env()
             if env and env.ANTHROPIC_AUTH_TOKEN:
                 auth_token = env.ANTHROPIC_AUTH_TOKEN

@@ -82,7 +82,7 @@ class CoreExecutor:
         if claude_cfg:
             approved_dir = getattr(claude_cfg, "approved_directory", "")
         if approved_dir:
-            from supercc.security.validator import SecurityValidator
+            from supercc.core.security.validator import SecurityValidator
             self._security_validator = SecurityValidator(approved_dir)
         else:
             self._security_validator = None
@@ -111,7 +111,7 @@ class CoreExecutor:
         channels = getattr(config, "channels", None)
         if channels is None:
             return None
-        from supercc.security.auth import Authenticator
+        from supercc.core.security.auth import Authenticator
         if platform == "wecom":
             wecom_cfg = getattr(channels, "wecom", None)
             if wecom_cfg:
@@ -138,7 +138,7 @@ class CoreExecutor:
         key = inbound.session_key
 
         # ── MCP 工具上下文初始化（memory_tools 等依赖此获取用户身份）──────────
-        from supercc.claude.message_context import set_current_context
+        from supercc.core.claude.message_context import set_current_context
         set_current_context(
             user_open_id=inbound.user_open_id or "",
             chat_id=key.chat_id,
@@ -410,26 +410,26 @@ class CoreExecutor:
         system_parts = []
 
         try:
-            from supercc.claude.memory_manager import MEMORY_SYSTEM_GUIDE
+            from supercc.core.claude.memory_manager import MEMORY_SYSTEM_GUIDE
             system_parts.append(MEMORY_SYSTEM_GUIDE)
         except Exception:
             pass
 
         try:
-            from supercc.claude.feishu_file_tools import FEISHU_FILE_GUIDE
+            from supercc.core.mcps.feishu_file_tools import FEISHU_FILE_GUIDE
             system_parts.append(FEISHU_FILE_GUIDE)
         except Exception:
             pass
 
         try:
-            from supercc.claude.cron_tools import CRON_GUIDE
+            from supercc.core.mcps.cron_tools import CRON_GUIDE
             system_parts.append(CRON_GUIDE)
         except Exception:
             pass
 
         # Memory Context Injection
         try:
-            from supercc.claude.memory_manager import get_memory_manager
+            from supercc.core.claude.memory_manager import get_memory_manager
             memory_manager = get_memory_manager()
             memory_ctx = memory_manager.inject_context(
                 user_open_id=inbound.user_open_id or "",
@@ -481,7 +481,7 @@ class CoreExecutor:
             return
 
         # ── MCP 工具上下文（background task 中 memory MCP 工具也依赖此）────────
-        from supercc.claude.message_context import set_current_context
+        from supercc.core.claude.message_context import set_current_context
         set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform, bot_id=key.bot_id)
 
         # ── 记忆自进化（只推 memory MCP 工具卡片，不推文本流）───────────
@@ -531,7 +531,7 @@ class CoreExecutor:
         if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
             try:
                 from pathlib import Path
-                from supercc.evolve.skill_nudge import _get_skill_git_state
+                from supercc.core.evolve.skill_nudge import _get_skill_git_state
 
                 worker.integration_skill._init_options(channel=key.platform)
 
@@ -558,7 +558,7 @@ class CoreExecutor:
                 )
 
                 # 检查 skills git 状态是否有变更
-                from supercc.evolve.skill_nudge import _detect_skill_changes
+                from supercc.core.evolve.skill_nudge import _detect_skill_changes
 
                 if skill_enabled:
                     # 把 push_fn 包装为 (chat_id, text) 签名供 _detect_skill_changes 调用

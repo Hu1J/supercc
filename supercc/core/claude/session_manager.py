@@ -435,7 +435,7 @@ class SessionManager:
 
     def _init_memories_db(self):
         """Initialize memories DB (separate file from sessions)."""
-        from supercc.claude.memory_manager import get_memory_manager
+        from supercc.core.claude.memory_manager import get_memory_manager
         # Initialise the memories DB lazily — get_memory_manager creates the file
         # in ~/.supercc/ on first access.
         try:

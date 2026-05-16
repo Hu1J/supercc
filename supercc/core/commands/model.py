@@ -18,8 +18,8 @@ class ModelHandler(CommandHandler):
         return key[:6] + "***" + key[-4:]
 
     async def execute(self, args: str, context: dict) -> CommandResult:
-        from supercc.claude.model_config import get_model_env, get_all_providers, set_project_model, _load_json
-        from supercc.claude.model_providers import PROVIDERS
+        from supercc.core.models.model_config import get_model_env, get_all_providers, set_project_model, _load_json
+        from supercc.core.models.model_providers import PROVIDERS
 
         session_key: SessionKey = context.get("session_key")
         project_path = session_key.project_path if session_key else ""

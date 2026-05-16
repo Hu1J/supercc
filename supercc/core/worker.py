@@ -112,7 +112,7 @@ class WorkerPool:
         """
         async with self._lock:
             if key not in self._workers:
-                from supercc.claude.integration import ClaudeIntegration
+                from supercc.core.claude.integration import ClaudeIntegration
                 worker = Worker(key=key, session_id=session_id)
                 worker.integration = ClaudeIntegration(
                     cli_path=cli_path,

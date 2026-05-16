@@ -18,8 +18,8 @@ class StatusHandler(CommandHandler):
 
     async def execute(self, args: str, context: dict) -> CommandResult:
         from supercc import __version__
-        from supercc.claude.model_config import get_model_env
-        from supercc.claude.model_providers import PROVIDERS
+        from supercc.core.models.model_config import get_model_env
+        from supercc.core.models.model_providers import PROVIDERS
 
         session_key: SessionKey = context.get("session_key")
         project_path = session_key.project_path if session_key else ""

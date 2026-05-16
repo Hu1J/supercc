@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from supercc.claude.model_providers import PROVIDERS, get_provider
+from supercc.core.models.model_providers import PROVIDERS, get_provider
 
 logger = logging.getLogger(__name__)
 

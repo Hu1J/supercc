@@ -50,7 +50,7 @@ def register_dream_job(data_dir: str) -> bool:
     Returns True if registered, False if skipped (already exists, no chat_id, or group chat).
     Only recreates job if the prompt has changed from the existing one.
     """
-    from supercc.cron_scheduler import list_jobs, create_job, delete_job, _get_active_chat_id, _is_group_chat
+    from supercc.core.cron_scheduler import list_jobs, create_job, delete_job, _get_active_chat_id, _is_group_chat
 
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:

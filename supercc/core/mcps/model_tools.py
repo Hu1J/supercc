@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from claude_agent_sdk import tool
 
-from supercc.claude.model_config import (
+from supercc.core.models.model_config import (
     add_custom_provider,
     get_all_providers,
     get_active_model_for_project,
@@ -12,12 +12,12 @@ from supercc.claude.model_config import (
     validate_model_env,
     get_model_env,
 )
-from supercc.claude.model_providers import PROVIDERS
+from supercc.core.models.model_providers import PROVIDERS
 
 
 def _get_user_open_id() -> str | None:
     """从当前消息上下文获取 user_open_id（通过 contextvar）。"""
-    from supercc.claude.message_context import get_current_user_open_id
+    from supercc.core.claude.message_context import get_current_user_open_id
     return get_current_user_open_id()
 
 
@@ -61,7 +61,7 @@ async def list_models(args: dict) -> dict:
     current_pid, current_mid = get_active_model_for_project(project_path)
 
     # 获取 model.json 原始数据（含自定义供应商）
-    from supercc.claude.model_config import _load_json
+    from supercc.core.models.model_config import _load_json
     raw = _load_json()
     providers_raw = raw.get("providers", {})
 
@@ -174,7 +174,7 @@ async def set_model_tool(args: dict) -> dict:
 
     # 如果提供了 api_key，更新供应商配置（供应商必须已存在）
     if api_key:
-        from supercc.claude.model_config import update_provider_api_key
+        from supercc.core.models.model_config import update_provider_api_key
         ok, err = update_provider_api_key(provider_id, api_key)
         if not ok:
             return {

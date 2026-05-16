@@ -12,7 +12,7 @@ class CodexHandler(CommandHandler):
         return "/codex — 查看或配置 Codex MCP"
 
     async def execute(self, args: str, context: dict) -> CommandResult:
-        from supercc.claude.codex_mcp import (
+        from supercc.core.mcps.codex_mcp import (
             get_codex_mcp_status,
             format_codex_status,
             format_codex_availability,
@@ -39,7 +39,7 @@ class CodexHandler(CommandHandler):
         if first in ("models", "model"):
             return CommandResult(content=format_codex_models())
         if first == "setup":
-            from supercc.claude.codex_mcp import ensure_codex_mcp_configured
+            from supercc.core.mcps.codex_mcp import ensure_codex_mcp_configured
             status = ensure_codex_mcp_configured(codex_cfg)
             return CommandResult(content=format_codex_status(status))
         return CommandResult(

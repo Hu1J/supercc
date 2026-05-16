@@ -11,7 +11,7 @@ CRON_GUIDE = """
 需要创建/查看/管理定时任务时，用 mcp__SuperCC__CronCreate/CronList/CronDelete/CronPause/CronResume/CronTrigger/CronLogs。
 """
 
-from supercc.cron_scheduler import (
+from supercc.core.cron_scheduler import (
     create_job,
     list_jobs,
     delete_job,
@@ -40,7 +40,7 @@ def _get_data_dir() -> str:
 
 
 def _get_chat_id() -> Optional[str]:
-    from supercc.claude.message_context import get_current_chat_id
+    from supercc.core.claude.message_context import get_current_chat_id
     return get_current_chat_id()
 
 

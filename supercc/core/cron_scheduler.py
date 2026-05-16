@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from supercc.config import Config, SESSIONS_DB_PATH
-from supercc.claude.integration import ClaudeIntegration
+from supercc.core.claude.integration import ClaudeIntegration
 from supercc.channels.feishu.client import FeishuClient
 
 
@@ -650,7 +650,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     platform = job.get("platform", "feishu")
 
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
-    from supercc.claude.message_context import set_current_context
+    from supercc.core.claude.message_context import set_current_context
     # 从 sessions 表查询 user_open_id，不用硬编码的 allowed_users[0]
     if platform == "wecom":
         user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
@@ -689,7 +689,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         _log("FEISHU_CLIENT_CREATED")
 
     # Memory manager for formatting memory tool calls
-    from supercc.claude.memory_manager import get_memory_manager
+    from supercc.core.claude.memory_manager import get_memory_manager
     memory_manager = get_memory_manager()
     _log("MEMORY_MANAGER_CREATED")
 
@@ -709,7 +709,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     # Snapshot before state for skill scan jobs
     before_state = None
     if is_skill_scan:
-        from supercc.evolve.skill_nudge import _get_skill_git_state
+        from supercc.core.evolve.skill_nudge import _get_skill_git_state
         before_state = _get_skill_git_state(skills_dir)
         prompt = prompt.replace("{SKILLS_DIR}", str(skills_dir))
 
@@ -828,7 +828,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
         # For skill scan jobs, detect changes via git state comparison
         if is_skill_scan and before_state is not None:
-            from supercc.evolve.skill_nudge import _detect_skill_changes
+            from supercc.core.evolve.skill_nudge import _detect_skill_changes
 
             async def _skill_send(cid, text):
                 if platform == "feishu":
@@ -1017,7 +1017,7 @@ class CronScheduler:
         # Ensure skill symlinks are in sync on every tick (idempotent)
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
-            from supercc.evolve.skill_nudge import _ensure_symlinks
+            from supercc.core.evolve.skill_nudge import _ensure_symlinks
             _ensure_symlinks(skills_dir)
         # Deliver any pending notifications that have reached their notify_at time
         # Filter by scoped chat_id if set (per-chat-id isolation)

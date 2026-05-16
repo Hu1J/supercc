@@ -61,7 +61,7 @@ def _get_wecom_credentials() -> tuple[str, str]:
 
 def _get_chat_id() -> Optional[str]:
     """从 contextvar 获取当前 chat_id。"""
-    from supercc.claude.message_context import get_current_chat_id
+    from supercc.core.claude.message_context import get_current_chat_id
     return get_current_chat_id()
 
 

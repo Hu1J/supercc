@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-from supercc.claude.codex_exec import (
+from supercc.core.mcps.codex_exec import (
     build_codex_exec_cmd,
     codex_runs_dir,
     map_codex_jsonl_event,

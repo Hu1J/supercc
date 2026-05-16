@@ -97,8 +97,8 @@ def _ensure_agents_md(project_dir: str) -> None:
 from supercc.config import init_config, get_config, write_config, resolve_config_path, SESSIONS_DB_PATH
 from supercc.channels.feishu.client import FeishuClient, IncomingMessage
 from supercc.channels.feishu.ws_client import FeishuWSClient
-from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
-from supercc.claude.cron_tools import set_cron_scheduler
+from supercc.core.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
+from supercc.core.claude.cron_tools import set_cron_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
     Only registers if active chat is P2P (not group).
     Only recreates job if the prompt has changed from the existing one.
     """
-    from supercc.cron_scheduler import list_jobs, create_job, delete_job
+    from supercc.core.cron_scheduler import list_jobs, create_job, delete_job
 
     chat_id = _get_active_chat_id(data_dir)
     if not chat_id:
@@ -196,7 +196,7 @@ class _SafeStreamHandler(logging.StreamHandler):
 def _ensure_codex_mcp(config) -> None:
     """Best-effort Codex MCP setup for Claude Code."""
     try:
-        from supercc.claude.codex_mcp import ensure_codex_mcp_configured
+        from supercc.core.mcps.codex_mcp import ensure_codex_mcp_configured
 
         status = ensure_codex_mcp_configured(config.codex)
         logger.info("Codex MCP status: %s", status.state)
@@ -377,7 +377,7 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
         write_config(cfg)
 
     # Startup: initialize model env singleton with global ~/.supercc/model.json
-    from supercc.claude.model_config import init_model_env, ensure_project_model_config
+    from supercc.core.models.model_config import init_model_env, ensure_project_model_config
     init_model_env(config.claude.approved_directory)
     ensure_project_model_config(config.claude.approved_directory)
 
@@ -478,14 +478,14 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
     logger.info("[Phase4] CronScheduler started")
 
     # Ensure skills directory is a git repo (init if needed)
-    from supercc.evolve.skill_nudge import _ensure_skills_git_repo
+    from supercc.core.evolve.skill_nudge import _ensure_skills_git_repo
     _ensure_skills_git_repo(Path(data_dir) / "skills")
 
     # Register daily skill optimization scan
     _register_skill_optimization_job(data_dir, cron_scheduler)
 
     # Register nightly dream job (memory refinement at 3am)
-    from supercc.evolve.dream import register_dream_job
+    from supercc.core.evolve.dream import register_dream_job
     register_dream_job(data_dir)
 
     # ── Graceful shutdown ──────────────────────────────────────────────────
@@ -553,7 +553,7 @@ def start_core_only(config_path: str, data_dir: str):
 
     # 2. 初始化 config, model env（复用现有代码）
     config = init_config(config_path)
-    from supercc.claude.model_config import init_model_env, ensure_project_model_config
+    from supercc.core.models.model_config import init_model_env, ensure_project_model_config
     init_model_env(config.claude.approved_directory)
     ensure_project_model_config(config.claude.approved_directory)
     _ensure_codex_mcp(config)
@@ -736,7 +736,7 @@ def _run_config_interactive() -> None:
 def _run_config_model_interactive(dirty: list) -> None:
     """交互式模型配置子菜单。"""
     import questionary
-    from supercc.claude.model_config import (
+    from supercc.core.models.model_config import (
         ModelEnv,
         add_model,
         get_all_models,
@@ -744,7 +744,7 @@ def _run_config_model_interactive(dirty: list) -> None:
         switch_model,
         delete_model,
     )
-    from supercc.claude.model_providers import PROVIDERS
+    from supercc.core.models.model_providers import PROVIDERS
     auth_display_map = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}
 
     while True:
@@ -883,7 +883,7 @@ def _run_config_model_interactive(dirty: list) -> None:
             print(f"{'✅' if ok else '❌'} 模型 `{target_id}` {'已删除' if ok else '删除失败'}\n")
 
         elif choice == "providers":
-            from supercc.claude.model_providers import PROVIDERS
+            from supercc.core.models.model_providers import PROVIDERS
             lines = ["支持的模型供应商：\n"]
             for pid, p in PROVIDERS.items():
                 auth = auth_display_map.get(p.auth_type, p.auth_type)
@@ -1086,7 +1086,7 @@ def _run_config_channel_interactive(dirty: list) -> None:
 
 def _run_config_command(args) -> None:
     """Handle supercc config <action> [args]."""
-    from supercc.claude.model_config import (
+    from supercc.core.models.model_config import (
         get_all_models,
         get_active_model,
         switch_model,
@@ -1121,7 +1121,7 @@ def _run_config_command(args) -> None:
         if not is_configured():
             current_settings = {}
             try:
-                from supercc.claude.model_config import get_current_claude_settings
+                from supercc.core.models.model_config import get_current_claude_settings
                 current_settings = get_current_claude_settings()
             except Exception:
                 pass
@@ -1167,7 +1167,7 @@ def _run_config_command(args) -> None:
 
         if provider_id:
             # --provider 快捷模式
-            from supercc.claude.model_providers import get_provider, PROVIDERS
+            from supercc.core.models.model_providers import get_provider, PROVIDERS
             provider = get_provider(provider_id)
             if not provider:
                 available = ", ".join(f"`{p}`" for p in PROVIDERS.keys())
@@ -1213,7 +1213,7 @@ def _run_config_command(args) -> None:
             print("用法: supercc config add --provider <provider_id> <api_key> <model> [model_id] [name]")
             print("       supercc config add <model_id>|<name>|<description>|<api_key>|<base_url>|<model>")
             print("\n可用供应商:")
-            from supercc.claude.model_providers import PROVIDERS
+            from supercc.core.models.model_providers import PROVIDERS
             for pid, p in PROVIDERS.items():
                 print(f"  `{pid}`")
             return
@@ -1269,7 +1269,7 @@ def _run_config_command(args) -> None:
         return
 
     if action == "providers":
-        from supercc.claude.model_providers import PROVIDERS
+        from supercc.core.models.model_providers import PROVIDERS
         auth_display = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}
         print("支持的模型供应商：\n")
         for pid, p in PROVIDERS.items():
