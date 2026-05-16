@@ -736,8 +736,22 @@ class WeComCoreWSClient:
                     pass
                 return False
 
+            # ── 全局 allowed_users 检查（私聊/群聊统一强制）──────────────────
+            from supercc.config import reload_config
+            cfg = reload_config()
+            channel_cfg = getattr(cfg.channels, "wecom", None)
+            allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
+            user_id = inbound.user_open_id
+            if allowed_users and user_id not in allowed_users:
+                reason = "你不在允许使用列表中。"
+                try:
+                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                except Exception:
+                    pass
+                return False
+
             allow_from = getattr(entry, "allow_from", [])
-            if allow_from and inbound.user_open_id not in allow_from:
+            if allow_from and user_id not in allow_from:
                 reason = "你在该群中没有使用权限。"
                 try:
                     await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
