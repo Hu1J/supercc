@@ -1288,15 +1288,6 @@ def main(args=None):
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
     gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
-    # plugin
-    plugin_parser = subparsers.add_parser("plugin", help="Manage plugin enable/disable/status")
-    plugin_subparsers = plugin_parser.add_subparsers(dest="plugin_action", help="Action")
-    pa_status = plugin_subparsers.add_parser("status", help="Show plugin status")
-    pa_enable = plugin_subparsers.add_parser("enable", help="Enable a plugin")
-    pa_enable.add_argument("plugin_name", help="Plugin name (feishu or wecom)")
-    pa_disable = plugin_subparsers.add_parser("disable", help="Disable a plugin")
-    pa_disable.add_argument("plugin_name", help="Plugin name (feishu or wecom)")
-
     args = parser.parse_args(args)
 
     # Print banner before any logging setup
@@ -1386,56 +1377,6 @@ def main(args=None):
             cfg_path, data_dir = resolve_config_path()
             init_config(cfg_path)
             asyncio.run(start_bridge(cfg_path, data_dir))
-        return
-
-    if command == "plugin":
-        from supercc.config import load_config, write_config
-        try:
-            cfg_path, _ = resolve_config_path()
-            init_config(cfg_path)
-            cfg = load_config(cfg_path)
-        except Exception:
-            print("❌ 无法读取配置，请确保在项目目录下运行")
-            return
-
-        action = args.plugin_action
-        plugin_name = getattr(args, "plugin_name", None)
-
-        if action == "status":
-            feishu = cfg.channels.feishu
-            wecom = cfg.channels.wecom
-            feishu_creds = "✅ 已配置" if feishu.app_id else "❌ 未配置"
-            wecom_creds = "✅ 已配置" if wecom.corp_id else "❌ 未配置"
-            print(f"飞书:      enabled={feishu.enabled}  {feishu_creds}")
-            print(f"企业微信:  enabled={wecom.enabled}  {wecom_creds}")
-            print()
-            print("说明：修改 enabled 后需重启 SuperCC（supercc start）才能生效")
-            return
-
-        if plugin_name not in ("feishu", "wecom"):
-            print(f"❌ 不支持的插件：{plugin_name}（支持：feishu, wecom）")
-            return
-
-        channel = getattr(cfg.channels, plugin_name, None)
-        if not channel:
-            print(f"❌ 未知错误：找不到 {plugin_name} 配置")
-            return
-
-        if action == "enable":
-            if plugin_name == "feishu" and not channel.app_id:
-                print("❌ 飞书未配置凭证（app_id 为空），无法启用。请先运行 onboard")
-                return
-            if plugin_name == "wecom" and not channel.corp_id:
-                print("❌ 企业微信未配置凭证（corp_id 为空），无法启用。请先运行 onboard")
-                return
-            channel.enabled = True
-            write_config(cfg)
-            print(f"✅ {plugin_name} 已启用（重启后生效）")
-
-        elif action == "disable":
-            channel.enabled = False
-            write_config(cfg)
-            print(f"✅ {plugin_name} 已禁用（重启后生效）")
         return
 
     # Default: start (both `supercc` and `supercc start`)
