@@ -1496,15 +1496,6 @@ def main(args=None):
     send_parser.add_argument("files", nargs="+", help="Path(s) to the file(s) to send")
     send_parser.add_argument("--config", required=True, help="Path to config.yaml for this SuperCC instance")
 
-    switch_parser = subparsers.add_parser(
-        "switch",
-        help="Switch to another project's SuperCC instance",
-    )
-    switch_parser.add_argument(
-        "target",
-        help="Target project directory (absolute or relative path)",
-    )
-
     # memory
     memory_parser = subparsers.add_parser(
         "memory",
@@ -1689,45 +1680,6 @@ def main(args=None):
     if command == "send":
         from supercc.main import run_send_command
         run_send_command(args.files, args.config)
-        return
-
-    if command == "switch":
-        from supercc.core.commands.switch_impl import SwitchError, run_switch_cli
-        target = os.path.abspath(args.target)
-
-        # Try to load current project's config + Feishu client for notifications
-        feishu = None
-        chat_id = None
-        try:
-            cfg_path, _ = resolve_config_path()
-            init_config(cfg_path)
-            config = get_config()
-            db_path = SESSIONS_DB_PATH
-
-            from supercc.adapter.feishu.client import FeishuClient
-            from supercc.claude.session_manager import SessionManager
-            feishu = FeishuClient(
-                app_id=config.channels.feishu.app_id,
-                app_secret=config.channels.feishu.app_secret,
-            )
-            sm = SessionManager(db_path=db_path)
-            project_path = config.claude.approved_directory
-            session = sm.get_active_session_by_chat_id(project_path=project_path, platform="feishu")
-            chat_id = session.chat_id if session and session.chat_id else None
-        except Exception:
-            pass  # Feishu not available, proceed without notifications
-
-        try:
-            for step in run_switch_cli(target, feishu=feishu, chat_id=chat_id):
-                bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
-                if step.status == "final":
-                    print(f"\r[{bar}] ✓ {step.label} {step.detail}")
-                else:
-                    print(f"\r[{bar}] {step.label}...")
-            print()
-        except SwitchError as e:
-            print(f"\n❌ 切换失败: {e}")
-            sys.exit(1)
         return
 
     if command == "memory":
