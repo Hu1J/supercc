@@ -1399,42 +1399,6 @@ def main(args=None):
         parser.print_help()
         return
 
-    # Default: start (both `supercc` and `supercc start`)
-    is_installed, yaml_exists = detect_config()
-    if not is_installed:
-        # Only run onboard if NEITHER config.json NOR config.yaml exists.
-        # If config.json is empty but config.yaml has content, init_config will migrate.
-        if yaml_exists:
-            logger.info("Config.json is empty but config.yaml found — migrating...")
-        else:
-            logger.info("No config found, running onboard flow...")
-            from supercc.onboard import run_onboard_flow
-            ok = run_onboard_flow()
-            if not ok:
-                return
-        cfg_path, data_dir = resolve_config_path()
-    else:
-        cfg_path, data_dir = resolve_config_path()
-
-    init_config(cfg_path)
-
-    config = get_config()
-
-    # Risk warning must be acknowledged before starting (skip if already accepted in config)
-    if config.bypass_accepted:
-        logger.info("Bypass warning already accepted, skipping.")
-    else:
-        if not confirm_risk_warning(cfg_path):
-            return
-    log_file = os.path.join(data_dir, "supercc.log")
-    Path(data_dir).mkdir(exist_ok=True)
-    fh = logging.FileHandler(log_file, mode="w")
-    fh.setFormatter(PlainFormatter())
-    logging.getLogger().addHandler(fh)
-    write_log_banner(_version)
-    logger.info("Starting SuperCC...")
-    asyncio.run(start_bridge(cfg_path, data_dir))
-
 
 if __name__ == "__main__":
     main()
