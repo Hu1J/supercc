@@ -13,14 +13,14 @@ class FeishuAgentCardMarker(_AgentCardMarker):
         """构建 Agent 飞书卡片。"""
         data = self.data
         if data and isinstance(data, dict):
-            parts = ["## 🤖 Agent"]
+            parts = ["## 🔀 Agent"]
             for key, value in data.items():
                 parts.append(f"**{key}**: {value}")
                 parts.append("\n---\n")
             content = "\n".join(parts)
         else:
             content = optimize_markdown_style(self.tool_input or "", card_version=2)
-            content = f"## 🤖 Agent\n\n{content}"
+            content = f"## 🔀 Agent\n\n{content}"
 
         return {
             "schema": "2.0",
@@ -38,7 +38,7 @@ class FeishuCodexMarker(_CodexMarker):
 
     def render(self) -> dict:
         """构建 Codex 事件飞书卡片。"""
-        title = f"## 🤖 Codex - {self._event_label()}"
+        title = f"## 🔀 Codex - {self._event_label()}"
         body = optimize_markdown_style(self.content or "", card_version=2)
         content = title if not body else f"{title}\n\n{body}"
         return {
@@ -91,7 +91,7 @@ def _codex_event_label(event_type: str, extra: dict | None = None) -> str:
     return event_type or "event"
 
 
-def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
+def format_agent_card(text: str | dict, title: str = "## 🔀 Agent") -> dict:
     """构建 Agent 飞书卡片（供 core_client.py 直接调用）。"""
     if isinstance(text, dict):
         data = text
@@ -126,7 +126,7 @@ def format_agent_card(text: str | dict, title: str = "## 🤖 Agent") -> dict:
 
 def format_codex_card(event_type: str, content: str = "", extra: dict | None = None) -> dict:
     """构建 Codex 事件飞书卡片（供 core_client.py 直接调用）。"""
-    title = f"## 🤖 Codex - {_codex_event_label(event_type, extra)}"
+    title = f"## 🔀 Codex - {_codex_event_label(event_type, extra)}"
     body = optimize_markdown_style(content or "", card_version=2)
     card_content = title if not body else f"{title}\n\n{body}"
     return {

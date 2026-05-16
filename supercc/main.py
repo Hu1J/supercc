@@ -745,7 +745,7 @@ def _run_config_interactive() -> None:
         choice = questionary.select(
             "SuperCC 配置",
             choices=[
-                questionary.Choice("🤖  模型", value="model", description="添加/切换/删除模型"),
+                questionary.Choice("🔀  模型", value="model", description="添加/切换/删除模型"),
                 questionary.Choice("🌐  Gateway", value="gateway", description="监听地址/端口/认证配置"),
                 questionary.Choice("💬  Channel", value="channel", description="飞书/企微插件启用状态、凭证"),
                 questionary.Choice("↩️  继续", value="continue"),
@@ -1189,7 +1189,7 @@ def _run_config_command(args) -> None:
                     active_id = mid
                     break
 
-        print("🤖 **已配置的模型**\n")
+        print("🔀 **已配置的模型**\n")
         for model_id, entry in models.items():
             print(_fmt_model(model_id, entry, is_active=(model_id == active_id)))
             print()

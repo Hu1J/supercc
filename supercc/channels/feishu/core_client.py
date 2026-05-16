@@ -539,7 +539,7 @@ class FeishuCoreWSClient:
                             icon = "📝"
                         fallback = f"{icon} **{result.tool_name}** — `{file_path}`"
                     except Exception:
-                        fallback = f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`"
+                        fallback = f"🔀 **{result.tool_name}**\n`{result.tool_input[:500]}`"
                     await self._safe_send(chat_id, msg_id, fallback)
 
         elif isinstance(result, list):
@@ -568,7 +568,7 @@ class FeishuCoreWSClient:
                                     icon = "📝"
                                 fallback = f"{icon} **{marker.tool_name}** — `{file_path}`"
                             except Exception:
-                                fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
+                                fallback = f"🔀 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
                             await self._safe_send(chat_id, msg_id, fallback)
 
         elif isinstance(result, MemoryCardMarker):
@@ -608,7 +608,7 @@ class FeishuCoreWSClient:
             if isinstance(result, str):
                 await self._safe_send(chat_id, msg_id, result)
             else:
-                await self._safe_send(chat_id, msg_id, f"🤖 **{tool_name}**")
+                await self._safe_send(chat_id, msg_id, f"🔀 **{tool_name}**")
 
 
     def _render_memory_card(self, marker: MemoryCardMarker) -> dict:

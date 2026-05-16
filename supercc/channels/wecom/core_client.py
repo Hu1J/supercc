@@ -133,7 +133,7 @@ class WeComReplyFormatter:
         if tool_input is None:
             tool_input = ""
 
-        icon = self.ICONS.get(tool_name, "🤖")
+        icon = self.ICONS.get(tool_name, "🔀")
         short_name = tool_name.replace("mcp__SuperCC__", "")
 
         # Edit → diff markdown

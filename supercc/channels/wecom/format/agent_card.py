@@ -5,7 +5,7 @@ import json
 from supercc.channels.common.format.agent import _AgentCardMarker, _CodexMarker
 
 
-def format_agent_markdown(tool_input: str, title: str = "🤖 Agent") -> str:
+def format_agent_markdown(tool_input: str, title: str = "🔀 Agent") -> str:
     """将 Agent 响应格式化为 WeCom markdown（复用 common 基类）。"""
     marker = _AgentCardMarker("Agent", tool_input)
     if marker.data and isinstance(marker.data, dict):

@@ -113,7 +113,7 @@ class ReplyFormatter:
             if marker.data is not None:
                 return marker
             # 解析失败，降级为普通文本
-            return f"🤖 **{tool_name}**\n`{tool_input}`"
+            return f"🔀 **{tool_name}**\n`{tool_input}`"
 
         # Memory MCP tools → 卡片标记（触发 Feishu Interactive Card）
         elif tool_name and tool_name.startswith("mcp__SuperCC__Memory"):
@@ -152,7 +152,7 @@ class ReplyFormatter:
             return self._format_codex_tool(tool_input)
 
         # 其他工具 → backtick 格式（原有逻辑）
-        icon = self.tool_icons.get(tool_name, "🤖")
+        icon = self.tool_icons.get(tool_name, "🔀")
         msg = f"{icon} **{tool_name}**"
         if tool_input:
             if len(tool_input) <= FEISHU_MAX_MESSAGE_LENGTH - len(msg) - 5:

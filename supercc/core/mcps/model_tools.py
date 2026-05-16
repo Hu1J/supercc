@@ -65,7 +65,7 @@ async def list_models(args: dict) -> dict:
     raw = _load_json()
     providers_raw = raw.get("providers", {})
 
-    lines = ["## 🤖 模型配置\n"]
+    lines = ["## 🔀 模型配置\n"]
     lines.append("| 状态 | 供应商 | API Key | 可用模型 |")
     lines.append("|------|--------|---------|----------|")
 

@@ -26,12 +26,12 @@ class _AgentCardMarker:
         """渲染为纯 markdown（平台无关兜底实现）。"""
         data = self.data
         if data and isinstance(data, dict):
-            parts = ["**🤖 Agent**"]
+            parts = ["**🔀 Agent**"]
             for key, value in data.items():
                 parts.append(f"**{key}**: {value}")
                 parts.append("\n---\n")
             return "\n".join(parts)
-        return f"**🤖 {self.tool_name}**\n\n{self.tool_input or ''}"
+        return f"**🔀 {self.tool_name}**\n\n{self.tool_input or ''}"
 
 
 class _CodexMarker:
@@ -59,7 +59,7 @@ class _CodexMarker:
 
     def render(self) -> str:
         """渲染为纯 markdown（平台无关兜底实现）。"""
-        icon = self.ICONS.get(self.event_type, "🤖")
+        icon = self.ICONS.get(self.event_type, "🔀")
         label = self._event_label()
         return f"**{icon} Codex - {label}**\n\n{self.content}"
 
