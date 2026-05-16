@@ -27,13 +27,10 @@ def get_platform() -> str:
 def _get_start_script(data_dir: str) -> str:
     """生成 bridge 启动脚本内容。"""
     project_dir = Path(data_dir).resolve().parent
-    config_path = str(Path(data_dir) / "config.json")
     return (
         f"#!/bin/bash\n"
         f"cd {project_dir}\n"
-        f"exec python -m supercc main --core-only "
-        f"--config {config_path} "
-        f"--data-dir {data_dir}\n"
+        f"exec supercc gateway start\n"
     )
 
 
@@ -269,11 +266,10 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     task_name = f"SuperCC Main ({slug})"
     script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
     project_dir = Path(data_dir).resolve().parent
-    config_path = str(Path(data_dir) / "config.json")
     script_content = (
         f'@echo off\n'
         f'cd /d "{project_dir}"\n'
-        f'python -m supercc main --core-only --config {config_path} --data-dir {data_dir}\n'
+        f'supercc gateway start\n'
     )
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
