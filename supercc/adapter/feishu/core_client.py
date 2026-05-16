@@ -196,6 +196,7 @@ class FeishuCoreWSClient:
                     pass
             self._ws = await websockets.connect(self.core_url)
             logger.info("Reconnected to core")
+            await self._send_auth()
 
     async def _read_loop(self):
         """持续读取核心发来的消息。连接断开时自动重连（自愈循环）。"""

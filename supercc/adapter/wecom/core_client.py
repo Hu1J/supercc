@@ -290,6 +290,7 @@ class WeComCoreWSClient:
                     pass
             self._ws = await websockets.connect(self.core_url)
             logger.info("[WeComCore] Reconnected to core")
+            await self._send_auth()
 
     async def _ping_loop(self):
         """定期 ping core，检测连接是否健康。超时则自动重连。
