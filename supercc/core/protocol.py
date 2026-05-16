@@ -157,6 +157,9 @@ class JsonRpcRequest:
         d = {"jsonrpc": self.jsonrpc, "method": self.method, "params": self.params}
         if self.id is not None:
             d["id"] = self.id
+        # platform 提升到顶层，方便 server 做认证检查
+        if "platform" in self.params:
+            d["platform"] = self.params["platform"]
         return d
 
     @classmethod

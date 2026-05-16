@@ -337,15 +337,12 @@ class WsServer:
             return
 
         # 非 auth 消息检查是否已认证
-        # 两种消息格式：
-        # 1. 旧格式: {"type": "auth", "token": ..., "platform": "feishu"}
-        # 2. JSON-RPC 格式: {"jsonrpc": "2.0", "id": ..., "method": "feishu.message", "params": {...}}
-        # auth 消息在 platform 字段认证，JSON-RPC 请求通过 method 路由，不需要检查 platform
-        if raw.get("type") == "auth":
-            platform = raw.get("platform", "unknown")
-            if platform not in self._plugin_authenticated:
-                await conn.ws.send(json.dumps({"type": "error", "message": "not authenticated"}))
-                return
+        platform = raw.get("platform", "unknown")
+        if platform not in self._plugin_authenticated:
+            logger.warning("[WsServer] unauthenticated request from platform=%s method=%s",
+                           platform, raw.get("method", ""))
+            await conn.ws.send(json.dumps({"type": "error", "message": "not authenticated"}))
+            return
 
         try:
             req = JsonRpcRequest.from_dict(raw)
