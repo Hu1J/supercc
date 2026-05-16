@@ -113,6 +113,7 @@ class WsServer:
         self._running = asyncio.Event()
         self._executor = executor
         self._restart_lock = threading.Lock()  # 防止并发 restart/update
+        self._plugin_authenticated: dict[str, bool] = {}  # platform -> authenticated
 
         # 注册核心方法
         self._setup_core_methods()
@@ -310,6 +311,37 @@ class WsServer:
 
     async def _handle_client_message(self, conn: Connection, raw: dict):
         """处理来自插件的消息。"""
+        # Auth 消息处理
+        msg_type = raw.get("type") or raw.get("method")
+        if msg_type == "auth":
+            token = raw.get("token", "")
+            username = raw.get("username", "")
+            password = raw.get("password", "")
+
+            from supercc.config import get_config
+            cfg = get_config()
+            auth_ok = False
+            if token and token == cfg.core.token:
+                auth_ok = True
+            elif username and password:
+                if username == cfg.core.username and password == cfg.core.password:
+                    auth_ok = True
+
+            if auth_ok:
+                platform = raw.get("platform", "unknown")
+                self._plugin_authenticated[platform] = True
+                await conn.ws.send(json.dumps({"type": "auth_ok"}))
+            else:
+                await conn.ws.send(json.dumps({"type": "auth_failed"}))
+                await conn.ws.close()
+            return
+
+        # 非 auth 消息检查是否已认证
+        platform = raw.get("platform", "unknown")
+        if platform not in self._plugin_authenticated:
+            await conn.ws.send(json.dumps({"type": "error", "message": "not authenticated"}))
+            return
+
         try:
             req = JsonRpcRequest.from_dict(raw)
         except Exception:
