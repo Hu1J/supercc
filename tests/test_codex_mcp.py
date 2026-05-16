@@ -298,7 +298,7 @@ codex:
 
 
 def test_codex_mcp_tool_name_matches_mcp_qualified_name():
-    from supercc.adapter.feishu.message_handler import _is_codex_tool_name
+    from supercc.channels.feishu.message_handler import _is_codex_tool_name
 
     assert _is_codex_tool_name("codex") is True
     assert _is_codex_tool_name("mcp__codex__codex") is True
@@ -306,7 +306,7 @@ def test_codex_mcp_tool_name_matches_mcp_qualified_name():
 
 
 def test_codex_card_uses_codex_title():
-    from supercc.adapter.feishu.format.agent_card import format_codex_card
+    from supercc.channels.feishu.format.agent_card import format_codex_card
 
     card = format_codex_card("text", "OK")
     content = card["body"]["elements"][0]["content"]
@@ -317,7 +317,7 @@ def test_codex_card_uses_codex_title():
 
 
 def test_codex_tool_card_uses_tool_title():
-    from supercc.adapter.feishu.format.agent_card import format_codex_card
+    from supercc.channels.feishu.format.agent_card import format_codex_card
 
     card = format_codex_card("tool_use", '{"file_path":"/tmp/test.py"}', {"tool_name": "Read"})
     content = card["body"]["elements"][0]["content"]
@@ -468,8 +468,8 @@ async def test_codex_mcp_exec_cleans_up_subprocess_on_cancel(monkeypatch, tmp_pa
 async def test_process_message_without_codex_bridge_attribute_does_not_crash():
     from unittest.mock import AsyncMock, MagicMock
 
-    from supercc.adapter.feishu.client import IncomingMessage
-    from supercc.adapter.feishu.message_handler import MessageHandler
+    from supercc.channels.feishu.client import IncomingMessage
+    from supercc.channels.feishu.message_handler import MessageHandler
     from supercc.config import AuthConfig, ChannelsConfig, ClaudeConfig, CodexMcpConfig, Config
 
     session = MagicMock()

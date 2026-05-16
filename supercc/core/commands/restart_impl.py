@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from supercc.adapter.feishu.client import FeishuClient
+    from supercc.channels.feishu.client import FeishuClient
 
 
 class RestartError(Exception): pass

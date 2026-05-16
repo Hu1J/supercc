@@ -95,8 +95,8 @@ def _ensure_agents_md(project_dir: str) -> None:
 
 
 from supercc.config import init_config, get_config, write_config, resolve_config_path, SESSIONS_DB_PATH
-from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
-from supercc.adapter.feishu.ws_client import FeishuWSClient
+from supercc.channels.feishu.client import FeishuClient, IncomingMessage
+from supercc.channels.feishu.ws_client import FeishuWSClient
 from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
 from supercc.claude.cron_tools import set_cron_scheduler
 
@@ -225,7 +225,7 @@ class _BaseLogFormatter(logging.Formatter):
     def _get_module(self, record: logging.LogRecord) -> str:
         """Derive short module name from logger name.
 
-        'supercc.adapter.feishu.message_handler' -> 'feishu'
+        'supercc.channels.feishu.message_handler' -> 'feishu'
         'supercc.claude.integration' -> 'claude'
         'supercc' -> 'root'
         """
@@ -432,9 +432,9 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
         while True:
             try:
                 if name == "feishu":
-                    from supercc.adapter.feishu.__main__ import run_plugin as _run
+                    from supercc.channels.feishu.__main__ import run_plugin as _run
                 elif name == "wecom":
-                    from supercc.adapter.wecom.__main__ import run_plugin as _run
+                    from supercc.channels.wecom.__main__ import run_plugin as _run
                 await _run(config, data_dir)
             except asyncio.CancelledError:
                 raise  # 有序关闭时会被外层 cancel，不继续重启

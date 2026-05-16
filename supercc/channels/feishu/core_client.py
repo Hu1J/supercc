@@ -13,14 +13,14 @@ from supercc.core.protocol import (
     JsonRpcRequest,
     Event,
 )
-from supercc.adapter.feishu.client import IncomingMessage
-from supercc.adapter.feishu.core_protocol import incoming_to_inbound
-from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter, should_use_card
-from supercc.adapter.feishu.format.edit_diff import _DiffMarker
-from supercc.adapter.common.format import MemoryCardMarker
-from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
-from supercc.adapter.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
-from supercc.adapter.feishu.media import make_image_path, make_file_path, save_bytes
+from supercc.channels.feishu.client import IncomingMessage
+from supercc.channels.feishu.core_protocol import incoming_to_inbound
+from supercc.channels.feishu.format.reply_formatter import ReplyFormatter, should_use_card
+from supercc.channels.feishu.format.edit_diff import _DiffMarker
+from supercc.channels.common.format import MemoryCardMarker
+from supercc.channels.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.channels.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
+from supercc.channels.feishu.media import make_image_path, make_file_path, save_bytes
 from dataclasses import replace as dataclass_replace
 
 logger = logging.getLogger("feishu")

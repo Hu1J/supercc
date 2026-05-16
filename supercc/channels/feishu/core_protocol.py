@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from supercc.adapter.feishu.client import IncomingMessage
+from supercc.channels.feishu.client import IncomingMessage
 from supercc.core.protocol import (
     SessionKey, InboundMessage, OutboundMessage,
     MessageRole, MessageType, _cst_now,
@@ -94,7 +94,7 @@ def outbound_to_renderable(
 
     reply_to_message_id: 用于回复同一消息（引用）
     """
-    from supercc.adapter.feishu.format.reply_formatter import should_use_card
+    from supercc.channels.feishu.format.reply_formatter import should_use_card
 
     content = outbound.content
     use_card = should_use_card(content)

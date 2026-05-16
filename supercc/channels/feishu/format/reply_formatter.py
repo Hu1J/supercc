@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import re
 
-from supercc.adapter.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker
-from supercc.adapter.common.format import MemoryCardMarker
-from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker
-from supercc.adapter.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
-from supercc.adapter.feishu.format.markdown_util import optimize_markdown_style, _count_tables_outside_code_blocks
+from supercc.channels.feishu.format.edit_diff import build_edit_marker, build_write_marker, _DiffMarker
+from supercc.channels.common.format import MemoryCardMarker
+from supercc.channels.feishu.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.channels.feishu.format.agent_card import FeishuAgentCardMarker, FeishuCodexMarker
+from supercc.channels.feishu.format.markdown_util import optimize_markdown_style, _count_tables_outside_code_blocks
 from supercc.claude.message_context import get_current_bot_id, get_current_user_open_id
 
 FEISHU_MAX_MESSAGE_LENGTH = 4096

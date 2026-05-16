@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 def test_guess_file_type_image():
     """图片文件被正确识别为图片类型"""
-    from supercc.adapter.feishu.media import guess_file_type
+    from supercc.channels.feishu.media import guess_file_type
     assert guess_file_type(".png") == "png"
     assert guess_file_type(".jpg") == "png"
     assert guess_file_type(".gif") == "gif"
@@ -19,7 +19,7 @@ def test_guess_file_type_image():
 
 def test_guess_file_type_doc():
     """文档文件被识别为对应类型"""
-    from supercc.adapter.feishu.media import guess_file_type
+    from supercc.channels.feishu.media import guess_file_type
     assert guess_file_type(".pdf") == "pdf"
     assert guess_file_type(".docx") == "doc"
     assert guess_file_type(".xlsx") == "xls"
@@ -27,7 +27,7 @@ def test_guess_file_type_doc():
 
 def test_guess_file_type_stream():
     """未知类型默认 stream"""
-    from supercc.adapter.feishu.media import guess_file_type
+    from supercc.channels.feishu.media import guess_file_type
     assert guess_file_type(".xyz") == "stream"
 
 

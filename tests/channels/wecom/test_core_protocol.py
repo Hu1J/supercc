@@ -1,5 +1,5 @@
 import pytest
-from supercc.adapter.wecom.core_protocol import incoming_to_inbound
+from supercc.channels.wecom.core_protocol import incoming_to_inbound
 from supercc.core.protocol import SessionKey, MessageRole, MessageType
 
 

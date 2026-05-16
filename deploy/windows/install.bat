@@ -31,7 +31,7 @@ nssm set supercc-main AppRestart 1
 echo.
 
 echo Installing SuperCC Feishu service...
-nssm install supercc-feishu "%PYTHON%" "-m supercc.adapter.feishu"
+nssm install supercc-feishu "%PYTHON%" "-m supercc.channels.feishu"
 nssm set supercc-feishu AppEnvironment "SUPERCC_CONFIG=%SERVICE_DIR%\config.json"
 nssm set supercc-feishu AppEnvironment "SUPERCC_DATA=%SERVICE_DIR%"
 nssm set supercc-feishu DisplayName "SuperCC Feishu Plugin"

@@ -75,8 +75,8 @@ class TestCoreComponentsIntegration:
 
     def test_feishu_core_ws_client_instantiation(self, tmp_path):
         """验证 FeishuCoreWSClient 能正常实例化。"""
-        from supercc.adapter.feishu.core_client import FeishuCoreWSClient
-        from supercc.adapter.feishu.client import FeishuClient
+        from supercc.channels.feishu.core_client import FeishuCoreWSClient
+        from supercc.channels.feishu.client import FeishuClient
 
         # 创建临时目录
         data_dir = str(tmp_path / "data")
@@ -104,8 +104,8 @@ class TestCoreComponentsIntegration:
 
     def test_incoming_to_inbound_four_key_session(self):
         """验证 incoming_to_inbound 正确构建四元组 SessionKey。"""
-        from supercc.adapter.feishu.client import IncomingMessage
-        from supercc.adapter.feishu.core_protocol import incoming_to_inbound
+        from supercc.channels.feishu.client import IncomingMessage
+        from supercc.channels.feishu.core_protocol import incoming_to_inbound
 
         incoming = IncomingMessage(
             message_id="msg_test",

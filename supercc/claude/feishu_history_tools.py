@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 from claude_agent_sdk import tool
-from supercc.adapter.feishu.client import FeishuClient
+from supercc.channels.feishu.client import FeishuClient
 
 
 def _parse_relative_time(s: str) -> Optional[int]:
@@ -33,7 +33,7 @@ def _parse_relative_time(s: str) -> Optional[int]:
 def _get_feishu_client() -> "FeishuClient":
     """延迟初始化 FeishuClient（读取 config.yaml）。"""
     from supercc.config import get_config
-    from supercc.adapter.feishu.client import FeishuClient
+    from supercc.channels.feishu.client import FeishuClient
     cfg = get_config()
     return FeishuClient(
         app_id=cfg.channels.feishu.app_id,

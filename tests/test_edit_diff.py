@@ -3,14 +3,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # edited by bridge test
-from supercc.adapter.common.format.diff import (
+from supercc.channels.common.format.diff import (
     colorize_diff,
     _lcs_diff,
     _truncate_diff,
     DiffLine,
     MAX_DIFF_LINES,
 )
-from supercc.adapter.feishu.format.edit_diff import (
+from supercc.channels.feishu.format.edit_diff import (
     format_edit_card,
     format_write_card,
     build_edit_marker,
@@ -97,7 +97,7 @@ class TestBuildMarker:
         assert hasattr(marker, 'card')
 
     def test_edit_invalid_json_falls_back(self):
-        from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
+        from supercc.channels.feishu.format.reply_formatter import ReplyFormatter
         f = ReplyFormatter()
         result = f.format_tool_call("Edit", "not json")
         assert isinstance(result, str)  # falls back to string

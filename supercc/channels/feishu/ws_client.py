@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import lark_oapi as lark
 
 
-from supercc.adapter.feishu.client import IncomingMessage
+from supercc.channels.feishu.client import IncomingMessage
 
 logger = logging.getLogger("feishu")
 

@@ -9,10 +9,10 @@ import traceback
 from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
-from supercc.adapter.feishu.media import save_bytes
-from supercc.adapter.common.format import MemoryCardMarker
-from supercc.adapter.wecom.client import WeComClient
-from supercc.adapter.wecom.core_protocol import incoming_to_inbound
+from supercc.channels.feishu.media import save_bytes
+from supercc.channels.common.format import MemoryCardMarker
+from supercc.channels.wecom.client import WeComClient
+from supercc.channels.wecom.core_protocol import incoming_to_inbound
 from wecom_aibot_sdk import generate_req_id
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class WeComReplyFormatter:
 
         # Edit → diff markdown
         if tool_name == "Edit":
-            from supercc.adapter.wecom.format.edit_diff import format_edit_markdown
+            from supercc.channels.wecom.format.edit_diff import format_edit_markdown
             try:
                 data = json.loads(tool_input)
                 file_path = data.get("file_path", "unknown")
@@ -149,7 +149,7 @@ class WeComReplyFormatter:
 
         # Write → diff markdown
         if tool_name == "Write":
-            from supercc.adapter.wecom.format.edit_diff import format_write_markdown
+            from supercc.channels.wecom.format.edit_diff import format_write_markdown
             try:
                 data = json.loads(tool_input)
                 file_path = data.get("file_path", "unknown")
@@ -203,17 +203,17 @@ class WeComReplyFormatter:
 
         # AskUserQuestion → 问卷 markdown
         if tool_name == "AskUserQuestion":
-            from supercc.adapter.wecom.format.questionnaire_card import format_questionnaire_markdown
+            from supercc.channels.wecom.format.questionnaire_card import format_questionnaire_markdown
             return format_questionnaire_markdown(tool_input)
 
         # Agent → Agent markdown
         if tool_name == "Agent":
-            from supercc.adapter.wecom.format.agent_card import format_agent_markdown
+            from supercc.channels.wecom.format.agent_card import format_agent_markdown
             return format_agent_markdown(tool_input)
 
         # mcp__codex__codex → Codex markdown
         if tool_name == "mcp__codex__codex":
-            from supercc.adapter.wecom.format.agent_card import format_codex_markdown
+            from supercc.channels.wecom.format.agent_card import format_codex_markdown
             try:
                 data = json.loads(tool_input) if tool_input else {}
             except json.JSONDecodeError:

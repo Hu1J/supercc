@@ -2,8 +2,8 @@
 from __future__ import annotations
 import json
 
-from supercc.adapter.common.format.agent import _AgentCardMarker, _CodexMarker
-from supercc.adapter.feishu.format.markdown_util import optimize_markdown_style
+from supercc.channels.common.format.agent import _AgentCardMarker, _CodexMarker
+from supercc.channels.feishu.format.markdown_util import optimize_markdown_style
 
 
 class FeishuAgentCardMarker(_AgentCardMarker):

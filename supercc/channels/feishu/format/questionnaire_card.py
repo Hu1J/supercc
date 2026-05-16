@@ -1,7 +1,7 @@
 """AskUserQuestion 飞书卡片构建 — 继承 common.format 基类，覆盖 render() 为 CardKit。"""
 from __future__ import annotations
 
-from supercc.adapter.common.format.questionnaire import (
+from supercc.channels.common.format.questionnaire import (
     _AskUserQuestionMarker as _BaseMarker,
     parse_ask_user_question,
     _render_question_text,

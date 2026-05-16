@@ -1,7 +1,7 @@
-"""WeCom 插件独立进程入口。
+"""Feishu 插件独立进程入口。
 
 Usage:
-    python -m supercc.adapter.wecom
+    python -m supercc.channels.feishu
     # 环境变量：
     #   SUPERCC_CONFIG=项目路径/.supercc/config.json
     #   SUPERCC_DATA=项目路径/.supercc/
@@ -20,9 +20,9 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from supercc.config import init_config, get_config
-from supercc.adapter.wecom.client import WeComClient
-from supercc.adapter.wecom.ws_client import WeComWSClient
-from supercc.adapter.wecom.core_client import WeComCoreWSClient
+from supercc.channels.feishu.client import FeishuClient
+from supercc.channels.feishu.ws_client import FeishuWSClient
+from supercc.channels.feishu.core_client import FeishuCoreWSClient
 from supercc.main import ColoredFormatter, PlainFormatter
 
 # 统一日志格式（与 core 保持一致）
@@ -30,11 +30,11 @@ _root_handler = logging.StreamHandler()
 _root_handler.setFormatter(ColoredFormatter())
 logging.root.handlers = [_root_handler]
 logging.root.setLevel(logging.INFO)
-logger = logging.getLogger("wecom")
+logger = logging.getLogger("feishu")
 
 
 def _setup_file_logging(data_dir: str) -> None:
-    """Add file handler to root logger so wecom plugin logs also go to supercc.log."""
+    """Add file handler to root logger so feishu plugin logs also go to supercc.log."""
     log_file = os.path.join(data_dir, "supercc.log")
     try:
         fh = logging.FileHandler(log_file, mode="a")
@@ -46,52 +46,60 @@ def _setup_file_logging(data_dir: str) -> None:
 
 
 async def run_plugin(config, data_dir):
-    """WeCom 插件协程：在同进程 event loop 中运行。"""
+    """Feishu 插件协程：在同进程 event loop 中运行。"""
     # 添加文件日志（写入 supercc.log）
     _setup_file_logging(data_dir)
-
-    # WebSocket 凭证：优先使用扫码接入获得的 bot_id/secret，
-    # 回退到手动输入时的 agent_id/corp_secret（向后兼容）
-    ws_bot_id = config.channels.wecom.bot_id or config.channels.wecom.agent_id
-    ws_bot_secret = config.channels.wecom.secret or config.channels.wecom.corp_secret
-
-    if not ws_bot_id or not ws_bot_secret:
-        raise RuntimeError("WeCom bot_id and secret are required (configure via QR scan or manual input)")
 
     # 从 config 读取 core 端口
     core_port = config.core.port
     core_url = f"ws://127.0.0.1:{core_port}"
     logger.info(f"Connecting to core at {core_url}")
 
-    # 1. 创建 SDK WebSocket 客户端（接收 WeCom 消息）
-    ws_client = WeComWSClient(
-        bot_id=ws_bot_id,
-        bot_secret=ws_bot_secret,
-        on_message=None,  # 消息处理在 core_client 中
+    feishu = FeishuClient(
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        data_dir=data_dir,
     )
 
-    # 2. 创建消息发送客户端（基于 SDK WSClient）
-    wecom = WeComClient(ws_client)
-
-    # 3. 创建 Thin Client（连接 Core）
-    core_client = WeComCoreWSClient(
+    core_client = FeishuCoreWSClient(
         core_url=core_url,
-        ws_client=ws_client,       # SDK WSClient（接收消息 + reply_stream）
-        wecom_client=wecom,       # 消息发送
-        bot_id=ws_bot_id,
+        feishu_client=feishu,
+        bot_id=config.channels.feishu.bot_open_id,
         project_path=config.claude.approved_directory,
-        groups=config.channels.wecom.groups,
-        allowed_users=config.channels.wecom.allowed_users,
+        data_dir=data_dir,
+        groups=config.channels.feishu.groups,
+        allowed_users=config.channels.feishu.allowed_users,
     )
 
-    # ws_client 的消息回调指向 core_client.send_message
-    ws_client._on_message = core_client.send_message
-
-    # 连接到 Core
+    # 连接到 Core（在主事件循环中创建 WS 连接）
     await core_client.connect()
+    main_loop = asyncio.get_running_loop()
     logger.info("Connected to core")
 
-    # 启动 WS 接收企微消息（放到线程中执行，避免阻塞主事件循环）
+    # on_message 回调在 lark-oapi 的 loop 中被调用，
+    # 需要用 run_coroutine_threadsafe 桥接到主事件循环
+    async def on_message(msg):
+        try:
+            fut = asyncio.run_coroutine_threadsafe(
+                core_client.send_message(msg), main_loop
+            )
+            await asyncio.wrap_future(fut)
+        except BaseException:
+            logger.error("error in on_message\n%s", traceback.format_exc())
+
+    ws_client = FeishuWSClient(
+        app_id=config.channels.feishu.app_id,
+        app_secret=config.channels.feishu.app_secret,
+        bot_name=config.channels.feishu.bot_name,
+        bot_open_id=config.channels.feishu.bot_open_id,
+        domain=config.channels.feishu.domain,
+        on_message=on_message,
+        config_path=config.get("config_path", "") if hasattr(config, "get") else "",
+    )
+
+    # 启动 WS 接收飞书消息（lark-oapi 用自己的 loop 阻塞）
+    # 放到线程中执行，避免阻塞主事件循环
     await asyncio.to_thread(ws_client.start)
 
 
@@ -106,6 +114,8 @@ async def main():
         raise RuntimeError("SUPERCC_DATA environment variable is required")
 
     config = init_config(config_path)
+    # 给 config 附加 config_path，供 ws_client 使用
+    config.config_path = config_path
     await run_plugin(config, data_dir)
 
 

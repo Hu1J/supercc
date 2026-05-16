@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 
-from supercc.adapter.common.format.diff import colorize_diff, DiffLine as _BaseDiffLine
+from supercc.channels.common.format.diff import colorize_diff, DiffLine as _BaseDiffLine
 
 # 飞书 plain_text 支持的颜色
 COLOR_RED = "red"

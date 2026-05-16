@@ -1,2 +1,0 @@
-from supercc.adapter.feishu.core_client import FeishuCoreWSClient
-from supercc.adapter.feishu.core_protocol import incoming_to_inbound, outbound_to_renderable

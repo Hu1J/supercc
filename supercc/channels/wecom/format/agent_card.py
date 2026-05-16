@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 
-from supercc.adapter.common.format.agent import _AgentCardMarker, _CodexMarker
+from supercc.channels.common.format.agent import _AgentCardMarker, _CodexMarker
 
 
 def format_agent_markdown(tool_input: str, title: str = "🤖 Agent") -> str:

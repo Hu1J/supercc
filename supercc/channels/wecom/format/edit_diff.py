@@ -1,7 +1,7 @@
 """彩色 diff 渲染 — Edit/Write 工具专用（WeCom markdown 版本）。"""
 from __future__ import annotations
 
-from supercc.adapter.common.format.diff import colorize_diff, DiffLine as _BaseDiffLine
+from supercc.channels.common.format.diff import colorize_diff, DiffLine as _BaseDiffLine
 
 
 class DiffLine(_BaseDiffLine):

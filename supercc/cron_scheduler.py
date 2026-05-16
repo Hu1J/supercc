@@ -30,7 +30,7 @@ from typing import Optional
 
 from supercc.config import Config, SESSIONS_DB_PATH
 from supercc.claude.integration import ClaudeIntegration
-from supercc.adapter.feishu.client import FeishuClient
+from supercc.channels.feishu.client import FeishuClient
 
 
 def _get_user_open_id_by_chat_id(data_dir: str, chat_id: str) -> str | None:
@@ -672,7 +672,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # Create platform client for delivery
     if platform == "wecom":
-        from supercc.adapter.wecom.client import WeComClient
+        from supercc.channels.wecom.client import WeComClient
         client = WeComClient(
             bot_id=config.channels.wecom.bot_id,
             bot_secret=config.channels.wecom.bot_secret,
@@ -732,9 +732,9 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # ── Platform-specific formatters and send helpers ──────────────────────────
     if platform == "wecom":
-        from supercc.adapter.wecom.format.reply_formatter import WeComReplyFormatter as PlatformFormatter
-        from supercc.adapter.wecom.format.edit_diff import _DiffMarker as PlatformDiffMarker
-        from supercc.adapter.common.format import MemoryCardMarker as PlatformMemoryMarker
+        from supercc.channels.wecom.format.reply_formatter import WeComReplyFormatter as PlatformFormatter
+        from supercc.channels.wecom.format.edit_diff import _DiffMarker as PlatformDiffMarker
+        from supercc.channels.common.format import MemoryCardMarker as PlatformMemoryMarker
         platform_formatter = PlatformFormatter()
 
         async def _send_now(card_or_text):
@@ -749,10 +749,10 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                 except Exception:
                     await client.send_text(chat_id, str(card_or_text)[:2000])
     else:
-        from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter as PlatformFormatter
-        from supercc.adapter.feishu.format.edit_diff import _DiffMarker as PlatformDiffMarker
-        from supercc.adapter.common.format import MemoryCardMarker as PlatformMemoryMarker
-        from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker as PlatformQuestionnaireMarker, format_questionnaire_card
+        from supercc.channels.feishu.format.reply_formatter import ReplyFormatter as PlatformFormatter
+        from supercc.channels.feishu.format.edit_diff import _DiffMarker as PlatformDiffMarker
+        from supercc.channels.common.format import MemoryCardMarker as PlatformMemoryMarker
+        from supercc.channels.feishu.format.questionnaire_card import _AskUserQuestionMarker as PlatformQuestionnaireMarker, format_questionnaire_card
         platform_formatter = PlatformFormatter()
 
         async def _send_now(card_or_text):
@@ -832,7 +832,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
             async def _skill_send(cid, text):
                 if platform == "feishu":
-                    from supercc.adapter.feishu.format.reply_formatter import should_use_card
+                    from supercc.channels.feishu.format.reply_formatter import should_use_card
                     if should_use_card(text):
                         await client.send_interactive_card(cid, text)
                     else:
@@ -891,7 +891,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     try:
         _log("PLATFORM_DELIVERY_START")
         if platform == "feishu":
-            from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
+            from supercc.channels.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
             body = optimize_markdown_style(response.strip(), card_version=2)
             text = f"{header}\n\n{body}"
             if should_use_card(body):
@@ -1028,7 +1028,7 @@ class CronScheduler:
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
             # Platform clients are created per-entry since each entry may have a different platform
-            from supercc.adapter.feishu.client import FeishuClient
+            from supercc.channels.feishu.client import FeishuClient
             for entry in due_pending:
                 pending_key = entry.get("pending_key", entry.get("job_id", ""))
                 if pending_key in sent_this_tick:
@@ -1036,7 +1036,7 @@ class CronScheduler:
                 try:
                     p = entry.get("platform", "feishu")
                     if p == "wecom":
-                        from supercc.adapter.wecom.client import WeComClient
+                        from supercc.channels.wecom.client import WeComClient
                         p_client = WeComClient(
                             bot_id=self.config.channels.wecom.bot_id,
                             bot_secret=self.config.channels.wecom.bot_secret,
@@ -1056,7 +1056,7 @@ class CronScheduler:
                         msg_type = msg.get("type", "text")
                         content = msg.get("content", "")
                         if p == "feishu":
-                            from supercc.adapter.feishu.format.reply_formatter import should_use_card
+                            from supercc.channels.feishu.format.reply_formatter import should_use_card
                             if msg_type == "card":
                                 await p_client.send_card(entry["chat_id"], content)
                             elif msg_type == "interactive_card":
@@ -1079,7 +1079,7 @@ class CronScheduler:
                     # Send final response
                     header = f"⏰ **{entry['job_name']}**"
                     if p == "feishu":
-                        from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
+                        from supercc.channels.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
                         body = optimize_markdown_style(entry["response"], card_version=2)
                         text = f"{header}\n\n{body}"
                         if should_use_card(body):

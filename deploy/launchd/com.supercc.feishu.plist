@@ -8,7 +8,7 @@
     <array>
         <string>/usr/bin/python3</string>
         <string>-m</string>
-        <string>supercc.adapter.feishu</string>
+        <string>supercc.channels.feishu</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
