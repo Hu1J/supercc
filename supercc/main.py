@@ -1765,7 +1765,11 @@ def main(args=None):
         elif action == "uninstall":
             run_gateway_uninstall()
         elif action == "run":
-            run_gateway_run()
+            try:
+                run_gateway_run()
+            except Exception as e:
+                print(f"\n❌ Gateway run failed: {e}")
+                sys.exit(1)
         elif action == "restart":
             run_gateway_restart()
         else:
