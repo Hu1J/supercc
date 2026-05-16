@@ -38,6 +38,7 @@ def _setup_file_logging(data_dir: str) -> None:
     log_file = os.path.join(data_dir, "supercc.log")
     try:
         fh = logging.FileHandler(log_file, mode="a")
+        fh.setLevel(logging.INFO)
         fh.setFormatter(PlainFormatter())
         logging.root.addHandler(fh)
         logger.debug("File logging added: %s", log_file)

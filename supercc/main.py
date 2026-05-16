@@ -10,7 +10,7 @@ import filelock
 import logging
 import os
 
-from supercc.banner import print_banner, write_log_banner
+from supercc.banner import print_banner
 import shutil
 import signal
 import sys
@@ -278,7 +278,7 @@ class ColoredFormatter(_BaseLogFormatter):
     def format(self, record: logging.LogRecord) -> str:
         ts = self._format_time(record)
         level_color = self.COLORS.get(record.levelname, self.RESET)
-        level = f"{level_color}{record.levelname:>5}{self.RESET}"
+        level = f"{level_color}{record.levelname}{self.RESET}"
         module = self._get_module(record)
         module_color = self._get_module_color(module)
         module_part = f"{module_color}[{module}] {self.RESET}"
@@ -410,7 +410,16 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
     # 清空日志文件（每次启动重新开始）
     try:
         log_path = os.path.join(data_dir, "supercc.log")
-        open(log_path, "w").close()
+        # 写 banner 到日志文件
+        from supercc.banner import write_log_banner
+        from supercc import __version__ as _ver
+        with open(log_path, "w") as f:
+            f.write("=" * 64 + "\n")
+            f.write("  龙王 SuperCC\n")
+            f.write(f"  v{_ver}\n")
+            f.write(f"  启动时间: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("  自进化超级 AI · 越用越懂你\n")
+            f.write("=" * 64 + "\n")
     except Exception:
         pass
 

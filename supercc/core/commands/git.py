@@ -49,7 +49,7 @@ class GitHandler(CommandHandler):
                 char = line[0] if line[0] != " " else (line[1] if line[1] != " " else "?")
                 filename = line[3:]
                 color = {"A": "00AA00", "M": "FFA500", "D": "FF4444", "R": "0066FF", "?": "888888"}.get(char, "FFFFFF")
-                lines.append(f"<font color=\"#{color}\">[{char}]</font> `{filename}`")
+                lines.append(f"[{char}] `{filename}`")
         else:
             lines.append("✅ 工作区干净，无待提交变更")
 

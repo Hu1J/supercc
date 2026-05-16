@@ -416,6 +416,14 @@ class FeishuCoreWSClient:
         if not content:
             return
 
+        # 非流式 Event（如 restart/update/switch）不经过 accumulator，直接发送
+        if message_id and params.get("event") in ("restart", "update", "switch"):
+            self._streamed_msg_ids.discard(message_id)
+            self._accumulator_by_msg_id.pop(message_id, None)
+            formatted = self.formatter.format_text(content)
+            await self._safe_send(chat_id, message_id, formatted)
+            return
+
         if message_id and message_id in self._accumulator_by_msg_id:
             # 有 accumulator → 流式 chunks 或 RESPONSE flush 信号
             self._streamed_msg_ids.add(message_id)

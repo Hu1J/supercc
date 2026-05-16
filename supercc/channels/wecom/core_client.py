@@ -503,6 +503,13 @@ class WeComCoreWSClient:
         if not content:
             return
 
+        # 非流式 Event（如 restart/update/switch）不经过 accumulator，直接发送
+        if message_id and event in ("restart", "update", "switch"):
+            self._streamed_msg_ids.discard(message_id)
+            self._accumulator_by_msg_id.pop(message_id, None)
+            await self.wecom.send_text(chat_id, content)
+            return
+
         # Buffer text chunks for efficient batched sending
         if message_id:
             if message_id in self._accumulator_by_msg_id:

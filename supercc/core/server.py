@@ -378,15 +378,19 @@ class WsServer:
             _conn_var.reset(token)
 
         if resp is not None:
+            # resp 可能是 dict（命令返回）或 JsonRpcResponse（其他方法）
             try:
-                await conn.ws.send(json.dumps(resp.to_dict()))
+                resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
+                await conn.ws.send(json.dumps(resp_dict))
             except Exception:
                 logger.warning("[WsServer] failed to send response, connection may be dead")
 
-            # 响应发出后，检查是否需要 restart/update/switch
-            event: str = ""
-            if resp.result is not None and isinstance(resp.result, dict):
-                event = resp.result.get("event", "")
+            # 检查是否需要 restart/update/switch（resp 可能是 dict 或 JsonRpcResponse）
+            resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
+            event = ""
+            if isinstance(resp_dict, dict):
+                # commands 返回 dict，直接从顶层取 event；JsonRpcResponse 有 result 包装
+                event = resp_dict.get("event", "") or (resp_dict.get("result", {}) or {}).get("event", "")
             if event in ("restart", "update"):
                 # 防止并发
                 if not self._restart_lock.acquire(blocking=False):
@@ -394,8 +398,24 @@ class WsServer:
                     return
 
                 project_path = req.params.get("project_path", "")
-                extra = resp.result.get("extra", {}) if resp.result else {}
+                extra = (resp_dict.get("result") or {}).get("extra", {}) if isinstance(resp_dict.get("result"), dict) else {}
                 target_path = extra.get("target_path", "") or project_path
+                content = resp_dict.get("content", "正在重启...") if isinstance(resp_dict, dict) else "正在重启..."
+                message_id = resp_dict.get("message_id", "") if isinstance(resp_dict, dict) else ""
+
+                # 先发送确认消息给 plugin，确保消息先到达
+                try:
+                    await conn.ws.send(json.dumps({
+                        "type": "event",
+                        "event": event,
+                        "params": {
+                            "message_id": message_id,
+                            "content": content,
+                            "event": event,
+                        }
+                    }))
+                except Exception:
+                    pass
 
                 # restart/update 用 os.execvp 原地替换进程
                 from supercc.core.commands.restart_impl import _cleanup_and_replace

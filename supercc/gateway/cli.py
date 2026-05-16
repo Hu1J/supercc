@@ -1,6 +1,8 @@
 """Gateway CLI 处理器 — supercc gateway install/start/stop/status"""
 from __future__ import annotations
 
+import os
+
 from supercc.gateway.manager import GatewayManager
 
 
@@ -68,6 +70,19 @@ def run_gateway_run() -> None:
     from supercc.config import resolve_config_path, init_config
     cfg_path, data_dir = resolve_config_path()
     init_config(cfg_path)
+
+    # 在 start_bridge 之前设置文件日志（覆盖所有模块，包括 supercc）
+    import logging
+    log_file = os.path.join(data_dir, "supercc.log")
+    try:
+        from supercc.main import PlainFormatter
+        fh = logging.FileHandler(log_file, mode="a")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(PlainFormatter())
+        logging.root.addHandler(fh)
+    except Exception:
+        pass
+
     import asyncio
     from supercc.main import start_bridge
     asyncio.run(start_bridge(cfg_path, data_dir, foreground=True))
