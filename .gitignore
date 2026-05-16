@@ -16,3 +16,5 @@ build/
 .hyperframes/
 .supercc/
 .agents/
+.claude/
+.worktrees/
