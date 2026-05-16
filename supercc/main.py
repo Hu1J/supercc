@@ -1169,6 +1169,17 @@ def _run_config_command(args) -> None:
         print("用法: supercc config add --provider <provider_id> <api_key> <model>")
         return
 
+    if action == "model":
+        # Delegate to the existing model handlers using model_action
+        model_action = getattr(args, "model_action", None)
+        raw_args = getattr(args, "config_args", "") or ""
+        if isinstance(raw_args, list):
+            raw_args = " ".join(raw_args)
+        # Route to existing handlers with action = model_action
+        action = model_action
+        # Re-enter the same function logic for model actions
+        # (list/add/switch/delete/providers)
+
     if action == "core":
         core_action = getattr(args, "core_action", None)
         from supercc.config import resolve_config_path, init_config, get_config, write_config
@@ -1239,20 +1250,24 @@ def main(args=None):
     config_subparsers = config_parser.add_subparsers(dest="config_action", help="Action")
     config_subparsers.required = False  # 允许 `supercc config` 回车进入交互菜单
 
-    ca_list = config_subparsers.add_parser("list", help="List all models")
+    ca_model = config_subparsers.add_parser("model", help="管理模型配置")
+    ca_model_subparsers = ca_model.add_subparsers(dest="model_action", help="Action")
+    ca_model_subparsers.required = False  # 允许 `supercc config model` 回车进入交互菜单
+
+    ca_list = ca_model_subparsers.add_parser("list", help="列出所有模型")
     ca_list.add_argument("config_args", nargs="*", default=[], help="(ignored)")
 
-    ca_add = config_subparsers.add_parser("add", help="Add a new model")
+    ca_add = ca_model_subparsers.add_parser("add", help="添加模型")
     ca_add.add_argument("--provider", help="预设供应商 ID（如 openrouter, anthropic）")
     ca_add.add_argument("config_args", nargs="*", default=[], help="<api_key> <model> [model_id] [name] [description]")
 
-    ca_switch = config_subparsers.add_parser("switch", help="Switch to another model")
+    ca_switch = ca_model_subparsers.add_parser("switch", help="切换默认模型")
     ca_switch.add_argument("config_args", help="<model_id>")
 
-    ca_delete = config_subparsers.add_parser("delete", help="Delete a model")
+    ca_delete = ca_model_subparsers.add_parser("delete", help="删除模型")
     ca_delete.add_argument("config_args", help="<model_id>")
 
-    ca_providers = config_subparsers.add_parser("providers", help="List available model providers")
+    ca_providers = ca_model_subparsers.add_parser("providers", help="列出供应商")
 
     ca_core = config_subparsers.add_parser("core", help="管理 core 认证配置")
     ca_core_subparsers = ca_core.add_subparsers(dest="core_action", help="Action")
