@@ -574,13 +574,40 @@ class WeComCoreWSClient:
 
             return True
         else:
-            if self._allowed_users and inbound.user_open_id not in self._allowed_users:
-                reason = "你不在允许使用列表中。"
+            # P2P 白名单 + pairing 系统
+            user_id = inbound.user_open_id
+            # 先检查静态白名单
+            if self._allowed_users and user_id not in self._allowed_users:
+                # 不在白名单，再检查 pairing 系统的 approved 用户
                 try:
-                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                    from supercc.core.pairing import get_pairing_store
+                    store = get_pairing_store()
+                    is_approved = store.is_approved("wecom", user_id)
                 except Exception:
-                    pass
-                return False
+                    is_approved = False
+
+                if not is_approved:
+                    # 未授权用户，生成 pairing code 并发送
+                    try:
+                        from supercc.core.pairing import get_pairing_store
+                        store = get_pairing_store()
+                        code = store.generate_code("wecom", user_id, inbound.extra.get("user_name", ""))
+                        if code:
+                            reason = (
+                                f"你不在允许使用列表中。\n\n"
+                                f"请联系管理员执行以下命令以获得使用权：\n\n"
+                                f"```\nsupercc pairing approve {code}\n```"
+                            )
+                        else:
+                            reason = "你不在允许使用列表中。\n\n可能已达到最大等待数量，请稍后再试。"
+                    except Exception:
+                        reason = "你不在允许使用列表中。\n\n配对系统暂时不可用，请联系机器人所有者。"
+
+                    try:
+                        await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                    except Exception:
+                        pass
+                    return False
             return True
 
     async def send_message(self, msg: dict) -> dict:

@@ -1394,6 +1394,30 @@ def _run_config_command(args) -> None:
         return
 
 
+def _add_to_allowed_users(platform: str, user_id: str) -> None:
+    """Add a user to the channel's allowed_users list and save config."""
+    from supercc.config import get_config, write_config
+    cfg = get_config()
+    channel = getattr(cfg.channels, platform, None)
+    if not channel:
+        return
+    if user_id not in channel.allowed_users:
+        channel.allowed_users.append(user_id)
+        write_config(cfg)
+
+
+def _remove_from_allowed_users(platform: str, user_id: str) -> None:
+    """Remove a user from the channel's allowed_users list and save config."""
+    from supercc.config import get_config, write_config
+    cfg = get_config()
+    channel = getattr(cfg.channels, platform, None)
+    if not channel:
+        return
+    if user_id in channel.allowed_users:
+        channel.allowed_users.remove(user_id)
+        write_config(cfg)
+
+
 def main(args=None):
     # Read version once — shared by --version flag and startup banner
     try:
@@ -1501,6 +1525,19 @@ def main(args=None):
     gw_restart = gateway_subparsers.add_parser("restart", help="热重启当前实例")
     gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
+    # pairing
+    pairing_parser = subparsers.add_parser("pairing", help="P2P pairing management (approve/revoke users)")
+    pairing_subparsers = pairing_parser.add_subparsers(dest="pairing_action", help="Action")
+    pairing_subparsers.required = False
+
+    pairing_list = pairing_subparsers.add_parser("list", help="List pending and approved users")
+    pairing_approve = pairing_subparsers.add_parser("approve", help="Approve a pairing code")
+    pairing_approve.add_argument("code", help="Pairing code")
+    pairing_revoke = pairing_subparsers.add_parser("revoke", help="Revoke user access")
+    pairing_revoke.add_argument("platform", help="Platform (feishu/wecom)")
+    pairing_revoke.add_argument("user_id", help="User ID to revoke")
+    pairing_clear = pairing_subparsers.add_parser("clear-pending", help="Clear all pending codes")
+
     args = parser.parse_args(args)
 
     # Print banner before any logging setup
@@ -1591,6 +1628,78 @@ def main(args=None):
             init_config(cfg_path)
             asyncio.run(start_bridge(cfg_path, data_dir))
         return
+
+    if command == "pairing":
+        from supercc.core.pairing import get_pairing_store
+        from supercc.config import get_config, write_config, init_config, resolve_config_path
+        cfg_path, _ = resolve_config_path()
+        init_config(cfg_path)
+        store = get_pairing_store()
+        action = getattr(args, "pairing_action", None)
+
+        if action is None or action == "list":
+            # List pending and approved
+            pending = store.list_pending()
+            approved = store.list_approved()
+            if not pending and not approved:
+                print("No pairing data found. No one has tried to pair yet~")
+                return
+            if pending:
+                print(f"\nPending Pairing Requests ({len(pending)}):")
+                print(f"  {'Platform':<12} {'Code':<10} {'User ID':<20} {'Name':<20} {'Age'}")
+                print(f"  {'--------':<12} {'----':<10} {'-------':<20} {'----':<20} {'---'}")
+                for p in pending:
+                    print(
+                        f"  {p['platform']:<12} {p['code']:<10} {p['user_id']:<20} "
+                        f"{p.get('user_name', ''):<20} {p['age_minutes']}m ago"
+                    )
+            else:
+                print("\nNo pending pairing requests.")
+            if approved:
+                print(f"\nApproved Users ({len(approved)}):")
+                print(f"  {'Platform':<12} {'User ID':<20} {'Name':<20}")
+                print(f"  {'--------':<12} {'-------':<20} {'----':<20}")
+                for a in approved:
+                    print(f"  {a['platform']:<12} {a['user_id']:<20} {a.get('user_name', ''):<20}")
+            else:
+                print("\nNo approved users.")
+            print()
+            return
+
+        if action == "approve":
+            code = args.code.upper().strip()
+            result = store.approve_code_global(code)
+            if result:
+                uid = result["user_id"]
+                name = result.get("user_name", "")
+                platform = result["platform"]
+                display = f"{name} ({uid})" if name else uid
+                print(f"\nApproved! User {display} on {platform} can now use the bot~")
+                _add_to_allowed_users(platform, uid)
+                print(" They'll be recognized automatically on their next message.\n")
+            else:
+                print(f"\nCode '{code}' not found or expired.")
+                print(" Run 'supercc pairing list' to see pending codes.\n")
+            return
+
+        if action == "revoke":
+            platform = args.platform.lower().strip()
+            user_id = args.user_id
+            if store.revoke(platform, user_id):
+                print(f"\nRevoked access for user {user_id} on {platform}.\n")
+                # Remove from channel's allowed_users
+                _remove_from_allowed_users(platform, user_id)
+            else:
+                print(f"\nUser {user_id} not found in approved list for {platform}.\n")
+            return
+
+        if action == "clear-pending":
+            count = store.clear_pending()
+            if count:
+                print(f"\nCleared {count} pending pairing request(s).\n")
+            else:
+                print("\nNo pending requests to clear.\n")
+            return
 
     # `supercc` with no arguments shows help
     if command is None:
