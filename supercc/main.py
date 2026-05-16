@@ -1521,12 +1521,6 @@ def main(args=None):
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # start (default)
-    start_parser = subparsers.add_parser("start", help="Start SuperCC (default)")
-
-    # list
-    list_parser = subparsers.add_parser("list", help="List all running instances")
-
     update_parser = subparsers.add_parser("update", help="Check for updates and restart if needed")
 
     # send
@@ -1636,11 +1630,6 @@ def main(args=None):
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
     gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
-    # core-only
-    core_only_parser = subparsers.add_parser("core-only", help="Start Core only (no channel plugins, internal use)")
-    core_only_parser.add_argument("--config", required=True, help="Path to config.json")
-    core_only_parser.add_argument("--data-dir", required=True, help="Path to data directory")
-
     # plugin
     plugin_parser = subparsers.add_parser("plugin", help="Manage plugin enable/disable/status")
     plugin_subparsers = plugin_parser.add_subparsers(dest="plugin_action", help="Action")
@@ -1668,10 +1657,6 @@ def main(args=None):
     logging.getLogger("qrcode").setLevel(logging.WARNING)
 
     command = args.command
-
-    if command == "list":
-        list_bridges()
-        return
 
     if command == "update":
         from supercc.core.commands.restart_impl import run_update_cli, RestartError as UpdateErr
@@ -1743,13 +1728,6 @@ def main(args=None):
             run_gateway_restart()
         else:
             run_gateway_status()
-        return
-
-    if command == "core-only":
-        cfg_path = args.config
-        d_dir = args.data_dir
-        init_config(cfg_path)
-        start_core_only(cfg_path, d_dir)
         return
 
     if command == "onboard":
