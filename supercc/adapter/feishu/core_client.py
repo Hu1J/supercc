@@ -11,7 +11,7 @@ from typing import Any, Callable, Awaitable
 
 from supercc.core.protocol import (
     JsonRpcRequest,
-    OutboundMessage, Event,
+    Event,
 )
 from supercc.adapter.feishu.client import IncomingMessage
 from supercc.adapter.feishu.core_protocol import incoming_to_inbound
@@ -1322,12 +1322,6 @@ class FeishuCoreWSClient:
             incoming.system_prompt = "\n".join(system_parts)
         if context_parts:
             incoming.group_context = "\n".join(context_parts)
-
-    async def _send_event(self, method: str, params: dict):
-        """发送 Event notification 到核心。"""
-        frame = {"jsonrpc": "2.0", "method": method, "params": params}
-        if self._ws:
-            await self._ws.send(json.dumps(frame))
 
     def _next_id(self) -> int:
         self._id_counter += 1

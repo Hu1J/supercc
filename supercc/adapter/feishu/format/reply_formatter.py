@@ -33,20 +33,6 @@ def should_use_card(text: str) -> bool:
     return False
 
 
-def _count_tables_outside_code_blocks(text: str) -> int:
-    """Count markdown table rows that are not inside fenced code blocks."""
-    # Remove fenced code blocks first
-    stripped = re.sub(r"```[\s\S]*?```", "", text)
-    # Count lines that look like table rows: start with | and contain at least one more |
-    lines = stripped.split("\n")
-    count = 0
-    for line in lines:
-        line = line.strip()
-        if line.startswith("|") and "|" in line[1:]:
-            count += 1
-    return max(0, count - 1)  # subtract header row
-
-
 class ReplyFormatter:
     def __init__(self):
         self.tool_icons = {

@@ -12,7 +12,7 @@ from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.adapter.feishu.media import save_bytes
 from supercc.adapter.common.format import MemoryCardMarker
 from supercc.adapter.wecom.client import WeComClient
-from supercc.adapter.wecom.core_protocol import incoming_to_inbound, outbound_to_renderable
+from supercc.adapter.wecom.core_protocol import incoming_to_inbound
 from wecom_aibot_sdk import generate_req_id
 
 logger = logging.getLogger(__name__)
@@ -1001,12 +1001,6 @@ class WeComCoreWSClient:
                 f"企业微信支持在文本中直接使用 @userid 格式。"
             )
             extra["mention_rules"] = mention_rules
-
-    async def _send_event(self, method: str, params: dict):
-        """发送 Event notification 到核心。"""
-        frame = {"jsonrpc": "2.0", "method": method, "params": params}
-        if self._ws:
-            await self._ws.send(json.dumps(frame))
 
     def _next_id(self) -> int:
         self._id_counter += 1

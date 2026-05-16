@@ -291,7 +291,7 @@ class _PendingStore:
                 pass
             raise
 
-    def add(self, job_id: str, response: str, chat_id: str, job_name: str, notify_at: str, intermediates: list | None = None) -> str:
+    def add(self, job_id: str, response: str, chat_id: str, job_name: str, notify_at: str, intermediates: list | None = None, platform: str = "feishu") -> str:
         """Save a pending notification. Returns the unique key for this pending entry."""
         data = self._load()
         created_at = _utcnow().isoformat()
@@ -305,6 +305,7 @@ class _PendingStore:
             "notify_at": notify_at,
             "created_at": created_at,
             "job_id": job_id,  # store original job_id for reference
+            "platform": platform,
         }
         self._save(data)
         return pending_key
@@ -645,28 +646,47 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     _log("JOB_TRIGGERED", f"name={job_name}, schedule={job.get('schedule_display')}")
 
+    # Extract platform first (used in multiple places below)
+    platform = job.get("platform", "feishu")
+
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
     from supercc.claude.message_context import set_current_context
     # 从 sessions 表查询 user_open_id，不用硬编码的 allowed_users[0]
-    user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
-        config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else ""
-    )
+    if platform == "wecom":
+        user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
+            config.channels.wecom.allowed_users[0] if config.channels.wecom.allowed_users else ""
+        )
+        bot_id = getattr(config.channels.wecom, "bot_id", "")
+    else:
+        user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
+            config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else ""
+        )
+        bot_id = getattr(config.channels.feishu, "bot_id", "")
     set_current_context(
         user_open_id=user_open_id,
         chat_id=chat_id,
-        platform=job.get("platform", "feishu"),
-        bot_id=getattr(config.channels.feishu, "bot_id", ""),
+        platform=platform,
+        bot_id=bot_id,
     )
     _log("CONTEXT_SET")
 
-    # Create Feishu client for delivery
-    feishu = FeishuClient(
-        app_id=config.channels.feishu.app_id,
-        app_secret=config.channels.feishu.app_secret,
-        bot_name=config.channels.feishu.bot_name,
-        data_dir=data_dir,
-    )
-    _log("FEISHU_CLIENT_CREATED")
+    # Create platform client for delivery
+    if platform == "wecom":
+        from supercc.adapter.wecom.client import WeComClient
+        client = WeComClient(
+            bot_id=config.channels.wecom.bot_id,
+            bot_secret=config.channels.wecom.bot_secret,
+            data_dir=data_dir,
+        )
+        _log("WECOM_CLIENT_CREATED")
+    else:
+        client = FeishuClient(
+            app_id=config.channels.feishu.app_id,
+            app_secret=config.channels.feishu.app_secret,
+            bot_name=config.channels.feishu.bot_name,
+            data_dir=data_dir,
+        )
+        _log("FEISHU_CLIENT_CREATED")
 
     # Memory manager for formatting memory tool calls
     from supercc.claude.memory_manager import get_memory_manager
@@ -705,67 +725,94 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # When notify_at is set, all output (including intermediate) should be sent at notify_at time.
     # Disable real-time streaming in this case regardless of verbose setting.
-    stream_to_feishu = is_verbose and not has_notify_at
+    stream_realtime = is_verbose and not has_notify_at
 
     # Collect intermediate messages for pending delivery
     intermediates: list[dict] = []
 
+    # ── Platform-specific formatters and send helpers ──────────────────────────
+    if platform == "wecom":
+        from supercc.adapter.wecom.format.reply_formatter import WeComReplyFormatter as PlatformFormatter
+        from supercc.adapter.wecom.format.edit_diff import _DiffMarker as PlatformDiffMarker
+        from supercc.adapter.common.format import MemoryCardMarker as PlatformMemoryMarker
+        platform_formatter = PlatformFormatter()
+
+        async def _send_now(card_or_text):
+            """Send to WeCom: markdown → send_markdown, dict card → send_template_card."""
+            if isinstance(card_or_text, dict):
+                await client.send_template_card(chat_id, "text_notice",
+                    title=card_or_text.get("header", {}).get("title", {}).get("content", "通知"),
+                    desc=str(card_or_text)[:500])
+            else:
+                try:
+                    await client.send_markdown(chat_id, str(card_or_text))
+                except Exception:
+                    await client.send_text(chat_id, str(card_or_text)[:2000])
+    else:
+        from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter as PlatformFormatter
+        from supercc.adapter.feishu.format.edit_diff import _DiffMarker as PlatformDiffMarker
+        from supercc.adapter.common.format import MemoryCardMarker as PlatformMemoryMarker
+        from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker as PlatformQuestionnaireMarker, format_questionnaire_card
+        platform_formatter = PlatformFormatter()
+
+        async def _send_now(card_or_text):
+            """Send to Feishu: dict → send_card, text → send_interactive_card."""
+            if isinstance(card_or_text, dict):
+                await client.send_card(chat_id, card_or_text)
+            else:
+                text = str(card_or_text)
+                if platform_formatter.should_use_card(text):
+                    await client.send_interactive_card(chat_id, text)
+                else:
+                    await client.send_post(chat_id, text)
+
     async def _on_stream(claude_msg):
         try:
             if claude_msg.tool_name:
-                from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
-                from supercc.adapter.feishu.format.edit_diff import _DiffMarker
-                from supercc.adapter.common.format import MemoryCardMarker
-                from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
-                formatter = ReplyFormatter()
-                result = formatter.format_tool_call(
+                result = platform_formatter.format_tool_call(
                     claude_msg.tool_name, claude_msg.tool_input,
                     memory_manager=memory_manager,
-                    platform=job.get("platform", "feishu"), chat_id=chat_id or "",
+                    platform=platform, chat_id=chat_id or "",
                     default_project_path=config.claude.approved_directory,
                 )
 
-                if stream_to_feishu:
+                if stream_realtime:
                     # Send immediately
-                    if isinstance(result, _DiffMarker):
-                        await feishu.send_card(chat_id, result.card)
+                    if isinstance(result, PlatformDiffMarker):
+                        await _send_now(result.card)
                     elif isinstance(result, list):
                         for marker in result:
-                            if isinstance(marker, _DiffMarker):
-                                await feishu.send_card(chat_id, marker.card)
-                    elif isinstance(result, MemoryCardMarker):
+                            if isinstance(marker, PlatformDiffMarker):
+                                await _send_now(marker.card)
+                    elif isinstance(result, PlatformMemoryMarker):
                         md = result.render()
                         if md:
-                            await feishu.send_interactive_card(chat_id, md)
-                    elif isinstance(result, _AskUserQuestionMarker):
+                            await _send_now(md)
+                    elif platform == "feishu" and isinstance(result, PlatformQuestionnaireMarker):
                         card = format_questionnaire_card(result)
                         if card:
-                            await feishu.send_card(chat_id, card)
+                            await _send_now(card)
                     else:
-                        text = str(result)
-                        if formatter.should_use_card(text):
-                            await feishu.send_interactive_card(chat_id, text)
-                        else:
-                            await feishu.send_post(chat_id, text)
+                        await _send_now(str(result))
                 else:
                     # Collect for later delivery
-                    if isinstance(result, _DiffMarker):
+                    if isinstance(result, PlatformDiffMarker):
                         intermediates.append({"type": "card", "content": result.card})
                     elif isinstance(result, list):
                         for marker in result:
-                            if isinstance(marker, _DiffMarker):
+                            if isinstance(marker, PlatformDiffMarker):
                                 intermediates.append({"type": "card", "content": marker.card})
-                    elif isinstance(result, MemoryCardMarker):
+                    elif isinstance(result, PlatformMemoryMarker):
                         md = result.render()
                         if md:
-                            intermediates.append({"type": "interactive_card", "content": md})
-                    elif isinstance(result, _AskUserQuestionMarker):
+                            intermediates.append({"type": "markdown", "content": md})
+                    elif platform == "feishu" and isinstance(result, PlatformQuestionnaireMarker):
                         card = format_questionnaire_card(result)
                         if card:
                             intermediates.append({"type": "card", "content": card})
                     else:
                         text = str(result)
-                        intermediates.append({"type": "text", "content": text})
+                        intermediates.append({"type": "markdown", "content": text})
 
                 await _stream_log(claude_msg)
             elif claude_msg.content:
@@ -782,13 +829,19 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         # For skill scan jobs, detect changes via git state comparison
         if is_skill_scan and before_state is not None:
             from supercc.evolve.skill_nudge import _detect_skill_changes
-            from supercc.adapter.feishu.format.reply_formatter import should_use_card
 
             async def _skill_send(cid, text):
-                if should_use_card(text):
-                    await feishu.send_interactive_card(cid, text)
+                if platform == "feishu":
+                    from supercc.adapter.feishu.format.reply_formatter import should_use_card
+                    if should_use_card(text):
+                        await client.send_interactive_card(cid, text)
+                    else:
+                        await client.send_post(cid, text)
                 else:
-                    await feishu.send_post(cid, text)
+                    try:
+                        await client.send_markdown(cid, text)
+                    except Exception:
+                        await client.send_text(cid, text[:2000])
 
             await _detect_skill_changes(
                 before_state=before_state,
@@ -827,28 +880,35 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         # Save to pending store, notify later at notify_at
         next_notify = compute_next_run(notify_schedule)
         pending_store = _PendingStore(data_dir)
-        pending_store.add(job_id, response.strip(), chat_id, job_name, next_notify, intermediates)
+        pending_store.add(job_id, response.strip(), chat_id, job_name, next_notify, intermediates, platform=job.get("platform", "feishu"))
         _log("FEISHU_NOTIFY_PENDING", f"notify_at={next_notify}")
         logger.info(f"[cron] Job {job_id} notification pending until {next_notify}")
         mark_run(job_id, success=True, data_dir=data_dir)
         running_jobs.discard(job_id)
         return
 
-    from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
     header = f"⏰ **{job_name}**"
-    body = optimize_markdown_style(response.strip(), card_version=2)
-    text = f"{header}\n\n{body}"
     try:
-        _log("FEISHU_DELIVERY_START")
-        if should_use_card(body):
-            await feishu.send_interactive_card(chat_id, text)
+        _log("PLATFORM_DELIVERY_START")
+        if platform == "feishu":
+            from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
+            body = optimize_markdown_style(response.strip(), card_version=2)
+            text = f"{header}\n\n{body}"
+            if should_use_card(body):
+                await client.send_interactive_card(chat_id, text)
+            else:
+                await client.send_post(chat_id, text)
         else:
-            await feishu.send_post(chat_id, text)
-        _log("FEISHU_DELIVERY_DONE")
-        logger.info(f"[cron] Job {job_id} delivered to {chat_id}")
+            text = f"{header}\n\n{response.strip()}"
+            try:
+                await client.send_markdown(chat_id, text)
+            except Exception:
+                await client.send_text(chat_id, text[:2000])
+        _log("PLATFORM_DELIVERY_DONE")
+        logger.info(f"[cron] Job {job_id} delivered to {chat_id} via {platform}")
     except Exception as e:
         logger.warning(f"[cron] Job {job_id} delivery failed: {e}")
-        _log("FEISHU_DELIVERY_ERROR", str(e))
+        _log("PLATFORM_DELIVERY_ERROR", str(e))
         mark_run(job_id, success=True, error=f"Delivery failed: {e}", data_dir=data_dir)
         running_jobs.discard(job_id)
         return
@@ -967,47 +1027,75 @@ class CronScheduler:
             due_pending = [e for e in due_pending if e.get("chat_id") == self.chat_id]
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
+            # Platform clients are created per-entry since each entry may have a different platform
             from supercc.adapter.feishu.client import FeishuClient
-            from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
-            feishu = FeishuClient(
-                app_id=self.config.channels.feishu.app_id,
-                app_secret=self.config.channels.feishu.app_secret,
-                bot_name=self.config.channels.feishu.bot_name,
-                data_dir=self.data_dir,
-            )
             for entry in due_pending:
                 pending_key = entry.get("pending_key", entry.get("job_id", ""))
                 if pending_key in sent_this_tick:
                     continue
                 try:
+                    p = entry.get("platform", "feishu")
+                    if p == "wecom":
+                        from supercc.adapter.wecom.client import WeComClient
+                        p_client = WeComClient(
+                            bot_id=self.config.channels.wecom.bot_id,
+                            bot_secret=self.config.channels.wecom.bot_secret,
+                            data_dir=self.data_dir,
+                        )
+                    else:
+                        p_client = FeishuClient(
+                            app_id=self.config.channels.feishu.app_id,
+                            app_secret=self.config.channels.feishu.app_secret,
+                            bot_name=self.config.channels.feishu.bot_name,
+                            data_dir=self.data_dir,
+                        )
+
                     # Send intermediate messages first (in order)
                     intermediates = entry.get("intermediates", [])
                     for msg in intermediates:
                         msg_type = msg.get("type", "text")
                         content = msg.get("content", "")
-                        if msg_type == "card":
-                            await feishu.send_card(entry["chat_id"], content)
-                        elif msg_type == "interactive_card":
-                            await feishu.send_interactive_card(entry["chat_id"], content)
-                        else:
-                            # text or unknown
-                            if should_use_card(content):
-                                await feishu.send_interactive_card(entry["chat_id"], content)
+                        if p == "feishu":
+                            from supercc.adapter.feishu.format.reply_formatter import should_use_card
+                            if msg_type == "card":
+                                await p_client.send_card(entry["chat_id"], content)
+                            elif msg_type == "interactive_card":
+                                await p_client.send_interactive_card(entry["chat_id"], content)
                             else:
-                                await feishu.send_post(entry["chat_id"], content)
+                                if should_use_card(content):
+                                    await p_client.send_interactive_card(entry["chat_id"], content)
+                                else:
+                                    await p_client.send_post(entry["chat_id"], content)
+                        else:
+                            if isinstance(content, dict):
+                                await p_client.send_template_card(entry["chat_id"], "text_notice",
+                                    title="通知", desc=str(content)[:500])
+                            else:
+                                try:
+                                    await p_client.send_markdown(entry["chat_id"], str(content))
+                                except Exception:
+                                    await p_client.send_text(entry["chat_id"], str(content)[:2000])
 
                     # Send final response
                     header = f"⏰ **{entry['job_name']}**"
-                    body = optimize_markdown_style(entry["response"], card_version=2)
-                    text = f"{header}\n\n{body}"
-                    if should_use_card(body):
-                        await feishu.send_interactive_card(entry["chat_id"], text)
+                    if p == "feishu":
+                        from supercc.adapter.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
+                        body = optimize_markdown_style(entry["response"], card_version=2)
+                        text = f"{header}\n\n{body}"
+                        if should_use_card(body):
+                            await p_client.send_interactive_card(entry["chat_id"], text)
+                        else:
+                            await p_client.send_post(entry["chat_id"], text)
                     else:
-                        await feishu.send_post(entry["chat_id"], text)
+                        text = f"{header}\n\n{entry['response']}"
+                        try:
+                            await p_client.send_markdown(entry["chat_id"], text)
+                        except Exception:
+                            await p_client.send_text(entry["chat_id"], text[:2000])
 
                     pending_store.remove(pending_key)
                     sent_this_tick.add(pending_key)
-                    logger.info(f"[cron] Pending notification delivered for job {pending_key}")
+                    logger.info(f"[cron] Pending notification delivered for job {pending_key} via {p}")
                 except Exception as e:
                     logger.warning(f"[cron] Pending notification delivery failed: {e}")
 
