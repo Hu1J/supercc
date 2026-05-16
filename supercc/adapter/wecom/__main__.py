@@ -1,7 +1,7 @@
 """WeCom 插件独立进程入口。
 
 Usage:
-    python -m supercc.plugin.wecom
+    python -m supercc.adapter.wecom
     # 环境变量：
     #   SUPERCC_CONFIG=项目路径/.supercc/config.json
     #   SUPERCC_DATA=项目路径/.supercc/
@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # 将项目根目录加入 sys.path（确保能 import supercc）
@@ -22,16 +23,33 @@ from supercc.config import init_config, get_config
 from supercc.adapter.wecom.client import WeComClient
 from supercc.adapter.wecom.ws_client import WeComWSClient
 from supercc.adapter.wecom.core_client import WeComCoreWSClient
+from supercc.main import ColoredFormatter, PlainFormatter
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
-logger = logging.getLogger("wecom-plugin")
+# 统一日志格式（与 core 保持一致）
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(ColoredFormatter())
+logging.root.handlers = [_root_handler]
+logging.root.setLevel(logging.INFO)
+logger = logging.getLogger("wecom")
+
+
+def _setup_file_logging(data_dir: str) -> None:
+    """Add file handler to root logger so wecom plugin logs also go to supercc.log."""
+    log_file = os.path.join(data_dir, "supercc.log")
+    try:
+        fh = logging.FileHandler(log_file, mode="a")
+        fh.setFormatter(PlainFormatter())
+        logging.root.addHandler(fh)
+        logger.debug("File logging added: %s", log_file)
+    except Exception as e:
+        logger.warning("Failed to add file logging: %s", e)
 
 
 async def run_plugin(config, data_dir):
     """WeCom 插件协程：在同进程 event loop 中运行。"""
+    # 添加文件日志（写入 supercc.log）
+    _setup_file_logging(data_dir)
+
     # WebSocket 凭证：优先使用扫码接入获得的 bot_id/secret，
     # 回退到手动输入时的 agent_id/corp_secret（向后兼容）
     ws_bot_id = config.channels.wecom.bot_id or config.channels.wecom.agent_id
@@ -43,7 +61,7 @@ async def run_plugin(config, data_dir):
     # 从 config 读取 core 端口
     core_port = config.core.port
     core_url = f"ws://127.0.0.1:{core_port}"
-    logger.info(f"[WeComPlugin] Connecting to core at {core_url}")
+    logger.info(f"Connecting to core at {core_url}")
 
     # 1. 创建 SDK WebSocket 客户端（接收 WeCom 消息）
     ws_client = WeComWSClient(
@@ -71,7 +89,7 @@ async def run_plugin(config, data_dir):
 
     # 连接到 Core
     await core_client.connect()
-    logger.info("[WeComPlugin] Connected to core")
+    logger.info("Connected to core")
 
     # 启动 WS 接收企微消息（放到线程中执行，避免阻塞主事件循环）
     await asyncio.to_thread(ws_client.start)

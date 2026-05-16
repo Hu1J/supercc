@@ -62,7 +62,7 @@ def _get_start_script(data_dir: str, channel: str) -> str:
             f"cd {project_dir}\n"
             f"export SUPERCC_CONFIG={data_dir}/config.json\n"
             f"export SUPERCC_DATA={data_dir}\n"
-            f"exec python -m supercc.plugin.wecom\n"
+            f"exec python -m supercc.adapter.wecom\n"
         )
     raise ValueError(f"Unknown channel: {channel}")
 

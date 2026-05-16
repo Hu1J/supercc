@@ -434,7 +434,7 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
                 if name == "feishu":
                     from supercc.adapter.feishu.__main__ import run_plugin as _run
                 elif name == "wecom":
-                    from supercc.plugin.wecom.__main__ import run_plugin as _run
+                    from supercc.adapter.wecom.__main__ import run_plugin as _run
                 await _run(config, data_dir)
             except asyncio.CancelledError:
                 raise  # 有序关闭时会被外层 cancel，不继续重启
