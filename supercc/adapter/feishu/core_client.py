@@ -120,6 +120,9 @@ class FeishuCoreWSClient:
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
         # Tracks message_ids that received STREAM_CHUNK (distinguishes AI queries from commands)
         self._streamed_msg_ids: set[str] = set()
+        # 当前 chat 上下文（用于 command_progress 进度卡片）
+        self._last_chat_id: str = ""
+        self._last_message_id: str = ""
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[IncomingMessage]] = {}
         self._MAX_GROUP_HISTORY = 10
@@ -135,12 +138,32 @@ class FeishuCoreWSClient:
         except Exception:
             self._memory_manager = None
 
+    async def _send_auth(self):
+        """发送 auth 消息到核心，完成身份认证。"""
+        from supercc.config import get_config
+        cfg = get_config()
+        if cfg.core.token:
+            await self._ws.send(json.dumps({
+                "type": "auth",
+                "token": cfg.core.token,
+                "platform": "feishu"
+            }))
+        elif cfg.core.username and cfg.core.password:
+            await self._ws.send(json.dumps({
+                "type": "auth",
+                "username": cfg.core.username,
+                "password": cfg.core.password,
+                "platform": "feishu"
+            }))
+
     async def connect(self):
         """连接核心 WebSocket 服务。"""
         import websockets
         self._ws = await websockets.connect(self.core_url)
         self._running = True
         logger.info(f"Connected to core at {self.core_url}")
+
+        await self._send_auth()
 
         # 启动读取循环 + 心跳
         asyncio.create_task(self._read_loop())
@@ -283,8 +306,95 @@ class FeishuCoreWSClient:
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
-        elif method == Event.PONG:
-            pass  # 心跳响应
+        elif method == "command_progress":
+            await self._handle_command_progress(params)
+
+    async def _handle_command_progress(self, params: dict):
+        """渲染 restart/update/switch 步骤进度卡片，发到飞书。
+
+        参考 restart_impl.run_restart / switch_impl.run_switch 的 feishu 通知格式。
+        """
+        event = params.get("event", "")
+        step = params.get("step", 0)
+        total = params.get("total", 0)
+        label = params.get("label", "")
+        status = params.get("status", "")
+        detail = params.get("detail", "")
+        success = params.get("success", False)
+        target_pid = params.get("target_pid")
+        new_pid = params.get("new_pid")
+
+        # 获取 chat_id（需要从当前连接的上下文获取，这里存一份 mapping）
+        chat_id = self._last_chat_id or ""
+        reply_to = self._last_message_id or ""
+
+        if not chat_id:
+            logger.warning("[command_progress] no chat_id, skipping")
+            return
+
+        bar = "▓" * step + "░" * (total - step)
+
+        if event == "restart":
+            title_prefix = "正在重启"
+            title_done = "✅ 重启完成"
+        elif event == "update":
+            title_prefix = "正在更新"
+            title_done = "✅ 更新完成"
+        elif event == "switch":
+            title_prefix = "正在切换项目"
+            title_done = "✅ 切换完成"
+        else:
+            title_prefix = f"正在执行 {event}"
+            title_done = "✅ 执行完成"
+
+        if status == "final":
+            if event == "switch":
+                body = (
+                    f"**目标项目**: `{detail}`\n"
+                    f"**新进程 PID**: `{target_pid}`\n\n"
+                    f"🎉 飞书消息流已切换到目标项目，继续对话吧！"
+                )
+            elif event == "restart":
+                body = (
+                    f"**新进程 PID**: `{new_pid}`\n\n"
+                    f"🎉 SuperCC 已重启，可以在飞书中继续对话了。"
+                )
+            elif event == "update":
+                body = (
+                    f"🎉 SuperCC 已更新，可以在飞书中继续对话了。"
+                )
+            else:
+                body = detail
+
+            card = f"## {title_done}\n\n{body}"
+        else:
+            step_labels = {
+                "restart": ["🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
+                "update":  ["📋 检查更新", "📦 检查新版本", "✅ 下载完成", "🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
+                "switch":  ["🛑 停止目标", "📋 拷贝配置", "🚀 启动目标", "🔍 确认运行", "🛑 关闭当前"],
+            }
+            labels = step_labels.get(event, [])
+            step_label = labels[step - 1] if step <= len(labels) else f"步骤 {step}"
+
+            if event == "switch":
+                body = f"**目标**: `{detail}`\n\n{bar} `{step}/{total}` {step_label}\n\n⏳ 切换中，请稍候..."
+            elif event == "restart":
+                body = f"**当前目录**: `{detail}`\n\n{bar} `{step}/{total}` {step_label}\n\n⏳ 即将重启，请稍候..."
+            elif event == "update":
+                body = f"**版本**: `{detail}`\n\n{bar} `{step}/{total}` {step_label}\n\n⏳ 正在更新，请稍候..."
+            else:
+                body = f"{bar} `{step}/{total}` {step_label}\n\n⏳ {title_prefix}，请稍候..."
+
+            card = f"## {title_prefix}\n\n{body}"
+
+        try:
+            await self.feishu.send_interactive_reply(chat_id, card, reply_to)
+        except Exception:
+            logger.warning("[command_progress] send failed, falling back to text")
+            try:
+                await self.feishu.send_text(chat_id, card)
+            except Exception:
+                pass
 
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为飞书格式并发送。
@@ -659,6 +769,10 @@ class FeishuCoreWSClient:
         """实际执行 WS 发送和响应等待。"""
         import websockets
 
+        # 保存当前 chat 上下文，供 command_progress 使用
+        self._last_chat_id = incoming.chat_id
+        self._last_message_id = incoming.message_id
+
         future = asyncio.Future()
         req_id = str(req.id)
         if not req_id or req_id == "None":
@@ -804,8 +918,17 @@ class FeishuCoreWSClient:
                     result_event = result.get("event", "")
                     result_content = result.get("content", "")
                     if result_event in ("restart", "update", "switch"):
-                        # TODO: 实现 restart/update/switch 的 plugin 侧处理
-                        logger.info("[command] /%s received (not yet implemented in plugin)", result_event)
+                        # 确认消息告知用户已收到指令，核心正在处理
+                        msg_id = result.get("message_id", incoming.message_id)
+                        if msg_id in self._streamed_msg_ids:
+                            logger.info("[command] /%s skip (streamed)", result_event)
+                        else:
+                            logger.info("[command] /%s forwarding confirmation", result_event)
+                            await self._safe_send(
+                                incoming.chat_id,
+                                msg_id,
+                                self.formatter.format_text(result_content or f"正在处理 {result_event}..."),
+                            )
                     elif result_content:
                         # AI 流式响应（有 STREAM_CHUNK）已通过 accumulator flush 发送，不走此路
                         msg_id = result.get("message_id", incoming.message_id)

@@ -203,6 +203,9 @@ class WeComCoreWSClient:
         self._streamed_msg_ids: set[str] = set()
         # Stream accumulators keyed by message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
+        # 当前 chat 上下文（用于 command_progress 进度卡片）
+        self._last_chat_id: str = ""
+        self._last_message_id: str = ""
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
@@ -214,12 +217,31 @@ class WeComCoreWSClient:
         # 重连互斥锁（防止 _reconnect 和 _read_loop 并发调用）
         self._reconnect_lock = asyncio.Lock()
 
+    async def _send_auth(self):
+        """发送 auth 消息到核心，完成身份认证。"""
+        from supercc.config import get_config
+        cfg = get_config()
+        if cfg.core.token:
+            await self._ws.send(json.dumps({
+                "type": "auth",
+                "token": cfg.core.token,
+                "platform": "wecom"
+            }))
+        elif cfg.core.username and cfg.core.password:
+            await self._ws.send(json.dumps({
+                "type": "auth",
+                "username": cfg.core.username,
+                "password": cfg.core.password,
+                "platform": "wecom"
+            }))
+
     async def connect(self):
         """连接核心 WebSocket 服务。"""
         import websockets
         self._ws = await websockets.connect(self.core_url)
         self._running = True
         logger.info("[WeComCore] Connected to core")
+        await self._send_auth()
         asyncio.create_task(self._read_loop())
         asyncio.create_task(self._ping_loop())
 
@@ -332,6 +354,8 @@ class WeComCoreWSClient:
             await self._handle_tool_call(params)
         elif method == Event.PONG:
             pass  # 心跳响应
+        elif method == "command_progress":
+            await self._handle_command_progress(params)
 
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为企业微信格式并发送。"""
@@ -410,6 +434,81 @@ class WeComCoreWSClient:
             except Exception as e:
                 logger.warning(f"[WeComCore] all send methods failed: {e}")
 
+    async def _handle_command_progress(self, params: dict):
+        """渲染 restart/update/switch 步骤进度卡片，发到企业微信。"""
+        event = params.get("event", "")
+        step = params.get("step", 0)
+        total = params.get("total", 0)
+        label = params.get("label", "")
+        status = params.get("status", "")
+        detail = params.get("detail", "")
+        success = params.get("success", False)
+        target_pid = params.get("target_pid")
+        new_pid = params.get("new_pid")
+
+        chat_id = self._last_chat_id or ""
+
+        if not chat_id:
+            logger.warning("[command_progress] no chat_id, skipping")
+            return
+
+        bar = "▓" * step + "░" * (total - step)
+
+        if event == "restart":
+            title_prefix = "正在重启"
+            title_done = "✅ 重启完成"
+        elif event == "update":
+            title_prefix = "正在更新"
+            title_done = "✅ 更新完成"
+        elif event == "switch":
+            title_prefix = "正在切换项目"
+            title_done = "✅ 切换完成"
+        else:
+            title_prefix = f"正在执行 {event}"
+            title_done = "✅ 执行完成"
+
+        if status == "final":
+            if event == "switch":
+                body = (
+                    f"目标项目: {detail}\n"
+                    f"新进程 PID: {target_pid}\n\n"
+                    f"飞书消息流已切换到目标项目，继续对话吧！"
+                )
+            elif event == "restart":
+                body = f"新进程 PID: {new_pid}\n\nSuperCC 已重启，可以在企业微信中继续对话了。"
+            elif event == "update":
+                body = "SuperCC 已更新，可以在企业微信中继续对话了。"
+            else:
+                body = detail
+            text = f"{title_done}\n\n{body}"
+        else:
+            step_labels = {
+                "restart": ["🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
+                "update":  ["📋 检查更新", "📦 检查新版本", "✅ 下载完成", "🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
+                "switch":  ["🛑 停止目标", "📋 拷贝配置", "🚀 启动目标", "🔍 确认运行", "🛑 关闭当前"],
+            }
+            labels = step_labels.get(event, [])
+            step_label = labels[step - 1] if step <= len(labels) else f"步骤 {step}"
+
+            if event == "switch":
+                body = f"目标: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 切换中，请稍候..."
+            elif event == "restart":
+                body = f"当前目录: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 即将重启，请稍候..."
+            elif event == "update":
+                body = f"版本: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 正在更新，请稍候..."
+            else:
+                body = f"{bar} {step}/{total} {step_label}\n\n⏳ {title_prefix}，请稍候..."
+
+            text = f"{title_prefix}\n\n{body}"
+
+        try:
+            await self.wecom.send_markdown(chat_id, text)
+        except Exception:
+            try:
+                await self.wecom.send_text(chat_id, text[:2000])
+            except Exception as e:
+                logger.warning("[command_progress] send failed: %s", e)
+
     async def _handle_tool_call(self, params: dict):
         """tool_call 事件：格式化工具结果并发送给用户。"""
         extra = params.get("extra", {})
@@ -485,6 +584,7 @@ class WeComCoreWSClient:
 
     async def send_message(self, msg: dict) -> dict:
         """将 WeCom 消息转发给核心，并等待响应。"""
+        # 保存当前 chat 上下文，供 command_progress 使用
         # 图片/文件：解析 url+aeskey，下载到本地后转为 markdown 路径
         # 直接修改 msg 的 content，这样 incoming_to_inbound 会拿到已解析的内容
         msg_type = msg.get("msgtype", "text")
@@ -527,6 +627,10 @@ class WeComCoreWSClient:
             group_members=None,
             group_context="",
         )
+
+        # 保存当前 chat 上下文，供 command_progress 使用
+        self._last_chat_id = inbound.session_key.chat_id
+        self._last_message_id = inbound.message_id
 
         # 群聊权限校验
         if not await self._check_group_permissions(inbound):
