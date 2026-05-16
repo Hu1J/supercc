@@ -601,12 +601,6 @@ class FeishuCoreWSClient:
             else:
                 await self._safe_send(chat_id, msg_id, f"🤖 **{tool_name}**")
 
-        # 发送 tool_result 回核心
-        await self._send_event(Event.TOOL_RESULT, {
-            "tool_call_id": tool_call_id,
-            "content": f"[{tool_name}] executed",
-            "chat_id": chat_id,
-        })
 
     def _render_memory_card(self, marker: MemoryCardMarker) -> dict:
         """将 MemoryCardMarker 渲染为 CardKit 原生格式。"""

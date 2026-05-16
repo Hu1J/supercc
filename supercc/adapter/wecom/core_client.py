@@ -660,7 +660,6 @@ class WeComCoreWSClient:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
 
-        # 格式化工具调用通知（TOOL_RESULT 回给 core 做记录，用户通知由 core 的 WS 推送）
         result = self.formatter.format_tool_call(
             tool_name, tool_input,
             memory_manager=self._memory_manager,
@@ -679,7 +678,6 @@ class WeComCoreWSClient:
                     await self.wecom.send_text(chat_id, text[:2000])
                 except Exception:
                     pass
-            result_content = f"🧠 **{tool_name.replace('mcp__SuperCC__', '')}**"
         else:
             # 格式化文本（Agent/Codex/Edit/Write/AskUserQuestion 等）→ 发送给用户
             text = str(result) if result else ""
@@ -691,13 +689,6 @@ class WeComCoreWSClient:
                         await self.wecom.send_text(chat_id, text[:2000])
                     except Exception:
                         pass
-            result_content = text
-
-        await self._send_event(Event.TOOL_RESULT, {
-            "tool_call_id": tool_call_id,
-            "content": result_content,
-            "chat_id": chat_id,
-        })
 
     async def _check_group_permissions(self, inbound) -> bool:
         """检查群聊权限。返回 True=允许通过，False=已拦截（已发送授权卡片）。"""
