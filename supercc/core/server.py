@@ -336,17 +336,15 @@ class WsServer:
                 await conn.ws.close()
             return
 
-        # 非 auth 消息检查是否已认证（只对有 platform 字段的消息检查，
-        # 纯 JSON-RPC 消息如 feishu.message 没有 platform 字段，跳过此检查）
-        platform = raw.get("platform", "")
-        if platform and platform not in self._plugin_authenticated:
+        # 非 auth 消息检查是否已认证
+        platform = raw.get("platform", "unknown")
+        if platform not in self._plugin_authenticated:
             await conn.ws.send(json.dumps({"type": "error", "message": "not authenticated"}))
             return
 
         try:
             req = JsonRpcRequest.from_dict(raw)
         except Exception:
-            logger.warning("[WsServer] failed to parse JSON-RPC: %s", raw)
             resp = JsonRpcResponse(
                 error=JsonRpcError(code=ErrorCode.PARSE_ERROR, message="Invalid JSON-RPC")
             )
