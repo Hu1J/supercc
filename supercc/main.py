@@ -1527,10 +1527,6 @@ def main(args=None):
     # list
     list_parser = subparsers.add_parser("list", help="List all running instances")
 
-    # stop
-    stop_parser = subparsers.add_parser("stop", help="Stop the SuperCC instance in the current directory")
-
-    restart_parser = subparsers.add_parser("restart", help="Restart current SuperCC instance")
     update_parser = subparsers.add_parser("update", help="Check for updates and restart if needed")
 
     # send
@@ -1675,23 +1671,6 @@ def main(args=None):
 
     if command == "list":
         list_bridges()
-        return
-
-    if command == "restart":
-        from supercc.core.commands.restart_impl import run_restart_cli, RestartError as RestartErr
-        try:
-            for step in run_restart_cli(None):
-                bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
-                if step.status == "final":
-                    print(f"\r[{bar}] ✓ {step.label} {step.detail}")
-                else:
-                    print(f"\r[{bar}] {step.label}...")
-            print()
-            import os as _os
-            _os._exit(0)
-        except RestartErr as e:
-            print(f"\n❌ 重启失败: {e}")
-            sys.exit(1)
         return
 
     if command == "update":
