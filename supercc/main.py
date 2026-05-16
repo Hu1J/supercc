@@ -98,7 +98,7 @@ from supercc.config import init_config, get_config, write_config, resolve_config
 from supercc.channels.feishu.client import FeishuClient, IncomingMessage
 from supercc.channels.feishu.ws_client import FeishuWSClient
 from supercc.core.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
-from supercc.core.claude.cron_tools import set_cron_scheduler
+from supercc.core.mcps.cron_tools import set_cron_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -351,11 +351,16 @@ def confirm_risk_warning(config_path: str) -> bool:
             return False
 
 
-async def start_bridge(config_path: str, data_dir: str) -> None:
-    """Start SuperCC: core + plugins all in one asyncio event loop."""
+async def start_bridge(config_path: str, data_dir: str, foreground: bool = False) -> None:
+    """Start SuperCC: core + plugins all in one asyncio event loop.
+
+    Args:
+        foreground: if True, skip PID file lock check and don't write supercc.pid.
+                   适合开发调试，Ctrl+C 退出。
+    """
     # Check if another instance is already running (pure PID file detection)
     pid_file = os.path.join(data_dir, "supercc.pid")
-    if os.path.exists(pid_file):
+    if not foreground and os.path.exists(pid_file):
         try:
             old_pid = int(Path(pid_file).read_text().strip())
             os.kill(old_pid, 0)  # Signal 0 checks if process exists
@@ -367,6 +372,14 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
             pass
 
     config = init_config(config_path)
+
+    # Auto-generate token if not set (one-time setup)
+    cfg = get_config()
+    if not cfg.core.token:
+        import secrets
+        cfg.core.token = secrets.token_urlsafe(32)
+        write_config(cfg)
+        print(f"[Core] Token auto-generated: {cfg.core.token}")
 
     # 检测是否被系统服务托管
     from supercc.gateway.platform import _is_service_installed
@@ -386,9 +399,10 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
 
     _ensure_agents_md(config.claude.approved_directory)
 
-    # Write PID file for process management
-    pid_file = os.path.join(data_dir, "supercc.pid")
-    write_pid(pid_file)
+    # Write PID file for process management (skip in foreground mode)
+    if not foreground:
+        pid_file = os.path.join(data_dir, "supercc.pid")
+        write_pid(pid_file)
 
     logger.info(f"Starting SuperCC (async mode) — data: {data_dir}")
 
@@ -1239,23 +1253,6 @@ def _run_config_command(args) -> None:
         print(f"\n使用 `supercc config switch {model_id}` 切换到新模型。")
         return
 
-    if action == "switch":
-        if not raw_args.strip():
-            print("用法: supercc config switch <model_id>")
-            return
-        model_id = raw_args.strip()
-        ok = switch_model(model_id)
-        if not ok:
-            print(f"❌ 未找到模型 ID: `{model_id}`")
-            return
-        models = get_all_models()
-        entry = models[model_id]
-        print(f"✅ 已切换到 **{entry.name}**\n")
-        print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
-        print(f"   端点: `{entry.env.ANTHROPIC_BASE_URL}`")
-        print(f"\n注意: Claude Code 需要重启才能生效，使用 `supercc gateway restart` 命令重启。")
-        return
-
     if action == "delete":
         if not raw_args.strip():
             print("用法: supercc config delete <model_id>")
@@ -1293,7 +1290,6 @@ def _run_config_command(args) -> None:
             raw_args = " ".join(raw_args)
         # Route to existing handlers with action = model_action
         action = model_action
-        # Fall through to existing handlers (list/add/switch/delete/providers)
         # Each handler returns or falls through to the next
 
     if action == "gateway":
@@ -1461,9 +1457,6 @@ def main(args=None):
     ca_add = ca_model_subparsers.add_parser("add", help="添加模型")
     ca_add.add_argument("--provider", help="预设供应商 ID（如 openrouter, anthropic）")
     ca_add.add_argument("config_args", nargs="*", default=[], help="<api_key> <model> [model_id] [name] [description]")
-
-    ca_switch = ca_model_subparsers.add_parser("switch", help="切换默认模型")
-    ca_switch.add_argument("config_args", help="<model_id>")
 
     ca_delete = ca_model_subparsers.add_parser("delete", help="删除模型")
     ca_delete.add_argument("config_args", help="<model_id>")

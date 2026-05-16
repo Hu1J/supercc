@@ -70,7 +70,7 @@ def run_gateway_run() -> None:
     init_config(cfg_path)
     import asyncio
     from supercc.main import start_bridge
-    asyncio.run(start_bridge(cfg_path, data_dir))
+    asyncio.run(start_bridge(cfg_path, data_dir, foreground=True))
 
 
 def run_gateway_restart() -> None:
