@@ -714,7 +714,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         try:
             if claude_msg.tool_name:
                 from supercc.adapter.feishu.format.reply_formatter import ReplyFormatter
-                from supercc.adapter.feishu.format.edit_diff import _DiffMarker, _MemoryCardMarker
+                from supercc.adapter.feishu.format.edit_diff import _DiffMarker
+                from supercc.adapter.common.format import MemoryCardMarker
                 from supercc.adapter.feishu.format.questionnaire_card import _AskUserQuestionMarker, format_questionnaire_card
                 formatter = ReplyFormatter()
                 result = formatter.format_tool_call(
@@ -732,7 +733,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                         for marker in result:
                             if isinstance(marker, _DiffMarker):
                                 await feishu.send_card(chat_id, marker.card)
-                    elif isinstance(result, _MemoryCardMarker):
+                    elif isinstance(result, MemoryCardMarker):
                         md = result.render()
                         if md:
                             await feishu.send_interactive_card(chat_id, md)
@@ -754,7 +755,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
                         for marker in result:
                             if isinstance(marker, _DiffMarker):
                                 intermediates.append({"type": "card", "content": marker.card})
-                    elif isinstance(result, _MemoryCardMarker):
+                    elif isinstance(result, MemoryCardMarker):
                         md = result.render()
                         if md:
                             intermediates.append({"type": "interactive_card", "content": md})
