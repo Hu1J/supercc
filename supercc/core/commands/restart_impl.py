@@ -21,6 +21,14 @@ class RestartError(Exception): pass
 class StartupTimeoutError(RestartError): pass
 
 
+def _build_restart_argv(event: str) -> list[str]:
+    """Build argv for restart/update subprocess (POSIX). Windows uses Popen separately."""
+    if event == "update":
+        return ["supercc", "update"]
+    # restart and switch both use `supercc start`
+    return ["supercc", "start"]
+
+
 # Step labels for CLI display (short, single line)
 _CLI_STEP_LABELS = [
     "准备重启",
@@ -120,12 +128,10 @@ def _stop_bridge(project_path: str) -> bool:
     return True
 
 
-def _restart_to(file_lock=None, package: str = "supercc"):
+def _restart_to(package: str = "supercc"):
     """Restart SuperCC in the current directory.
 
     Args:
-        file_lock: FileLock object acquired by main.py; released before
-                   starting new process so the new instance can acquire it.
         package: Package name to restart (determines binary).
     Yields RestartStep objects (5 steps total).
     """
@@ -135,27 +141,28 @@ def _restart_to(file_lock=None, package: str = "supercc"):
     instance_lock = os.path.join(data_dir, ".instance.lock")
 
     # Step 1: 准备重启
-    yield RestartStep(step=1, total=5, label=_CLI_STEP_LABELS[0], status="done")
+    yield RestartStep(step=1, total=5, label=_CLI_STEP_LABELS[0], status="done", detail=current_path)
 
-    # Step 2: 释放文件锁 + 删除 pid 文件
-    if file_lock is not None:
-        file_lock.release()
+    # Step 2: 清理文件锁 + pid 文件
+    # 直接 unlink 锁文件，让新实例启动时自己创建并持有新锁。
+    # 如果当前进程持有 OS 级 flock，unlink 后新实例仍能获取新锁（不同 inode）。
+    Path(instance_lock).unlink(missing_ok=True)
     Path(pid_file).unlink(missing_ok=True)
 
-    # 注意：不做 exists 检查，因为存在 TOCTOU 竞态：
+    # 注意：不做 exists 检查，因为存在 TOCTTU 竞态：
     # unlink 和 exists 检查之间，另一进程可能创建新文件。
     # 新实例启动时会自己检查并覆盖，不依赖这里的检查。
 
-    yield RestartStep(step=2, total=5, label=_CLI_STEP_LABELS[1], status="done")
+    yield RestartStep(step=2, total=5, label=_CLI_STEP_LABELS[1], status="done", detail=current_path)
 
     # Step 3: 启动新实例
     new_pid = _start_bridge(current_path, package=package)
-    yield RestartStep(step=3, total=5, label=_CLI_STEP_LABELS[2], status="done")
+    yield RestartStep(step=3, total=5, label=_CLI_STEP_LABELS[2], status="done", detail=current_path)
 
-    # Step 4: 检查新实例已成功启动（pid 文件 + filelock 都存在）
-    if not (os.path.exists(pid_file) and os.path.exists(instance_lock)):
+    # Step 4: 检查新实例已成功启动（pid 文件存在）
+    if not os.path.exists(pid_file):
         raise StartupTimeoutError("新实例未成功启动")
-    yield RestartStep(step=4, total=5, label=_CLI_STEP_LABELS[3], status="done")
+    yield RestartStep(step=4, total=5, label=_CLI_STEP_LABELS[3], status="done", detail=current_path)
 
     # Step 5: 重启完成（自我 exit 由调用方处理，消息不展示）
     yield RestartStep(
@@ -165,7 +172,7 @@ def _restart_to(file_lock=None, package: str = "supercc"):
     )
 
 
-async def run_restart(file_lock, feishu: "FeishuClient",
+async def run_restart(feishu: "FeishuClient",
                       chat_id: str, reply_to_message_id: str):
     """Run the restart with detailed step-by-step Feishu notifications.
 
@@ -174,7 +181,7 @@ async def run_restart(file_lock, feishu: "FeishuClient",
     current_path = os.getcwd()
     total = 5
 
-    for step_obj in _restart_to(file_lock=file_lock):
+    for step_obj in _restart_to():
         bar = "▓" * step_obj.step + "░" * (total - step_obj.step)
         label = _FEISHU_STEP_LABELS[step_obj.step - 1] if step_obj.step <= len(_FEISHU_STEP_LABELS) else f"步骤 {step_obj.step}"
 
@@ -198,11 +205,10 @@ async def run_restart(file_lock, feishu: "FeishuClient",
         yield step_obj
 
 
-def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None, project_path: str | None = None):
+def run_restart_cli(feishu=None, chat_id: str | None = None, project_path: str | None = None):
     """CLI version of restart — yields RestartStep, optionally sends Feishu notifications.
 
     Args:
-        file_lock: FileLock object acquired by main.py
         feishu: FeishuClient instance (optional, for notifications)
         chat_id: Feishu chat_id (optional, required if feishu is provided)
         project_path: Target project directory to switch to before restarting.
@@ -215,7 +221,7 @@ def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None, project_
             os.chdir(project_path)
 
         if not feishu or not chat_id:
-            for step in _restart_to(file_lock=file_lock):
+            for step in _restart_to():
                 yield step
             return
 
@@ -229,7 +235,7 @@ def run_restart_cli(file_lock, feishu=None, chat_id: str | None = None, project_
         initial = f"## 🔄 正在重启\n\n⏳ 准备重启，请稍候..."
         await _send(initial)
 
-        for step_obj in _restart_to(file_lock=file_lock):
+        for step_obj in _restart_to():
             bar = "▓" * step_obj.step + "░" * (5 - step_obj.step)
             label = _FEISHU_STEP_LABELS[step_obj.step - 1]
 
@@ -388,7 +394,7 @@ class UpdateStep:
     new_pid: Optional[int] = None
 
 
-def _do_update(file_lock=None):
+def _do_update():
     """Check version, install update if needed, restart.
 
     Yields UpdateStep.
@@ -426,7 +432,7 @@ def _do_update(file_lock=None):
     yield UpdateStep(step=3, total=8, label=_UPDATE_CLI_STEP_LABELS[2], status="done")
 
     # Step 4-8: 复用 _restart_to（偏移 3）
-    for restart_step in _restart_to(file_lock=file_lock, package=package):
+    for restart_step in _restart_to(package=package):
         yield UpdateStep(
             step=restart_step.step + 3,
             total=8,
@@ -454,7 +460,7 @@ def _pip_install(package: str) -> None:
         raise RestartError(f"pip install 失败: {e}")
 
 
-async def run_update(file_lock, feishu: "FeishuClient",
+async def run_update(feishu: "FeishuClient",
                      chat_id: str, reply_to_message_id: str) -> bool:
     """Run the update with detailed step-by-step Feishu notifications.
 
@@ -470,7 +476,7 @@ async def run_update(file_lock, feishu: "FeishuClient",
     current_path = os.getcwd()
     total = 8
 
-    for step_obj in _do_update(file_lock=file_lock):
+    for step_obj in _do_update():
         if step_obj.status == "skip":
             card = (
                 f"## ✅ 已是最新版本\n\n"
@@ -509,11 +515,10 @@ async def run_update(file_lock, feishu: "FeishuClient",
     return True
 
 
-def run_update_cli(file_lock, feishu=None, chat_id: str | None = None, project_path: str | None = None):
+def run_update_cli(feishu=None, chat_id: str | None = None, project_path: str | None = None):
     """CLI version of update — yields UpdateStep, optionally sends Feishu notifications.
 
     Args:
-        file_lock: FileLock object acquired by main.py
         feishu: FeishuClient instance (optional, for notifications)
         chat_id: Feishu chat_id (optional, required if feishu is provided)
         project_path: Target project directory to switch to before updating.
@@ -531,7 +536,7 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None, project_p
             os.chdir(project_path)
 
         if not feishu or not chat_id:
-            for step in _do_update(file_lock=file_lock):
+            for step in _do_update():
                 yield step
             return
 
@@ -542,7 +547,7 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None, project_p
                 pass  # non-fatal, CLI continues
 
         # Materialize steps to check final status before sending any cards
-        steps = list(_do_update(file_lock=file_lock))
+        steps = list(_do_update())
 
         if steps and steps[-1].status == "skip":
             # Already latest
@@ -604,3 +609,45 @@ def run_update_cli(file_lock, feishu=None, chat_id: str | None = None, project_p
             pass
     finally:
         loop.close()
+
+
+def _cleanup_and_replace(event: str, project_path: str = "") -> None:
+    """清理 PID 文件，然后替换当前进程。
+
+    POSIX:  os.execvp 原地替换，同 PID。
+    Windows: subprocess.Popen + sys.exit()（execvp 在 Windows 上不能处理 .cmd/.exe）
+
+    注意：本函数不返回。execvp 成功后当前进程内存被新镜像替换。
+    """
+    if project_path:
+        os.chdir(project_path)
+
+    data_dir = os.path.join(os.getcwd(), ".supercc")
+    pid_file = os.path.join(data_dir, "supercc.pid")
+
+    # unlink PID 文件
+    Path(pid_file).unlink(missing_ok=True)
+
+    argv = _build_restart_argv(event)
+
+    if sys.platform == "win32":
+        import subprocess as _subprocess
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        DETACHED_PROCESS = 0x00000008
+        _subprocess.Popen(
+            argv,
+            cwd=os.getcwd(),
+            stdin=_subprocess.DEVNULL,
+            stdout=None,
+            stderr=None,
+            creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+        )
+        sys.exit(0)
+    else:
+        # 关闭 stdin，避免新进程意外继承
+        devnull_fd = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull_fd, 0)
+        os.close(devnull_fd)
+
+        os.execvp(argv[0], argv)
+        # ← 这行之后不返回。execvp 替换当前进程，新镜像接管同一 PID。
