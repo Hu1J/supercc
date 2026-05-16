@@ -701,14 +701,16 @@ MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
 def _run_config_interactive() -> None:
     """交互式配置菜单（顶层：model / gateway / channel）。"""
     import questionary
+    dirty = [False]  # 追踪是否有配置变更
+
     while True:
         choice = questionary.select(
             "SuperCC 配置",
             choices=[
                 questionary.Choice("🤖  模型", value="model", description="添加/切换/删除模型"),
                 questionary.Choice("🌐  Gateway", value="gateway", description="监听地址/端口/认证配置"),
-                questionary.Choice("💬  Channel", value="channel", description="飞书/企微插件启用状态"),
-                questionary.Choice("❌  退出", value="quit"),
+                questionary.Choice("💬  Channel", value="channel", description="飞书/企微插件启用状态、凭证"),
+                questionary.Choice("↩️  继续", value="continue"),
             ],
             style=questionary.Style([
                 ("selected", "fg:#00AA00 bold"),
@@ -716,17 +718,20 @@ def _run_config_interactive() -> None:
                 ("pointer", "fg:#00AA00 bold"),
             ]),
         ).ask()
-        if choice == "quit" or choice is None:
+        if choice == "continue" or choice is None:
+            if dirty[0]:
+                print("\n⚠️  配置已变更，需重启 SuperCC 才能生效。")
+                print("   运行 `supercc gateway restart` 重启。\n")
             break
         elif choice == "model":
-            _run_config_model_interactive()
+            _run_config_model_interactive(dirty)
         elif choice == "gateway":
-            _run_config_gateway_interactive()
+            _run_config_gateway_interactive(dirty)
         elif choice == "channel":
-            _run_config_channel_interactive()
+            _run_config_channel_interactive(dirty)
 
 
-def _run_config_model_interactive() -> None:
+def _run_config_model_interactive(dirty: list) -> None:
     """交互式模型配置子菜单。"""
     import questionary
     from supercc.claude.model_config import (
@@ -790,6 +795,7 @@ def _run_config_model_interactive() -> None:
                 env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=base_url, ANTHROPIC_MODEL=selected_model)
                 added = add_model(model_id, name, f"自定义供应商: custom", env, provider_name="custom")
                 switch_model(model_id)
+                dirty[0] = True
                 if not added:
                     print(f"⚠️  模型 ID `{model_id}` 已存在，已切换到该模型\n")
                 else:
@@ -813,6 +819,7 @@ def _run_config_model_interactive() -> None:
                 print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换")
                 continue
             switch_model(model_id)
+            dirty[0] = True
             print(f"\n✅ 模型 **{name}** (`{model_id}`) 已添加并设为激活\n")
 
         elif choice == "switch":
@@ -839,9 +846,9 @@ def _run_config_model_interactive() -> None:
                 print("❌ 切换失败\n")
                 continue
             entry = models[target_id]
+            dirty[0] = True
             print(f"\n✅ 已切换到 **{entry.name}**")
-            print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`")
-            print(f"\n注意: 使用 `supercc gateway restart` 使更改生效。\n")
+            print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`\n")
 
         elif choice == "delete":
             models = get_all_models()
@@ -869,6 +876,8 @@ def _run_config_model_interactive() -> None:
             if not confirm:
                 continue
             ok = delete_model(target_id)
+            if ok:
+                dirty[0] = True
             print(f"{'✅' if ok else '❌'} 模型 `{target_id}` {'已删除' if ok else '删除失败'}\n")
 
         elif choice == "providers":
@@ -887,7 +896,7 @@ def _run_config_model_interactive() -> None:
             print("\n".join(lines))
 
 
-def _run_config_gateway_interactive() -> None:
+def _run_config_gateway_interactive(dirty: list) -> None:
     """交互式 Gateway/Core 配置子菜单。"""
     import questionary
     from supercc.config import resolve_config_path, init_config, get_config, write_config
@@ -926,8 +935,8 @@ def _run_config_gateway_interactive() -> None:
             new_token = secrets.token_urlsafe(32)
             cfg.core.token = new_token
             write_config(cfg)
-            print(f"✅ Token 已生成并保存: {new_token}")
-            print("提示: Token 是 plugin 连接 core WS 的凭证。\n")
+            dirty[0] = True
+            print(f"✅ Token 已生成并保存: {new_token}\n")
         elif choice == "auth":
             username = questionary.text("用户名", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
             if not username:
@@ -940,6 +949,7 @@ def _run_config_gateway_interactive() -> None:
             cfg.core.username = username
             cfg.core.password = password
             write_config(cfg)
+            dirty[0] = True
             print(f"✅ 账号密码已保存: {username}\n")
         elif choice == "host":
             host = questionary.select(
@@ -954,6 +964,7 @@ def _run_config_gateway_interactive() -> None:
                 continue
             cfg.core.host = host
             write_config(cfg)
+            dirty[0] = True
             print(f"✅ Host 已设置为: {host}（重启后生效）\n")
         elif choice == "port":
             port_str = questionary.text("端口（默认 28888）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
@@ -963,12 +974,13 @@ def _run_config_gateway_interactive() -> None:
                 port = int(port_str)
                 cfg.core.port = port
                 write_config(cfg)
+                dirty[0] = True
                 print(f"✅ Port 已设置为: {port}（重启后生效）\n")
             except ValueError:
                 print("❌ 端口必须是数字\n")
 
 
-def _run_config_channel_interactive() -> None:
+def _run_config_channel_interactive(dirty: list) -> None:
     """交互式 Channel 插件子菜单。"""
     import questionary
     from supercc.config import resolve_config_path, init_config, get_config, write_config
@@ -986,6 +998,8 @@ def _run_config_channel_interactive() -> None:
             "Channel 配置",
             choices=[
                 questionary.Choice(f"📡  查看状态（飞书: {feishu.enabled}  企微: {wecom.enabled}）", value="status"),
+                questionary.Choice("🔵  飞书凭证：查看/修改", value="feishu_creds"),
+                questionary.Choice("🟢  企微凭证：查看/修改", value="wecom_creds"),
                 questionary.Choice("🔵  飞书：启用 / 禁用", value="feishu_toggle"),
                 questionary.Choice("🟢  企微：启用 / 禁用", value="wecom_toggle"),
                 questionary.Choice("↩️  返回上级", value="back"),
@@ -1002,14 +1016,61 @@ def _run_config_channel_interactive() -> None:
             print(f"飞书:     enabled={feishu.enabled}  {feishu_creds}")
             print(f"企业微信: enabled={wecom.enabled}  {wecom_creds}")
             print()
-            print("说明：修改 enabled 后需重启 SuperCC（supercc gateway restart）才能生效")
+        elif choice == "feishu_creds":
+            if not feishu.app_id:
+                print("⚠️  飞书尚未配置凭证，请先运行 onboard 完成初始配置\n")
+                continue
+            print(f"\n飞书凭证（当前）：")
+            print(f"  App ID:     {feishu.app_id}")
+            print(f"  App Secret: {'已设置' if feishu.app_secret else '❌ 未设置'}")
             print()
+            edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
+            if not edit:
+                continue
+            app_id = questionary.text("App ID（回车保持当前）", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            if not app_id:
+                print("⚠️  App ID 不能为空\n")
+                continue
+            app_secret = questionary.password("App Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            feishu.app_id = app_id
+            if app_secret:
+                feishu.app_secret = app_secret
+            write_config(cfg)
+            dirty[0] = True
+            print("✅ 飞书凭证已保存（重启后生效）\n")
+        elif choice == "wecom_creds":
+            if not wecom.corp_id:
+                print("⚠️  企业微信尚未配置凭证，请先运行 onboard 完成初始配置\n")
+                continue
+            print(f"\n企业微信凭证（当前）：")
+            print(f"  Corp ID:    {wecom.corp_id}")
+            print(f"  Agent ID:   {wecom.agent_id or '(未设置)'}")
+            print(f"  Secret:     {'已设置' if wecom.secret else '❌ 未设置'}")
+            print()
+            edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
+            if not edit:
+                continue
+            corp_id = questionary.text("Corp ID（回车保持当前）", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            if not corp_id:
+                print("⚠️  Corp ID 不能为空\n")
+                continue
+            agent_id = questionary.text("Agent ID（回车保持当前）", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            secret = questionary.password("Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            wecom.corp_id = corp_id
+            if agent_id:
+                wecom.agent_id = agent_id
+            if secret:
+                wecom.secret = secret
+            write_config(cfg)
+            dirty[0] = True
+            print(f"✅ 企业微信凭证已保存（重启后生效）\n")
         elif choice == "feishu_toggle":
             if not feishu.app_id:
                 print("⚠️  飞书未配置凭证（app_id 为空），无法启用。请先运行 onboard\n")
                 continue
             feishu.enabled = not feishu.enabled
             write_config(cfg)
+            dirty[0] = True
             print(f"✅ 飞书已{'启用' if feishu.enabled else '禁用'}（重启后生效）\n")
         elif choice == "wecom_toggle":
             if not wecom.corp_id:
@@ -1017,6 +1078,7 @@ def _run_config_channel_interactive() -> None:
                 continue
             wecom.enabled = not wecom.enabled
             write_config(cfg)
+            dirty[0] = True
             print(f"✅ 企业微信已{'启用' if wecom.enabled else '禁用'}（重启后生效）\n")
 
 
