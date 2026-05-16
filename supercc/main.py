@@ -1301,6 +1301,7 @@ def main(args=None):
     gw_run = gateway_subparsers.add_parser("run", help="Run gateway in foreground (实时打印日志)")
     gw_stop = gateway_subparsers.add_parser("stop", help="Stop gateway")
     gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
+    gw_restart = gateway_subparsers.add_parser("restart", help="热重启当前实例")
     gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
 
     args = parser.parse_args(args)
