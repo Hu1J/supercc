@@ -1458,6 +1458,43 @@ def _run_config_command(args) -> None:
         print("用法: supercc config add --provider <provider_id> <api_key> <model>")
         return
 
+    if action == "core":
+        core_action = getattr(args, "core_action", None)
+        from supercc.config import resolve_config_path, init_config, get_config, write_config
+        cfg_path, _ = resolve_config_path()
+        init_config(cfg_path)
+        cfg = get_config()
+        import secrets
+
+        if core_action == "token":
+            tok = getattr(args, "token", None) or ""
+            if not tok:
+                tok = secrets.token_urlsafe(32)
+            cfg.core.token = tok
+            write_config(cfg)
+            print(f"Token 已设置: {tok}")
+        elif core_action == "username":
+            cfg.core.username = getattr(args, "username", "")
+            write_config(cfg)
+            print(f"Username 已设置: {cfg.core.username}")
+        elif core_action == "password":
+            cfg.core.password = getattr(args, "password", "")
+            write_config(cfg)
+            print("Password 已设置")
+        elif core_action == "show":
+            print(f"Token: {'已设置' if cfg.core.token else '未设置'}")
+            print(f"Username: {cfg.core.username or '未设置'}")
+            print(f"Password: {'已设置' if cfg.core.password else '未设置'}")
+        elif core_action == "delete":
+            cfg.core.token = ""
+            cfg.core.username = ""
+            cfg.core.password = ""
+            write_config(cfg)
+            print("Core 认证配置已清除")
+        else:
+            print("用法: supercc config core token/username/password/show/delete")
+        return
+
 
 def main(args=None):
     # Read version once — shared by --version flag and startup banner
@@ -1568,6 +1605,21 @@ def main(args=None):
     ca_delete.add_argument("config_args", help="<model_id>")
 
     ca_providers = config_subparsers.add_parser("providers", help="List available model providers")
+
+    ca_core = config_subparsers.add_parser("core", help="管理 core 认证配置")
+    ca_core_subparsers = ca_core.add_subparsers(dest="core_action", help="Action")
+
+    ca_core_token = ca_core_subparsers.add_parser("token", help="设置 token（不提供则自动生成）")
+    ca_core_token.add_argument("token", nargs="?", default="", help="Token 值")
+
+    ca_core_username = ca_core_subparsers.add_parser("username", help="设置账号")
+    ca_core_username.add_argument("username", help="用户名")
+
+    ca_core_password = ca_core_subparsers.add_parser("password", help="设置密码")
+    ca_core_password.add_argument("password", help="密码")
+
+    ca_core_show = ca_core_subparsers.add_parser("show", help="显示当前配置")
+    ca_core_delete = ca_core_subparsers.add_parser("delete", help="删除认证配置")
 
     # onboard
     onboard_parser = subparsers.add_parser("onboard", help="Interactive first-time setup")
