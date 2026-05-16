@@ -321,10 +321,10 @@ class WsServer:
             from supercc.config import get_config
             cfg = get_config()
             auth_ok = False
-            if token and token == cfg.core.token:
+            if token and secrets.compare_digest(token, cfg.core.token):
                 auth_ok = True
             elif username and password:
-                if username == cfg.core.username and password == cfg.core.password:
+                if secrets.compare_digest(username, cfg.core.username) and secrets.compare_digest(password, cfg.core.password):
                     auth_ok = True
 
             if auth_ok:
