@@ -70,13 +70,13 @@ def run_gateway_run() -> None:
     init_config(cfg_path)
     import asyncio
     from supercc.main import start_bridge
-    asyncio.run(start_bridge(cfg_path, data_dir, foreground=True))
+    asyncio.run(start_bridge(cfg_path, data_dir))
 
 
 def run_gateway_restart() -> None:
     """gateway restart 子命令：热重启当前实例。"""
-    from supercc.core.commands.restart_impl import run_restart_cli
     import sys
+    from supercc.core.commands.restart_impl import run_restart_cli
     try:
         for step in run_restart_cli(None):
             print(f"[{step.step}/{step.total}] {step.label}: {step.detail or ''}")
