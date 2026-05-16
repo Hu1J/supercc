@@ -6,7 +6,6 @@ import signal
 import sys
 import time
 import subprocess
-import shutil
 from pathlib import Path
 
 
@@ -23,12 +22,6 @@ def get_platform() -> str:
     elif sys.platform == "win32":
         return "windows"
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
-
-
-def _resolve_supercc() -> str:
-    """返回当前环境 supercc console script 绝对路径。"""
-    python_path = Path(sys.executable)
-    return str(python_path.parent / "supercc")
 
 
 def _get_start_script(data_dir: str) -> str:
@@ -371,15 +364,15 @@ def stop_service(data_dir: str, project_slug: str) -> None:
         raise RuntimeError(f"Unsupported platform: {p}")
 
 
-def uninstall_service(data_dir: str, project_slug: str, channel: str = ServiceType.MAIN) -> None:
+def uninstall_service(data_dir: str, project_slug: str) -> None:
     """根据当前平台卸载 gateway 服务。"""
     p = get_platform()
     if p == "macos":
-        uninstall_mac(data_dir, project_slug, channel)
+        uninstall_mac(data_dir, project_slug)
     elif p == "linux":
-        uninstall_linux(data_dir, project_slug, channel)
+        uninstall_linux(data_dir, project_slug)
     elif p == "windows":
-        uninstall_windows(data_dir, project_slug, channel)
+        uninstall_windows(data_dir, project_slug)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
 
