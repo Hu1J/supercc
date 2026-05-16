@@ -280,21 +280,27 @@ class FeishuCoreWSClient:
         if method == Event.RESPONSE:
             msg_id = params.get("message_id", "")
             extra = params.get("extra", {})
-            mention_tag = extra.get("mention_tag", "")  # executor 已计算，直接使用
             content = params.get("content", "")
+            is_group = extra.get("is_group_chat", False)
+            sender_id = extra.get("user_open_id", "")
+            sender_name = extra.get("sender_name", "")
 
-            if mention_tag:
-                if msg_id and msg_id in self._accumulator_by_msg_id:
-                    # 流式模式：在 flush 前追加 mention_tag 到 buffer
-                    acc = self._accumulator_by_msg_id[msg_id]
-                    async with acc._lock:
-                        buffered = acc._buffer
-                    if buffered and f'<at user_id=' not in buffered:
+            # ── 群聊 mention 检查：若 AI 未 mention 提问者，追加飞书 XML ───────
+            if is_group and sender_id and sender_name:
+                mention_xml = f'<at user_id="{sender_id}">{sender_name}</at>'
+                # 检查 AI 是否已自然 mention
+                if f'<at user_id="{sender_id}"' not in content:
+                    if msg_id and msg_id in self._accumulator_by_msg_id:
+                        # 流式模式：在 flush 前追加到 buffer
+                        acc = self._accumulator_by_msg_id[msg_id]
                         async with acc._lock:
-                            acc._buffer += mention_tag
-                elif content and f'<at user_id=' not in content:
-                    # 非流式模式：在 content 末尾追加 mention_tag
-                    params["content"] = content + mention_tag
+                            buffered = acc._buffer
+                        if buffered:
+                            async with acc._lock:
+                                acc._buffer += f"\n{mention_xml}"
+                    else:
+                        # 非流式模式：在 content 末尾追加
+                        params["content"] = content + f"\n{mention_xml}"
 
             await self._render_and_send(params)
 

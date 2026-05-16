@@ -477,20 +477,16 @@ class WeComCoreWSClient:
 
         if method == Event.RESPONSE:
             extra = params.get("extra", {})
-            mention_tag = extra.get("mention_tag", "")
+            content = params.get("content", "")
+            is_group = extra.get("is_group_chat", False)
+            sender_id = extra.get("user_open_id", "")
             session_info = extra.get("session_info", "")
 
-            # 转换飞书 XML mention 格式为企业微信 @userid 纯文本格式
-            if mention_tag:
-                import re
-                content = params.get("content", "")
-                # 提取 <at user_id="ou_xxx">姚日华</at> 中的 user_id
-                m = re.search(r'<at user_id="([^"]+)"', mention_tag)
-                if m:
-                    userid = m.group(1)
-                    params["content"] = content + f"@{userid}"
-                else:
-                    params["content"] = content
+            # ── 群聊 mention：追加 @userid 纯文本 ──────────────────────────────
+            if is_group and sender_id:
+                # 检查 AI 是否已自然 mention
+                if f'@{sender_id}' not in content:
+                    params["content"] = content + f"@{sender_id}"
 
             await self._render_and_send(params)
             # session 切换通知（在 AI 响应后追加提示）

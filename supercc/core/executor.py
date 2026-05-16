@@ -313,32 +313,27 @@ class CoreExecutor:
             direction="incoming",
         )
 
-        # ── 群聊 @mention 检查：若 AI 未 mention 提问者，追加 ────────────
-        # 核心只计算 mention_tag，放在 extra 中传给 plugin；
-        # plugin 在 RESPONSE 事件到达时追加到最后的流式消息，避免重复发送完整内容。
-        mention_tag = ""
-        if key.platform == "feishu" and inbound.extra.get("is_group_chat"):
+        # ── 群聊 sender 信息（plugin 层自行判断是否追加 mention）────────────
+        # core 只传 sender 信息，不生成平台特有格式；各 plugin 自主选择原生 mention 格式。
+        sender_id = inbound.user_open_id or ""
+        sender_name = ""
+        if inbound.extra.get("is_group_chat") and sender_id:
             members = inbound.extra.get("group_members", [])
-            sender_id = inbound.user_open_id or ""
-            if sender_id and members:
-                for m in members:
-                    if isinstance(m, dict):
-                        member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
-                        name = m.get("name") or m.get("bot_name", "")
-                    else:
-                        member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
-                        name = getattr(m, "name", None) or ""
-                    if member_id == sender_id and name:
-                        mention_tag = f"\n<at user_id=\"{member_id}\">{name}</at>"
-                        break
-                # 如果 AI 已自然 mention，mention_tag 保持为空
-                if mention_tag and f'<at user_id="{sender_id}"' in result:
-                    mention_tag = ""
+            for m in members:
+                if isinstance(m, dict):
+                    member_id = m.get("member_id") or m.get("open_id") or m.get("bot_id", "")
+                    name = m.get("name") or m.get("bot_name", "")
+                else:
+                    member_id = getattr(m, "member_id", None) or getattr(m, "open_id", "") or getattr(m, "bot_id", "")
+                    name = getattr(m, "name", None) or ""
+                if member_id == sender_id and name:
+                    sender_name = name
+                    break
 
         # ── 发送主响应 + 触发后台任务 ────────────────────────────────────
         extra_dict = {
-            "mention_tag": mention_tag,
-            "user_open_id": inbound.user_open_id or "",
+            "user_open_id": sender_id,
+            "sender_name": sender_name,
             "is_group_chat": inbound.extra.get("is_group_chat", False),
             "group_members": inbound.extra.get("group_members", []),
         }
