@@ -1203,7 +1203,17 @@ def _run_config_command(args) -> None:
             cfg.core.password = getattr(args, "password", "")
             write_config(cfg)
             print("Password 已设置")
+        elif core_action == "host":
+            cfg.core.host = getattr(args, "host", "127.0.0.1")
+            write_config(cfg)
+            print(f"Host 已设置为: {cfg.core.host}")
+        elif core_action == "port":
+            cfg.core.port = getattr(args, "port", 28888)
+            write_config(cfg)
+            print(f"Port 已设置为: {cfg.core.port}")
         elif core_action == "show":
+            print(f"Host: {cfg.core.host}")
+            print(f"Port: {cfg.core.port}")
             print(f"Token: {'已设置' if cfg.core.token else '未设置'}")
             print(f"Username: {cfg.core.username or '未设置'}")
             print(f"Password: {'已设置' if cfg.core.password else '未设置'}")
@@ -1214,7 +1224,7 @@ def _run_config_command(args) -> None:
             write_config(cfg)
             print("Core 认证配置已清除")
         else:
-            print("用法: supercc config core token/username/password/show/delete")
+            print("用法: supercc config core host/port/token/username/password/show/delete")
         return
 
 
@@ -1280,6 +1290,12 @@ def main(args=None):
 
     ca_core_password = ca_core_subparsers.add_parser("password", help="设置密码")
     ca_core_password.add_argument("password", help="密码")
+
+    ca_core_host = ca_core_subparsers.add_parser("host", help="设置监听地址（127.0.0.1 或 0.0.0.0）")
+    ca_core_host.add_argument("host", help="监听地址")
+
+    ca_core_port = ca_core_subparsers.add_parser("port", help="设置监听端口")
+    ca_core_port.add_argument("port", type=int, help="监听端口")
 
     ca_core_show = ca_core_subparsers.add_parser("show", help="显示当前配置")
     ca_core_delete = ca_core_subparsers.add_parser("delete", help="删除认证配置")

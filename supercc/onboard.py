@@ -28,7 +28,7 @@ def _print_step(step: int, total: int, title: str) -> None:
 
 def run_onboard_flow() -> bool:
     """Run the interactive onboard flow. Returns True if setup completed."""
-    TOTAL_STEPS = 3
+    TOTAL_STEPS = 4
 
     print("\n🐲 SuperCC 项目初始化引导\n")
 
@@ -152,6 +152,23 @@ def run_onboard_flow() -> bool:
         username = input("请输入用户名：").strip()
         password = input("请输入密码：").strip()
 
+    # ── Core listen address/port ───────────────────────────────────────────────
+    _print_step(4, TOTAL_STEPS, "配置监听地址")
+
+    print("配置 SuperCC Core 的监听地址（plugin 通过此地址连接）：\n")
+    print("1. 127.0.0.1:28888（推荐，仅本机可访问）")
+    print("2. 0.0.0.0:28888（对外部开放）")
+    listen_choice = input("请选择（1/2），直接回车使用默认值（1）：").strip()
+
+    if listen_choice == "2":
+        core_host = "0.0.0.0"
+        core_port = 28888
+        print("已设置: 0.0.0.0:28888（对外部开放）")
+    else:
+        core_host = "127.0.0.1"
+        core_port = 28888
+        print("已设置: 127.0.0.1:28888（仅本机）")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'━' * 60}")
     print(" 确认配置")
@@ -172,6 +189,7 @@ def run_onboard_flow() -> bool:
         print(f"认证: Token（{token[:8]}...）")
     if username:
         print(f"认证: 用户名密码（{username}）")
+    print(f"监听: {core_host}:{core_port}")
 
     print()
 
@@ -196,6 +214,8 @@ def run_onboard_flow() -> bool:
         cfg.core.token = token
         cfg.core.username = username
         cfg.core.password = password
+        cfg.core.host = core_host
+        cfg.core.port = core_port
         accept_bypass_warning(cfg_path)
         write_config(cfg)
     except Exception:
