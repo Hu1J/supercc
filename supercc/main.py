@@ -1680,7 +1680,7 @@ def main(args=None):
     if command == "restart":
         from supercc.core.commands.restart_impl import run_restart_cli, RestartError as RestartErr
         try:
-            for step in run_restart_cli(_active_lock):
+            for step in run_restart_cli(None):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
                 if step.status == "final":
                     print(f"\r[{bar}] ✓ {step.label} {step.detail}")
@@ -1697,7 +1697,7 @@ def main(args=None):
     if command == "update":
         from supercc.core.commands.restart_impl import run_update_cli, RestartError as UpdateErr
         try:
-            for step in run_update_cli(_active_lock):
+            for step in run_update_cli(None):
                 bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
                 if step.status == "skip":
                     print(f"✅ 当前版本 {step.detail} 已是最新")
