@@ -477,7 +477,21 @@ class WeComCoreWSClient:
 
         if method == Event.RESPONSE:
             extra = params.get("extra", {})
+            mention_tag = extra.get("mention_tag", "")
             session_info = extra.get("session_info", "")
+
+            # 转换飞书 XML mention 格式为企业微信 @userid 纯文本格式
+            if mention_tag:
+                import re
+                content = params.get("content", "")
+                # 提取 <at user_id="ou_xxx">姚日华</at> 中的 user_id
+                m = re.search(r'<at user_id="([^"]+)"', mention_tag)
+                if m:
+                    userid = m.group(1)
+                    params["content"] = content + f"@{userid}"
+                else:
+                    params["content"] = content
+
             await self._render_and_send(params)
             # session 切换通知（在 AI 响应后追加提示）
             if session_info:
@@ -616,8 +630,6 @@ class WeComCoreWSClient:
 
         if status == "final":
             if event == "restart":
-                )
-            elif event == "restart":
                 body = f"新进程 PID: {new_pid}\n\nSuperCC 已重启，可以在企业微信中继续对话了。"
             elif event == "update":
                 body = "SuperCC 已更新，可以在企业微信中继续对话了。"
