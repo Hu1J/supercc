@@ -832,10 +832,10 @@ class WeComCoreWSClient:
                 notify_req = JsonRpcRequest(
                     id=self._next_id(),
                     method="wecom.notify",
+                    platform=inbound.session_key.platform,
                     params={
                         "chat_id": inbound.session_key.chat_id,
                         "user_open_id": inbound.user_open_id or "",
-                        "platform": inbound.session_key.platform,
                         "project_path": inbound.session_key.project_path,
                         "content": inbound.content,
                     },
@@ -852,12 +852,12 @@ class WeComCoreWSClient:
         req = JsonRpcRequest(
             id=self._next_id(),
             method="wecom.message",
+            platform=inbound.session_key.platform,
             params={
                 "message_id": inbound.message_id,
                 "bot_id": inbound.session_key.bot_id,
                 "chat_id": inbound.session_key.chat_id,
                 "user_open_id": inbound.user_open_id,
-                "platform": inbound.session_key.platform,
                 "project_path": inbound.session_key.project_path,
                 "content": inbound.content,
                 "message_type": inbound.message_type.value,

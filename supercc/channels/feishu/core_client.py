@@ -908,12 +908,12 @@ class FeishuCoreWSClient:
         req = JsonRpcRequest(
             id=self._next_id(),
             method="feishu.message",
+            platform=inbound.session_key.platform,
             params={
                 "message_id": inbound.message_id,
                 "bot_id": inbound.session_key.bot_id,
                 "chat_id": inbound.session_key.chat_id,
                 "user_open_id": inbound.user_open_id,
-                "platform": inbound.session_key.platform,
                 "project_path": inbound.session_key.project_path,
                 "content": full_content,
                 "system_prompt": inbound.system_prompt,

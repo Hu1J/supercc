@@ -151,15 +151,15 @@ class JsonRpcRequest:
     jsonrpc: str = "2.0"
     id: Optional[int | str] = None
     method: str = ""
+    platform: Optional[str] = None  # 顶层 platform 字段，用于 server 认证检查
     params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = {"jsonrpc": self.jsonrpc, "method": self.method, "params": self.params}
         if self.id is not None:
             d["id"] = self.id
-        # platform 提升到顶层，方便 server 做认证检查
-        if "platform" in self.params:
-            d["platform"] = self.params["platform"]
+        if self.platform:
+            d["platform"] = self.platform
         return d
 
     @classmethod
@@ -168,6 +168,7 @@ class JsonRpcRequest:
             jsonrpc=d.get("jsonrpc", "2.0"),
             id=d.get("id"),
             method=d.get("method", ""),
+            platform=d.get("platform"),
             params=d.get("params", {}),
         )
 
