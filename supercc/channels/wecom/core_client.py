@@ -858,6 +858,10 @@ class WeComCoreWSClient:
         # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
         await self._enrich_group_context(inbound, msg)
 
+        # /restart 指令：plugin 本地立即发确认，不等 core 回传
+        if inbound.content.strip() == "/restart":
+            await self.wecom.send_text(inbound.session_key.chat_id, "正在重启，请稍作等待...")
+
         req = JsonRpcRequest(
             id=self._next_id(),
             method="wecom.message",

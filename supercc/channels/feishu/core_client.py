@@ -911,6 +911,10 @@ class FeishuCoreWSClient:
         except Exception:
             pass  # 失败不影响主流程
 
+        # /restart 指令：plugin 本地立即发确认，不等 core 回传
+        if full_content.strip() == "/restart":
+            await self.feishu.send_text(inbound.session_key.chat_id, "正在重启，请稍作等待...")
+
         req = JsonRpcRequest(
             id=self._next_id(),
             method="feishu.message",
