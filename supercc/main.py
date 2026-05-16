@@ -93,11 +93,7 @@ def _ensure_agents_md(project_dir: str) -> None:
         agents_md.write_text(AGENTS_MD_CONTENT, encoding="utf-8")
 
 
-import filelock
-
-_active_lock: "filelock.FileLock | None" = None
-
-from supercc.config import init_config, get_config, resolve_config_path, SESSIONS_DB_PATH
+from supercc.config import init_config, get_config, write_config, resolve_config_path, SESSIONS_DB_PATH
 from supercc.adapter.feishu.client import FeishuClient, IncomingMessage
 from supercc.adapter.feishu.ws_client import FeishuWSClient
 from supercc.cron_scheduler import CronScheduler, _get_active_chat_id, _is_group_chat
@@ -356,19 +352,28 @@ def confirm_risk_warning(config_path: str) -> bool:
 
 async def start_bridge(config_path: str, data_dir: str) -> None:
     """Start SuperCC: core + plugins all in one asyncio event loop."""
-    # Acquire exclusive lock before starting — prevents multiple instances in the same directory
-    lock_file = os.path.join(data_dir, ".instance.lock")
-    lock = filelock.FileLock(lock_file, timeout=1)
-    global _active_lock
-    _active_lock = lock
-    try:
-        lock.acquire()
-    except filelock.Timeout:
-        print(f"错误：当前已有一个 SuperCC 实例正在运行 ({data_dir})")
-        print("如果确认没有实例在运行，请删除 .instance.lock 文件后重试。")
-        sys.exit(1)
+    # Check if another instance is already running (pure PID file detection)
+    pid_file = os.path.join(data_dir, "supercc.pid")
+    if os.path.exists(pid_file):
+        try:
+            old_pid = int(Path(pid_file).read_text().strip())
+            os.kill(old_pid, 0)  # Signal 0 checks if process exists
+            print(f"错误：当前已有一个 SuperCC 实例正在运行 (PID {old_pid}, {data_dir})")
+            print("请先停止运行中的实例: supercc stop")
+            sys.exit(1)
+        except (ValueError, OSError):
+            # PID file is stale (invalid or process dead), continue
+            pass
 
     config = init_config(config_path)
+
+    # 检测是否被系统服务托管
+    from supercc.gateway.platform import _is_service_installed
+    is_daemon = _is_service_installed(data_dir)
+    cfg = get_config()
+    if cfg.daemon != is_daemon:
+        cfg.daemon = is_daemon
+        write_config(cfg)
 
     # Startup: initialize model env singleton with global ~/.supercc/model.json
     from supercc.claude.model_config import init_model_env, ensure_project_model_config
@@ -523,7 +528,6 @@ async def start_bridge(config_path: str, data_dir: str) -> None:
             await core_server.stop()
 
         remove_pid(pid_file)
-        lock.release()
         logger.info("SuperCC stopped gracefully")
         import os as _os
         _os._exit(0)

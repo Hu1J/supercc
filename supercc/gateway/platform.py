@@ -424,3 +424,8 @@ def uninstall_service(data_dir: str, project_slug: str, channel: str = ServiceTy
         uninstall_windows(data_dir, project_slug, channel)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
+
+
+def _is_service_installed(data_dir: str) -> bool:
+    """检查平台服务是否已安装（通过标记文件）。"""
+    return Path(data_dir).joinpath(".gateway-installed").exists()
