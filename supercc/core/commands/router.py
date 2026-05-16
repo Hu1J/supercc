@@ -12,7 +12,6 @@ from supercc.core.commands.memory import MemoryHandler
 from supercc.core.commands.skill import SkillHandler
 from supercc.core.commands.restart import RestartHandler
 from supercc.core.commands.update import UpdateHandler
-from supercc.core.commands.switch import SwitchHandler
 
 
 class CommandRouter:
@@ -34,7 +33,6 @@ class CommandRouter:
             SkillHandler(),
             RestartHandler(),
             UpdateHandler(),
-            SwitchHandler(),
         ]:
             self._handlers[h.name] = h
 
