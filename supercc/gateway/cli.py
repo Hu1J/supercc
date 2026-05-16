@@ -59,6 +59,8 @@ def run_gateway_status() -> None:
         print("⚪ Gateway 未运行")
     if s["installed"]:
         print("✅ 平台服务已安装（开机自启动）")
+    elif s["running"]:
+        print("⚡ 前台运行中（非服务模式，适合开发调试）")
     else:
         print("❌ 平台服务未安装（不会开机自启动）")
 
@@ -67,9 +69,18 @@ def run_gateway_run() -> None:
     """gateway run 子命令：前台阻塞运行，不获取 filelock。
     适合开发调试，Ctrl+C 退出。
     """
+    import os
     from supercc.config import resolve_config_path, init_config
     cfg_path, data_dir = resolve_config_path()
     init_config(cfg_path)
+
+    # 保存 PID 文件，让 status 命令能看到运行状态
+    pid_file = os.path.join(data_dir, "supercc.pid")
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+
+    import atexit
+    atexit.register(lambda: os.path.exists(pid_file) and os.unlink(pid_file))
 
     # 在 start_bridge 之前设置文件日志（覆盖所有模块，包括 supercc）
     import logging

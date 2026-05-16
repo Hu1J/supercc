@@ -92,7 +92,7 @@ class GatewayManager:
             stderr_f = open(self._stderr_log, "a")
             try:
                 proc = subprocess.Popen(
-                    ["supercc"],
+                    [sys.executable, "-m", "supercc", "gateway", "run"],
                     stdin=subprocess.DEVNULL,
                     stdout=stdout_f,
                     stderr=stderr_f,

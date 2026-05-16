@@ -488,6 +488,13 @@ class WeComCoreWSClient:
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
+        elif method == "restart":
+            # core 通过 push_fn 主动推送的 restart 确认消息
+            chat_id = params.get("chat_id", "")
+            msg_id = params.get("message_id", "")
+            content = params.get("content", "正在重启...")
+            if content:
+                await self.wecom.send_text(chat_id, content)
         elif method == Event.PONG:
             pass  # 心跳响应
         elif method == "command_progress":
@@ -503,8 +510,8 @@ class WeComCoreWSClient:
         if not content:
             return
 
-        # 非流式 Event（如 restart/update/switch）不经过 accumulator，直接发送
-        if message_id and event in ("restart", "update", "switch"):
+        # 非流式 Event（如 restart/update）不经过 accumulator，直接发送
+        if message_id and event in ("restart", "update"):
             self._streamed_msg_ids.discard(message_id)
             self._accumulator_by_msg_id.pop(message_id, None)
             await self.wecom.send_text(chat_id, content)
@@ -578,7 +585,7 @@ class WeComCoreWSClient:
                 logger.warning(f"[WeComCore] all send methods failed: {e}")
 
     async def _handle_command_progress(self, params: dict):
-        """渲染 restart/update/switch 步骤进度卡片，发到企业微信。"""
+        """渲染 restart/update 步骤进度卡片，发到企业微信。"""
         event = params.get("event", "")
         step = params.get("step", 0)
         total = params.get("total", 0)
@@ -603,19 +610,12 @@ class WeComCoreWSClient:
         elif event == "update":
             title_prefix = "正在更新"
             title_done = "✅ 更新完成"
-        elif event == "switch":
-            title_prefix = "正在切换项目"
-            title_done = "✅ 切换完成"
         else:
             title_prefix = f"正在执行 {event}"
             title_done = "✅ 执行完成"
 
         if status == "final":
-            if event == "switch":
-                body = (
-                    f"目标项目: {detail}\n"
-                    f"新进程 PID: {target_pid}\n\n"
-                    f"飞书消息流已切换到目标项目，继续对话吧！"
+            if event == "restart":
                 )
             elif event == "restart":
                 body = f"新进程 PID: {new_pid}\n\nSuperCC 已重启，可以在企业微信中继续对话了。"
@@ -628,14 +628,11 @@ class WeComCoreWSClient:
             step_labels = {
                 "restart": ["🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
                 "update":  ["📋 检查更新", "📦 检查新版本", "✅ 下载完成", "🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成"],
-                "switch":  ["🛑 停止目标", "📋 拷贝配置", "🚀 启动目标", "🔍 确认运行", "🛑 关闭当前"],
             }
             labels = step_labels.get(event, [])
             step_label = labels[step - 1] if step <= len(labels) else f"步骤 {step}"
 
-            if event == "switch":
-                body = f"目标: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 切换中，请稍候..."
-            elif event == "restart":
+            if event == "restart":
                 body = f"当前目录: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 即将重启，请稍候..."
             elif event == "update":
                 body = f"版本: {detail}\n\n{bar} {step}/{total} {step_label}\n\n⏳ 正在更新，请稍候..."
@@ -878,12 +875,12 @@ class WeComCoreWSClient:
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
         await self._ws.send(json.dumps(req.to_dict()))
         result = await future
-        # restart/update/switch 首次确认消息
+        # restart/update 首次确认消息
         if result:
             inner = result.get("result", result)
             result_event = inner.get("event", "") if isinstance(inner, dict) else ""
             result_content = inner.get("content", "") if isinstance(inner, dict) else ""
-            if result_event in ("restart", "update", "switch"):
+            if result_event in ("restart", "update"):
                 msg_id, chat_id = inbound.message_id, inbound.session_key.chat_id
                 if msg_id in self._streamed_msg_ids:
                     logger.info("[command] /%s skip (streamed)", result_event)

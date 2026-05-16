@@ -156,6 +156,17 @@ class CoreExecutor:
             }
             cmd_result = await self._router.dispatch(cmd_name, cmd_args, context)
             extra = dict(cmd_result.extra)
+            # restart/update 类命令：通过 push_fn 立即把确认消息发给 plugin，
+            # 让用户在重启前就能看到"正在重启..."的提示，不依赖 JSON-RPC response 的时序。
+            if push_fn and cmd_result.event in ("restart", "update"):
+                await push_fn(OutboundMessage(
+                    event=cmd_result.event,
+                    session_key=key,
+                    message_id=inbound.message_id,
+                    content=cmd_result.content,
+                    message_type=MessageType.TEXT,
+                    extra=extra,
+                ))
             return OutboundMessage(
                 event=cmd_result.event,
                 session_key=key,
