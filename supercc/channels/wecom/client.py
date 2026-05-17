@@ -45,6 +45,7 @@ class WeComClient:
 
     async def send_authorization_card(self, chat_id: str, reason: str) -> str:
         """发送权限不足引导卡片。"""
+        logger.info(f"[WeComClient] send_authorization_card: chat_id={chat_id}, reason_len={len(reason)}")
         return await self.send_template_card(
             chat_id=chat_id,
             card_type="button_interaction",
@@ -86,11 +87,15 @@ class WeComClient:
 
     async def _send_card(self, chat_id: str, card: dict) -> str:
         """Send a template card message via aibot_send_msg."""
+        logger.info(f"[WeComClient] _send_card: chat_id={chat_id}, card_type={card.get('card_type')}, title={card.get('main_title', {}).get('title', '')}")
         ack = await self._ws.send_message(
             chat_id=chat_id,
             msgtype="template_card",
             template_card=card,
         )
+        errcode = ack.get("errcode", -1) if ack else -1
+        errmsg = ack.get("errmsg", "no ack") if ack else "no ack"
+        logger.info(f"[WeComClient] _send_card ack: errcode={errcode}, errmsg={errmsg}")
         return ack.get("body", {}).get("msgid", "") if ack else ""
 
     # ── 媒体 ─────────────────────────────────────────────────────────────────

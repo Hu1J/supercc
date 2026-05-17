@@ -766,24 +766,24 @@ class WeComCoreWSClient:
                 reason = "该群未配置使用权限，请联系管理员。"
                 try:
                     await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[WeComCore] group auth card failed (no entry): {e}")
                 return False
 
             if not getattr(entry, "enabled", True):
                 reason = "该群已被禁用。"
                 try:
                     await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[WeComCore] group auth card failed (disabled): {e}")
                 return False
 
             if getattr(entry, "require_mention", True) and not inbound.extra.get("mention_bot", False):
                 reason = "请 @CC 我来使用 SuperCC。"
                 try:
                     await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[WeComCore] group auth card failed (mention): {e}")
                 return False
 
             allow_from = getattr(entry, "allow_from", [])
@@ -791,8 +791,8 @@ class WeComCoreWSClient:
                 reason = "你在该群中没有使用权限。"
                 try:
                     await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[WeComCore] group auth card failed (allow_from): {e}")
                 return False
 
             return True
@@ -825,9 +825,11 @@ class WeComCoreWSClient:
                         reason = "你不在允许使用列表中。\n\n配对系统暂时不可用，请联系机器人所有者。"
 
                     try:
+                        logger.info(f"[WeComCore] sending authorization card to chat_id={inbound.session_key.chat_id}")
                         await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                    except Exception:
-                        pass
+                        logger.info(f"[WeComCore] authorization card sent successfully")
+                    except Exception as e:
+                        logger.error(f"[WeComCore] send_authorization_card failed: {e}", exc_info=True)
                     return False
             return True
 
@@ -877,6 +879,14 @@ class WeComCoreWSClient:
             group_members=None,
             group_context="",
         )
+
+        # ── 原始入站消息日志（像飞书那样）────────────────────────────────────
+        try:
+            import json as _json
+            raw_body = _json.dumps(msg, ensure_ascii=False, indent=None)
+            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body[:300]}")
+        except Exception:
+            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
 
         # 保存当前 chat 上下文，供 command_progress 使用
         self._last_chat_id = inbound.session_key.chat_id
