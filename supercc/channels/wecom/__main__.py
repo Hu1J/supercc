@@ -11,7 +11,6 @@ import asyncio
 import logging
 import os
 import sys
-import traceback
 from pathlib import Path
 
 # 将项目根目录加入 sys.path（确保能 import supercc）
@@ -48,7 +47,6 @@ def _setup_file_logging(data_dir: str) -> None:
 
 async def run_plugin(config, data_dir):
     """WeCom 插件协程：在同进程 event loop 中运行。"""
-    # 添加文件日志（写入 supercc.log）
     _setup_file_logging(data_dir)
 
     # WebSocket 凭证：优先使用扫码接入获得的 bot_id/secret，
@@ -64,21 +62,21 @@ async def run_plugin(config, data_dir):
     core_url = f"ws://127.0.0.1:{core_port}"
     logger.info(f"Connecting to core at {core_url}")
 
-    # 1. 创建 SDK WebSocket 客户端（接收 WeCom 消息）
+    # 1. 创建 aiohttp WebSocket 客户端（接收 WeCom 消息）
     ws_client = WeComWSClient(
         bot_id=ws_bot_id,
         bot_secret=ws_bot_secret,
-        on_message=None,  # 消息处理在 core_client 中
+        on_message=None,
     )
 
-    # 2. 创建消息发送客户端（基于 SDK WSClient）
+    # 2. 创建消息发送客户端
     wecom = WeComClient(ws_client)
 
     # 3. 创建 Thin Client（连接 Core）
     core_client = WeComCoreWSClient(
         core_url=core_url,
-        ws_client=ws_client,       # SDK WSClient（接收消息 + reply_stream）
-        wecom_client=wecom,       # 消息发送
+        ws_client=ws_client,
+        wecom_client=wecom,
         bot_id=ws_bot_id,
         project_path=config.claude.approved_directory,
         groups=config.channels.wecom.groups,
@@ -92,12 +90,13 @@ async def run_plugin(config, data_dir):
     await core_client.connect()
     logger.info("Connected to core")
 
-    # 启动 WS 接收企微消息（放到线程中执行，避免阻塞主事件循环）
+    # 启动 WeCom WS 客户端（非阻塞，asyncio.to_thread 避免阻塞主 loop）
     await asyncio.to_thread(ws_client.start)
+    logger.info("WeCom WS client started")
 
 
 async def main():
-    """独立进程入口（兼容旧模式）。"""
+    """独立进程入口。"""
     config_path = os.environ.get("SUPERCC_CONFIG", "")
     data_dir = os.environ.get("SUPERCC_DATA", "")
 
@@ -108,6 +107,10 @@ async def main():
 
     config = init_config(config_path, data_dir)
     await run_plugin(config, data_dir)
+
+    # 保持进程运行
+    while True:
+        await asyncio.sleep(3600)
 
 
 if __name__ == "__main__":
