@@ -90,11 +90,52 @@ class GatewayManager:
         if background:
             stdout_f = open(self._stdout_log, "a")
             stderr_f = open(self._stderr_log, "a")
-            # Windows 上设置 PYTHONIOENCODING=utf-8，避免 GBK console 无法打印 emoji
             env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+
             if sys.platform == "win32":
-                env["PYTHONIOENCODING"] = "utf-8"
-            try:
+                # Windows: 使用 pythonw.exe + 正确的进程创建标志
+                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
+                python_exe = sys.executable
+                # 尝试使用 pythonw.exe（无控制台窗口）
+                pythonw = str(Path(python_exe).with_name("pythonw.exe"))
+                if not Path(pythonw).exists():
+                    pythonw = python_exe
+
+                flags = (
+                    0x00000008  # DETACHED_PROCESS
+                    | 0x00000200  # CREATE_NEW_PROCESS_GROUP
+                    | 0x08000000  # CREATE_NO_WINDOW
+                    | 0x01000000  # CREATE_BREAKAWAY_FROM_JOB
+                )
+                # 使用项目目录作为工作目录
+                project_dir = Path(self._data_dir).resolve().parent
+                try:
+                    proc = subprocess.Popen(
+                        [pythonw, "-m", "supercc", "gateway", "run"],
+                        cwd=str(project_dir),
+                        stdin=subprocess.DEVNULL,
+                        stdout=stdout_f,
+                        stderr=stderr_f,
+                        creationflags=flags,
+                        env=env,
+                        close_fds=True,
+                    )
+                except OSError:
+                    # pythonw.exe 不可用，回退到 python.exe
+                    flags = flags & ~0x08000000  # 去掉 CREATE_NO_WINDOW
+                    proc = subprocess.Popen(
+                        [python_exe, "-m", "supercc", "gateway", "run"],
+                        cwd=str(project_dir),
+                        stdin=subprocess.DEVNULL,
+                        stdout=stdout_f,
+                        stderr=stderr_f,
+                        creationflags=flags,
+                        env=env,
+                        close_fds=True,
+                    )
+            else:
+                # macOS/Linux: 使用 start_new_session
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "supercc", "gateway", "run"],
                     stdin=subprocess.DEVNULL,
@@ -103,27 +144,30 @@ class GatewayManager:
                     start_new_session=True,
                     env=env,
                 )
-                # 等待 PID 文件出现（最多 10 秒）
-                for _ in range(50):
-                    pid = self._load_pid()
-                    if pid is not None and self._is_running(pid):
-                        print(f"✅ Gateway 已启动（PID {pid}）")
-                        return pid
-                    if proc.poll() is not None:
-                        raise RuntimeError("Gateway 进程启动后立即退出")
-                    time.sleep(0.2)
-                # 超时：尝试终止子进程
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-                raise RuntimeError("Gateway 启动超时（PID 文件未出现）")
-            finally:
-                # 确保文件句柄总是关闭
-                stdout_f.close()
-                stderr_f.close()
+
+            # 等待 PID 文件出现（最多 10 秒）
+            for _ in range(50):
+                pid = self._load_pid()
+                if pid is not None and self._is_running(pid):
+                    print(f"✅ Gateway 已启动（PID {pid}）")
+                    stdout_f.close()
+                    stderr_f.close()
+                    return pid
+                if proc.poll() is not None:
+                    stdout_f.close()
+                    stderr_f.close()
+                    raise RuntimeError("Gateway 进程启动后立即退出")
+                time.sleep(0.2)
+            # 超时：尝试终止子进程
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            stdout_f.close()
+            stderr_f.close()
+            raise RuntimeError("Gateway 启动超时（PID 文件未出现）")
         else:
             # 前台模式：直接启动
             proc = subprocess.Popen(

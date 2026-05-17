@@ -1,7 +1,5 @@
-"""Gateway CLI 处理器 — supercc gateway install/start/stop/status"""
+"""Gateway CLI 处理器 — supercc gateway start/stop/status/restart"""
 from __future__ import annotations
-
-import os
 
 from supercc.gateway.manager import GatewayManager
 
@@ -14,25 +12,21 @@ def _gm() -> GatewayManager:
     return GatewayManager(data_dir)
 
 
-def run_gateway_install() -> None:
-    """gateway install 子命令：安装平台服务（开机自启动）。"""
-    gm = _gm()
-    if gm.status()["installed"]:
-        print("Gateway 服务已安装，如需重新安装请先卸载：supercc gateway uninstall")
-        return
-    gm.install()
-
-
-def run_gateway_start() -> None:
+def run_gateway_start(force: bool = False) -> None:
     """gateway start 子命令：启动 gateway（未安装则自动安装）。
 
-    通过平台服务管理器（launchd/systemd）启动进程，确保进程生命周期受管理。
+    Args:
+        force: 如果 True，强制重新安装服务（刷新 Token 等）
     """
     import sys
     gm = _gm()
     status = gm.status()
-    if not status["installed"]:
-        print("Gateway 未安装，正在安装...")
+    if not status["installed"] or force:
+        if force:
+            print("强制重新安装 Gateway 服务...")
+            gm.uninstall()
+        else:
+            print("Gateway 未安装，正在安装...")
         gm.install()
 
     # 通过平台服务管理器启动（macOS → launchctl kickstart, Linux → systemctl start）
@@ -43,24 +37,32 @@ def run_gateway_start() -> None:
         from supercc.gateway.platform import kickstart_linux
         kickstart_linux(gm._data_dir, gm._project_slug())
     else:
-        # Windows / 未知平台 fallback 到子进程
+        # Windows: 弹出新 cmd 窗口执行 gateway run
         if not status.get("running"):
-            gm.start()
+            import subprocess
+            from pathlib import Path
+            project_dir = str(Path(gm._data_dir).resolve().parent)
+            # Windows console script 位于 Scripts 目录
+            scripts_dir = Path(sys.executable).parent.parent / "Scripts"
+            supercc_exe = scripts_dir / "supercc.exe"
+            if not supercc_exe.exists():
+                supercc_exe = scripts_dir / "supercc.cmd"
+            if not supercc_exe.exists():
+                supercc_exe = scripts_dir / "supercc.bat"
+            if supercc_exe.exists():
+                supercc_path = str(supercc_exe)
+            else:
+                supercc_path = "supercc"  # 兜底
+            # 使用 cmd /c start 避免 shell 解析问题
+            cmd = f'start "SuperCC Gateway" cmd /c ""{supercc_path}" gateway run --working-dir "{project_dir}" & pause"'
+            subprocess.Popen(cmd, shell=True)
+            print("✅ Gateway 已启动（新窗口运行）")
 
 
 def run_gateway_stop() -> None:
     """gateway stop 子命令：停止 gateway。"""
     gm = _gm()
     gm.stop()
-
-
-def run_gateway_uninstall() -> None:
-    """gateway uninstall 子命令：卸载平台服务并停止运行。"""
-    gm = _gm()
-    if not gm.status()["installed"]:
-        print("Gateway 未安装，无需卸载")
-        return
-    gm.uninstall()
 
 
 def run_gateway_status() -> None:

@@ -234,7 +234,9 @@ def print_banner(version: str) -> None:
             tools=[],
             session_id=None,
         )
-    except (OSError, IOError):
+    except (OSError, IOError, UnicodeEncodeError):
+        # OSError/IOError: 控制台不可用（如非交互环境）
+        # UnicodeEncodeError: Windows GBK 控制台无法输出 emoji
         pass
 
 

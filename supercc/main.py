@@ -1164,7 +1164,12 @@ def _run_config_command(args) -> None:
         )
 
     # 无 action（交互式菜单）或 list（只显示）
-    if action is None or action == "list":
+    if action is None:
+        # 直接进入交互菜单，不打印模型列表
+        _run_config_interactive()
+        return
+
+    if action == "list":
         if not is_configured():
             current_settings = {}
             try:
@@ -1184,9 +1189,6 @@ def _run_config_command(args) -> None:
                 print("📋 **尚未配置任何模型**")
                 print("\n用法: supercc config add --provider <provider_id> <api_key> <model>")
                 print("\n可用供应商: supercc config providers")
-            # action is None 时进入交互菜单
-            if action is None:
-                _run_config_interactive()
             return
 
         models = get_all_models()
@@ -1198,15 +1200,22 @@ def _run_config_command(args) -> None:
                     active_id = mid
                     break
 
+        # 只显示有有效 API key 的模型（过滤掉未配置的）
+        configured_models = {
+            mid: entry for mid, entry in models.items()
+            if entry.env.ANTHROPIC_AUTH_TOKEN
+        }
+        if not configured_models:
+            print("📋 **尚未配置任何模型**")
+            print("\n用法: supercc config add --provider <provider_id> <api_key> <model>")
+            print("\n可用供应商: supercc config providers")
+            return
+
         print("🔀 **已配置的模型**\n")
-        for model_id, entry in models.items():
+        for model_id, entry in configured_models.items():
             print(_fmt_model(model_id, entry, is_active=(model_id == active_id)))
             print()
         print(f"\n当前激活: `{(active_id or '未知')}`")
-
-        # action is None 时进入交互菜单
-        if action is None:
-            _run_config_interactive()
         return
 
     if action == "add":
@@ -1553,13 +1562,12 @@ def main(args=None):
         help="项目工作目录（默认当前目录）。所有 gateway 子命令均支持此参数。",
     )
 
-    gw_install = gateway_subparsers.add_parser("install", parents=[_shared_gw_args], help="Install gateway as a system service (开机自启动)")
     gw_start = gateway_subparsers.add_parser("start", parents=[_shared_gw_args], help="Start gateway (auto-install if not installed)")
+    gw_start.add_argument("--force", action="store_true", help="强制重新安装服务（刷新 Token 等）")
     gw_run = gateway_subparsers.add_parser("run", parents=[_shared_gw_args], help="Run gateway in foreground (实时打印日志)")
     gw_stop = gateway_subparsers.add_parser("stop", parents=[_shared_gw_args], help="Stop gateway")
     gw_status = gateway_subparsers.add_parser("status", parents=[_shared_gw_args], help="Show gateway status")
     gw_restart = gateway_subparsers.add_parser("restart", parents=[_shared_gw_args], help="热重启当前实例")
-    gw_uninstall = gateway_subparsers.add_parser("uninstall", parents=[_shared_gw_args], help="Uninstall gateway and stop")
 
     # pairing
     pairing_parser = subparsers.add_parser("pairing", help="P2P pairing management (approve/revoke users)")
@@ -1630,25 +1638,19 @@ def main(args=None):
 
     if command == "gateway":
         from supercc.gateway.cli import (
-            run_gateway_install,
             run_gateway_start,
             run_gateway_stop,
             run_gateway_status,
-            run_gateway_uninstall,
             run_gateway_run,
             run_gateway_restart,
         )
         action = getattr(args, "gateway_action", None)
-        if action == "install":
-            run_gateway_install()
-        elif action == "start":
-            run_gateway_start()
+        if action == "start":
+            run_gateway_start(force=getattr(args, "force", False))
         elif action == "stop":
             run_gateway_stop()
         elif action == "status":
             run_gateway_status()
-        elif action == "uninstall":
-            run_gateway_uninstall()
         elif action == "run":
             try:
                 run_gateway_run()

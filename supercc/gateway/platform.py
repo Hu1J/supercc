@@ -302,8 +302,10 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
     project_dir = Path(data_dir).resolve().parent
     supercc_path = _resolve_supercc()
+    # 脚本直接调用 gateway run，由 manager.py 的 _spawn_detached 处理进程创建
     script_content = (
         f'@echo off\n'
+        f'cd /d "{project_dir}"\n'
         f'"{supercc_path}" gateway run --working-dir "{project_dir}"\n'
     )
     script_path.parent.mkdir(parents=True, exist_ok=True)
@@ -342,8 +344,47 @@ def install_windows(data_dir: str, project_slug: str) -> None:
 
 
 def stop_windows(data_dir: str, project_slug: str) -> None:
-    """Windows Task Scheduler 任务没有"停止"概念（只在触发时运行）。"""
-    print("⚠️  Windows 不支持 stop（Task Scheduler 任务非持久运行），请使用 uninstall")
+    """删除系统服务并停止运行中的 Gateway 进程。"""
+    # 先删除系统服务（Task Scheduler 任务）
+    uninstall_windows(data_dir, project_slug)
+    # 再停止 Gateway 进程
+    from supercc.gateway.manager import GatewayManager
+    gm = GatewayManager(data_dir)
+    pid = gm._load_pid()
+    if pid is None:
+        print("Gateway 未运行")
+        return
+    try:
+        import os
+        os.kill(pid, 9)  # SIGKILL
+        print(f"✅ Gateway 已停止（PID {pid}）")
+    except ProcessLookupError:
+        print("Gateway 未运行")
+    except PermissionError:
+        print(f"⚠️  无权限终止 PID {pid}，请使用管理员模式")
+    # 清理 PID 文件
+    Path(gm._pid_file).unlink(missing_ok=True)
+
+
+def uninstall_windows(data_dir: str, project_slug: str) -> None:
+    """卸载 Windows Task Scheduler 任务。"""
+    slug = _slug_to_dns_safe(project_slug)
+    task_name = f"SuperCC Main ({slug})"
+    failed = []
+    for variant in [task_name, f"{task_name} (Startup)"]:
+        r = subprocess.run(
+            ["schtasks", "/delete", "/tn", variant, "/f"],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            failed.append(variant)
+    script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
+    script_path.unlink(missing_ok=True)
+    Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
+    if failed:
+        print(f"⚠️  以下任务删除失败: {failed}，但脚本文件已删除")
+    else:
+        print("✅ Gateway 已从 Windows Task Scheduler 卸载")
 
 
 def uninstall_windows(data_dir: str, project_slug: str) -> None:
