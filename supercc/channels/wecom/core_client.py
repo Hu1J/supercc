@@ -799,7 +799,6 @@ class WeComCoreWSClient:
         else:
             # P2P 白名单 + pairing 系统
             user_id = inbound.user_open_id
-            logger.info(f"[WeComCore] P2P check: user_id={user_id}, allowed_users={allowed_users}")
             # 重新加载 config（pairing approve 后 config.json 已更新）
             from supercc.config import reload_config
             cfg = reload_config()
@@ -807,7 +806,7 @@ class WeComCoreWSClient:
             allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
             # 先检查静态白名单（空列表 = 不设限，所有人都走配对检查）
             do_pairing_check = not allowed_users or user_id not in allowed_users
-            logger.info(f"[WeComCore] P2P do_pairing_check={do_pairing_check} (allowed_users={allowed_users}, user_id={user_id})")
+            logger.info(f"[WeComCore] P2P check: user_id={user_id}, allowed_users={allowed_users}, do_pairing_check={do_pairing_check}")
             if do_pairing_check:
                     # 未授权用户，生成 pairing code 并发送
                     try:
