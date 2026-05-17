@@ -513,9 +513,22 @@ class CoreExecutor:
 
                 skill_prompt = (
                     f"你在本次对话中使用了 {total_tool_count} 个工具调用。\n"
-                    "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n"
-                    "如果发现值得技能化的模式，直接调用 MCP 工具来创建或更新技能，"
-                    "不需要问我任何问题。"
+                    "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n\n"
+                    "适合存为 Skill 的场景：\n"
+                    "- 解决了非平凡问题，且解决方法可推广\n"
+                    "- 发现了一种新的工作流程或技巧\n"
+                    "- 克服了错误并找到了正确方法\n"
+                    "- 用户要求记住某个流程\n\n"
+                    "操作步骤：\n"
+                    f"1. 先查看 {skills_dir}/ 目录下已有的 Skill\n"
+                    "2. 把完整内容直接写入 <skill-name>/SKILL.md\n"
+                    "3. 格式：YAML frontmatter (name/description/author/version) + Markdown body\n"
+                    f"4. {skills_dir}/ 本身是一个 Git 仓库。写入后执行：\n"
+                    f"   cd {skills_dir} && git add <skill-name>/ && git commit -m \"<中文 commit message>\"\n\n"
+                    "注意：\n"
+                    "- 只创建真正有价值的 Skill，不要为了'有'而创建\n"
+                    "- 如果有相关 Skill 已存在，优先更新它而不是创建新的\n"
+                    "- 新建和更新不需要确认，发现就直接做\n"
                 )
 
                 # 文本响应：始终记录到日志（不推送）
