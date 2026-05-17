@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-05-17
+
+### Added
+
+- **/update 指令完整实现**：支持检查版本、有更新时推送通知、后台 pip install + restart，无更新时提示已是最新
+- **交互式配置菜单**：supercc config 下三个子菜单（Model/Gateway/Channel）全部重构为一页式交互，跟 onboard 风格一致
+- **Gateway stop 顺序修复**：Linux/mac 上 stop 时必须先删服务再杀实例，stop_linux 补全 disable + daemon-reload
+
+### Fixed
+
+- **Windows gateway status 误报**：改用 OpenProcess API 检测进程存活，修复 detached 进程误报"未运行"的问题
+- **main.py 重复代码 IndentationError**：Channel 配置菜单残留旧代码导致的语法错误
+
+### Changed
+
+- **架构文档化**：README.md 全面更新，反映 Core + Plugin（WS 通信）架构，CLI 指令全部更新为 gateway run/start/stop/restart
+- **supercc config 菜单简化**：Channel 子菜单简化为飞书/企微/返回三选项，已配置项显示"✅ 已配置"
+- **移除过时描述**：删除 /remember /forget 指令描述，修正多模型列表
+
 ## [0.2.13] - 2026-05-09
 
 ### Fixed
