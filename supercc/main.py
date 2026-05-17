@@ -597,31 +597,35 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
     try:
         await stop_event.wait()
     finally:
-        # 1. Cancel plugin tasks
+        # 1. Cancel plugin tasks with timeout
         for task in plugin_tasks:
             if not task.done():
                 task.cancel()
                 try:
-                    await task
+                    await asyncio.wait_for(task, timeout=3.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Plugin task %s did not respond to cancellation, forcing...", task)
                 except asyncio.CancelledError:
                     pass
                 except Exception:
                     pass
-        # Wait 0.5s for plugin graceful shutdown
-        await asyncio.sleep(0.5)
 
         # 2. Cancel cron task
         if 'cron_task' in locals() and not cron_task.done():
             cron_task.cancel()
             try:
-                await cron_task
+                await asyncio.wait_for(cron_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
                 pass
-        await asyncio.sleep(0.5)
 
         # 3. Stop core server
         if core_server:
-            await core_server.stop()
+            try:
+                await asyncio.wait_for(core_server.stop(), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
 
         remove_pid(pid_file)
         logger.info("SuperCC stopped gracefully")
