@@ -96,12 +96,22 @@ async def run_plugin(config, data_dir):
         logger.info("WeCom WS client started")
 
         # 保持进程运行，直到被取消
-        while True:
-            await asyncio.sleep(3600)
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            logger.info("WeCom plugin task cancelled, shutting down...")
+            raise
     finally:
         # 确保退出时关闭 ws_client，停止 daemon 线程
         logger.info("Shutting down WeCom client...")
-        await ws_client.close()
+        try:
+            # 给close一个超时，避免阻塞整个shutdown
+            await asyncio.wait_for(ws_client.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("WeCom client close timeout, forcing...")
+        except Exception as e:
+            logger.warning("Error closing WeCom client: %s", e)
         logger.info("WeCom client shutdown complete")
 
 

@@ -461,8 +461,6 @@ class WeComCoreWSClient:
             logger.info(f"[WeComCore] response for req.id={req_id}, stored={stored}")
             if stored:
                 msg_id, chat_id = stored
-                # 流结束，清理 ws_client 中缓存的 frame
-                self.ws_client.pop_frame(msg_id)
                 # Flush and clean up the stream accumulator for this message
                 if msg_id in self._accumulator_by_msg_id:
                     acc = self._accumulator_by_msg_id.pop(msg_id)
