@@ -58,6 +58,8 @@ class WeComWSClient:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._device_id = uuid.uuid4().hex
         self._thread: Optional[threading.Thread] = None
+        self._daemon_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._shutdown_event: Optional[threading.Event] = None
 
     @property
     def is_connected(self) -> bool:
@@ -292,31 +294,33 @@ class WeComWSClient:
         """Start connection synchronously (non-blocking, schedules tasks in thread)."""
         if self._thread is not None and self._thread.is_alive():
             return  # Already running, ignore subsequent calls
+        self._shutdown_event = threading.Event()
         def _connect():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            self._daemon_loop = loop
             loop.run_until_complete(self.connect())
-            loop.run_forever()
+            # Block until shutdown is set, then exit cleanly
+            self._shutdown_event.wait()
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+            self._daemon_loop = None
         self._thread = threading.Thread(target=_connect, daemon=True)
         self._thread.start()
 
     async def close(self) -> None:
-        """Disconnect from WeCom."""
+        """Disconnect from WeCom and stop the daemon thread cleanly."""
         self._running = False
-        if self._listen_task:
-            self._listen_task.cancel()
-            try:
-                await self._listen_task
-            except asyncio.CancelledError:
-                pass
-            self._listen_task = None
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
-            self._heartbeat_task = None
+        # Signal the daemon thread to stop its event loop
+        if self._shutdown_event is not None:
+            self._shutdown_event.set()
+        # Close the websocket (from daemon's loop via run_coroutine_threadsafe, non-blocking)
+        if self._ws and not self._ws.closed and self._daemon_loop is not None:
+            asyncio.run_coroutine_threadsafe(self._ws.close(), self._daemon_loop)
+        # Wait for daemon thread to exit (it will after ws closes and connect() returns)
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+            self._thread = None
         self._fail_pending_responses(RuntimeError("WeCom client closed"))
         await self._cleanup_ws()
 

@@ -87,12 +87,22 @@ async def run_plugin(config, data_dir):
     ws_client._on_message = core_client.send_message
 
     # 连接到 Core
-    await core_client.connect()
-    logger.info("Connected to core")
+    try:
+        await core_client.connect()
+        logger.info("Connected to core")
 
-    # 启动 WeCom WS 客户端（非阻塞，asyncio.to_thread 避免阻塞主 loop）
-    await asyncio.to_thread(ws_client.start)
-    logger.info("WeCom WS client started")
+        # 启动 WeCom WS 客户端（非阻塞，asyncio.to_thread 避免阻塞主 loop）
+        await asyncio.to_thread(ws_client.start)
+        logger.info("WeCom WS client started")
+
+        # 保持进程运行，直到被取消
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        # 确保退出时关闭 ws_client，停止 daemon 线程
+        logger.info("Shutting down WeCom client...")
+        await ws_client.close()
+        logger.info("WeCom client shutdown complete")
 
 
 async def main():
@@ -107,10 +117,6 @@ async def main():
 
     config = init_config(config_path, data_dir)
     await run_plugin(config, data_dir)
-
-    # 保持进程运行
-    while True:
-        await asyncio.sleep(3600)
 
 
 if __name__ == "__main__":
