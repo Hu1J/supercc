@@ -113,10 +113,53 @@ class WeComChannelConfig:
 
 
 @dataclass
+class TelegramChannelConfig:
+    """Telegram 插件配置。"""
+    enabled: bool = False
+    bot_token: str = ""
+    bot_name: str = "Claude"
+    groups: dict = field(default_factory=dict)
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
+class QQChannelConfig:
+    """QQ 插件配置。"""
+    enabled: bool = False
+    app_id: str = ""
+    app_secret: str = ""
+    bot_openid: str = ""
+    groups: dict = field(default_factory=dict)
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WhatsAppChannelConfig:
+    """WhatsApp 插件配置（需要 Node.js bridge）。"""
+    enabled: bool = False
+    bridge_port: int = 3000
+    session_dir: str = ""
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WeChatChannelConfig:
+    """微信个人（iLink）插件配置。"""
+    enabled: bool = False
+    token: str = ""
+    account_id: str = ""
+    allowed_users: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ChannelsConfig:
     feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
     dingtalk: DingTalkChannelConfig = field(default_factory=DingTalkChannelConfig)
     wecom: WeComChannelConfig = field(default_factory=WeComChannelConfig)
+    telegram: TelegramChannelConfig = field(default_factory=TelegramChannelConfig)
+    qq: QQChannelConfig = field(default_factory=QQChannelConfig)
+    whatsapp: WhatsAppChannelConfig = field(default_factory=WhatsAppChannelConfig)
+    wechat: WeChatChannelConfig = field(default_factory=WeChatChannelConfig)
 
 
 @dataclass
@@ -274,7 +317,15 @@ def load_config(path: str, data_dir: str = "") -> Config:
     wecom_raw["allowed_users"] = wecom_allowed_users
     wecom_cfg = WeComChannelConfig(**wecom_raw)
 
-    channels_cfg = ChannelsConfig(feishu=feishu_cfg, dingtalk=dingtalk_cfg, wecom=wecom_cfg)
+    channels_cfg = ChannelsConfig(
+        feishu=feishu_cfg,
+        dingtalk=dingtalk_cfg,
+        wecom=wecom_cfg,
+        telegram=TelegramChannelConfig(**raw.get("channels", {}).get("telegram", {})),
+        qq=QQChannelConfig(**raw.get("channels", {}).get("qq", {})),
+        whatsapp=WhatsAppChannelConfig(**raw.get("channels", {}).get("whatsapp", {})),
+        wechat=WeChatChannelConfig(**raw.get("channels", {}).get("wechat", {})),
+    )
 
     # Deserialize codex.capture if present
     codex_raw = raw.get("codex") or {}
@@ -412,6 +463,33 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "bot_name": cfg.channels.wecom.bot_name,
                 "groups": cfg.channels.wecom.groups,
                 "allowed_users": cfg.channels.wecom.allowed_users,
+            },
+            "telegram": {
+                "enabled": cfg.channels.telegram.enabled,
+                "bot_token": cfg.channels.telegram.bot_token,
+                "bot_name": cfg.channels.telegram.bot_name,
+                "groups": cfg.channels.telegram.groups,
+                "allowed_users": cfg.channels.telegram.allowed_users,
+            },
+            "qq": {
+                "enabled": cfg.channels.qq.enabled,
+                "app_id": cfg.channels.qq.app_id,
+                "app_secret": cfg.channels.qq.app_secret,
+                "bot_openid": cfg.channels.qq.bot_openid,
+                "groups": cfg.channels.qq.groups,
+                "allowed_users": cfg.channels.qq.allowed_users,
+            },
+            "whatsapp": {
+                "enabled": cfg.channels.whatsapp.enabled,
+                "bridge_port": cfg.channels.whatsapp.bridge_port,
+                "session_dir": cfg.channels.whatsapp.session_dir,
+                "allowed_users": cfg.channels.whatsapp.allowed_users,
+            },
+            "wechat": {
+                "enabled": cfg.channels.wechat.enabled,
+                "token": cfg.channels.wechat.token,
+                "account_id": cfg.channels.wechat.account_id,
+                "allowed_users": cfg.channels.wechat.allowed_users,
             },
         },
         "claude": {
