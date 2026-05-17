@@ -13,7 +13,6 @@ from supercc.channels.feishu.media import save_bytes
 from supercc.channels.common.format import MemoryCardMarker
 from supercc.channels.wecom.client import WeComClient
 from supercc.channels.wecom.core_protocol import incoming_to_inbound
-from wecom_aibot_sdk import generate_req_id
 
 logger = logging.getLogger(__name__)
 
@@ -564,26 +563,20 @@ class WeComCoreWSClient:
             await self.wecom.send_markdown(chat_id, content)
 
     async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
-        """Send text to WeCom with three-level fallback (called by StreamAccumulator)."""
-        # 检测是否包含飞书特有的 card 标记（从 Feishu 迁移的内容）
+        """Send text to WeCom with reply_req_id based three-level fallback."""
         is_card_content = "<at user_id=" in text or "```" in text or "## " in text
 
+        # Try reply via APP_CMD_RESPONSE using stored reply_req_id
         if message_id:
-            frame = self.ws_client.get_frame(message_id)
-            stream_id = generate_req_id("stream")
-            try:
-                if frame:
-                    await self.ws_client.reply_stream(
-                        frame=frame,
-                        stream_id=stream_id,
-                        content=text,
-                        finish=True,
-                    )
+            reply_req_id = self.ws_client.pop_reply_req_id(message_id)
+            if reply_req_id:
+                try:
+                    await self.ws_client.reply_text(reply_req_id=reply_req_id, content=text)
                     return
-            except Exception as e:
-                logger.warning(f"[WeComCore] reply_stream failed: {e}")
+                except Exception as e:
+                    logger.warning(f"[WeComCore] reply_text failed: {e}")
 
-        # 三级降级
+        # Fallback 1: markdown proactive send
         if is_card_content:
             try:
                 await self.wecom.send_template_card(
@@ -596,6 +589,7 @@ class WeComCoreWSClient:
             except Exception:
                 pass
 
+        # Fallback 2: markdown proactive send
         try:
             await self.wecom.send_markdown(chat_id, text)
         except Exception:
