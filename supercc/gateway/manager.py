@@ -54,7 +54,19 @@ class GatewayManager:
             return None
 
     def _is_running(self, pid: int) -> bool:
-        """检查进程是否存活（发送信号 0）。"""
+        """检查进程是否存活。Windows 用 OpenProcess，避免 kill(pid,0) 的权限问题。"""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if handle:
+                    kernel32.CloseHandle(handle)
+                    return True
+                return False
+            except Exception:
+                return False
         try:
             os.kill(pid, 0)
             return True

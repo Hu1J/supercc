@@ -1039,96 +1039,74 @@ def _run_config_channel_interactive(dirty: list) -> None:
 
     feishu = cfg.channels.feishu
     wecom = cfg.channels.wecom
-    feishu_creds = "✅ 已配置" if feishu.app_id else "❌ 未配置"
-    wecom_creds = "✅ 已配置" if wecom.corp_id else "❌ 未配置"
+    feishu_status = "✅ 已配置" if feishu.app_id else "❌ 未配置"
+    wecom_status = "✅ 已配置" if wecom.corp_id else "❌ 未配置"
 
-    while True:
-        choice = questionary.select(
-            "Channel 配置",
-            choices=[
-                questionary.Choice(f"📡  查看状态（飞书: {feishu.enabled}  企微: {wecom.enabled}）", value="status"),
-                questionary.Choice("🔵  飞书凭证：查看/修改", value="feishu_creds"),
-                questionary.Choice("🟢  企微凭证：查看/修改", value="wecom_creds"),
-                questionary.Choice("🔵  飞书：启用 / 禁用", value="feishu_toggle"),
-                questionary.Choice("🟢  企微：启用 / 禁用", value="wecom_toggle"),
-                questionary.Choice("↩️  返回上级", value="back"),
-            ],
-            style=questionary.Style([
-                ("selected", "fg:#00AA00 bold"),
-                ("choice", "fg:#CCCCCC"),
-                ("pointer", "fg:#00AA00 bold"),
-            ]),
-        ).ask()
-        if choice == "back" or choice is None:
-            break
-        elif choice == "status":
-            print(f"飞书:     enabled={feishu.enabled}  {feishu_creds}")
-            print(f"企业微信: enabled={wecom.enabled}  {wecom_creds}")
-            print()
-        elif choice == "feishu_creds":
-            if not feishu.app_id:
-                print("⚠️  飞书尚未配置凭证，请先运行 onboard 完成初始配置\n")
-                continue
-            print(f"\n飞书凭证（当前）：")
-            print(f"  App ID:     {feishu.app_id}")
-            print(f"  App Secret: {'已设置' if feishu.app_secret else '❌ 未设置'}")
-            print()
-            edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
-            if not edit:
-                continue
-            app_id = questionary.text("App ID（回车保持当前）", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-            if not app_id:
-                print("⚠️  App ID 不能为空\n")
-                continue
-            app_secret = questionary.password("App Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-            feishu.app_id = app_id
-            if app_secret:
-                feishu.app_secret = app_secret
-            write_config(cfg)
-            dirty[0] = True
-            print("✅ 飞书凭证已保存（重启后生效）\n")
-        elif choice == "wecom_creds":
-            if not wecom.corp_id:
-                print("⚠️  企业微信尚未配置凭证，请先运行 onboard 完成初始配置\n")
-                continue
-            print(f"\n企业微信凭证（当前）：")
-            print(f"  Corp ID:    {wecom.corp_id}")
-            print(f"  Agent ID:   {wecom.agent_id or '(未设置)'}")
-            print(f"  Secret:     {'已设置' if wecom.secret else '❌ 未设置'}")
-            print()
-            edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
-            if not edit:
-                continue
-            corp_id = questionary.text("Corp ID（回车保持当前）", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-            if not corp_id:
-                print("⚠️  Corp ID 不能为空\n")
-                continue
-            agent_id = questionary.text("Agent ID（回车保持当前）", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-            secret = questionary.password("Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-            wecom.corp_id = corp_id
-            if agent_id:
-                wecom.agent_id = agent_id
-            if secret:
-                wecom.secret = secret
-            write_config(cfg)
-            dirty[0] = True
-            print(f"✅ 企业微信凭证已保存（重启后生效）\n")
-        elif choice == "feishu_toggle":
-            if not feishu.app_id:
-                print("⚠️  飞书未配置凭证（app_id 为空），无法启用。请先运行 onboard\n")
-                continue
-            feishu.enabled = not feishu.enabled
-            write_config(cfg)
-            dirty[0] = True
-            print(f"✅ 飞书已{'启用' if feishu.enabled else '禁用'}（重启后生效）\n")
-        elif choice == "wecom_toggle":
-            if not wecom.corp_id:
-                print("⚠️  企业微信未配置凭证（corp_id 为空），无法启用。请先运行 onboard\n")
-                continue
-            wecom.enabled = not wecom.enabled
-            write_config(cfg)
-            dirty[0] = True
-            print(f"✅ 企业微信已{'启用' if wecom.enabled else '禁用'}（重启后生效）\n")
+    choice = questionary.select(
+        "Channel 配置",
+        choices=[
+            questionary.Choice(f"📡  飞书 {feishu_status}", value="feishu"),
+            questionary.Choice(f"💬  企业微信 {wecom_status}", value="wecom"),
+            questionary.Choice("↩️  返回上级", value="back"),
+        ],
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask()
+    if choice == "back" or choice is None:
+        return
+    elif choice == "feishu":
+        if not feishu.app_id:
+            print("⚠️  飞书尚未配置，请先运行 onboard 完成初始配置\n")
+            return
+        print(f"\n飞书凭证（当前）：")
+        print(f"  App ID:     {feishu.app_id}")
+        print(f"  App Secret: {'已设置' if feishu.app_secret else '❌ 未设置'}")
+        print(f"  启用状态:   {feishu.enabled}")
+        print()
+        edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
+        if not edit:
+            return
+        app_id = questionary.text("App ID（回车保持当前）", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+        if not app_id:
+            print("⚠️  App ID 不能为空\n")
+            return
+        app_secret = questionary.password("App Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+        feishu.app_id = app_id
+        if app_secret:
+            feishu.app_secret = app_secret
+        write_config(cfg)
+        dirty[0] = True
+        print("✅ 飞书凭证已保存（重启后生效）\n")
+    elif choice == "wecom":
+        if not wecom.corp_id:
+            print("⚠️  企业微信尚未配置，请先运行 onboard 完成初始配置\n")
+            return
+        print(f"\n企业微信凭证（当前）：")
+        print(f"  Corp ID:    {wecom.corp_id}")
+        print(f"  Agent ID:   {wecom.agent_id or '(未设置)'}")
+        print(f"  Secret:     {'已设置' if wecom.secret else '❌ 未设置'}")
+        print(f"  启用状态:   {wecom.enabled}")
+        print()
+        edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
+        if not edit:
+            return
+        corp_id = questionary.text("Corp ID（回车保持当前）", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+        if not corp_id:
+            print("⚠️  Corp ID 不能为空\n")
+            return
+        agent_id = questionary.text("Agent ID（回车保持当前）", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+        secret = questionary.password("Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+        wecom.corp_id = corp_id
+        if agent_id:
+            wecom.agent_id = agent_id
+        if secret:
+            wecom.secret = secret
+        write_config(cfg)
+        dirty[0] = True
+        print("✅ 企业微信凭证已保存（重启后生效）\n")
 
 
 def _run_config_command(args) -> None:
