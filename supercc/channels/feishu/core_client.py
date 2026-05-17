@@ -328,6 +328,14 @@ class FeishuCoreWSClient:
             await self._handle_cron_progress(params)
         elif method == "cron_result":
             await self._handle_cron_result(params)
+        elif method == Event.NOTIFICATION:
+            # 主动通知（如上下文超限提示）
+            chat_id = params.get("chat_id", "")
+            msg_id = params.get("message_id", "")
+            content = params.get("content", "")
+            if content:
+                formatted = self.formatter.format_text(content)
+                await self._safe_send(chat_id, msg_id, formatted)
 
     async def _handle_command_progress(self, params: dict):
         """渲染 restart/update 步骤进度卡片，发到飞书。

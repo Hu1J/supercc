@@ -196,15 +196,8 @@ class CoreExecutor:
             if msg.content:
                 accumulated.append(msg.content)
                 logger.info("[stream] text: %s", msg.content[:200])
-                # Long Context Warning：检测上下文溢出关键词
-                content_lower = msg.content.lower()
-                if (
-                    "too long" in content_lower
-                    or "超出" in msg.content
-                    or "context window" in content_lower
-                    or "context_length" in content_lower
-                    or "max_tokens" in content_lower
-                ):
+                # Long Context Warning：严格检测 "Prompt is too long"
+                if "Prompt is too long" in msg.content:
                     _stream_too_long[0] = True
                 if _stream_sender:
                     chunk = OutboundMessage(
@@ -356,6 +349,17 @@ class CoreExecutor:
             # 触发后台任务（异步，不阻塞主响应返回）
             # 用原始 result 作为记忆回顾的上下文
             asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count, inbound.message_id, inbound.user_open_id or ""))
+
+        # 上下文超限提示：检测到 "Prompt is too long" 后主动发消息
+        if _stream_too_long[0] and push_fn:
+            too_long_msg = OutboundMessage(
+                event=Event.NOTIFICATION,
+                session_key=key,
+                message_id=inbound.message_id,
+                content="当前上下文已满，请发 /new 指令开启新对话",
+                message_type=MessageType.TEXT,
+            )
+            await push_fn(too_long_msg)
 
         return result_msg
 
@@ -523,8 +527,9 @@ class CoreExecutor:
                     f"1. 先查看 {skills_dir}/ 目录下已有的 Skill\n"
                     "2. 把完整内容直接写入 <skill-name>/SKILL.md\n"
                     "3. 格式：YAML frontmatter (name/description/author/version) + Markdown body\n"
-                    f"4. {skills_dir}/ 本身是一个 Git 仓库。写入后执行：\n"
-                    f"   cd {skills_dir} && git add <skill-name>/ && git commit -m \"<中文 commit message>\"\n\n"
+                    f"4. {skills_dir}/ 是一个本地 Git 仓库（没有 remote，不支持 push）。写入后执行：\n"
+                    f"   cd {skills_dir} && git add <skill-name>/ && git commit -m \"<中文 commit message>\"\n"
+                    "   **不要执行 git push**——此仓库只有本地历史，没有远程仓库。\n\n"
                     "注意：\n"
                     "- 只创建真正有价值的 Skill，不要为了'有'而创建\n"
                     "- 如果有相关 Skill 已存在，优先更新它而不是创建新的\n"

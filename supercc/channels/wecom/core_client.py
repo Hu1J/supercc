@@ -513,6 +513,12 @@ class WeComCoreWSClient:
             await self._handle_cron_progress(params)
         elif method == "cron_result":
             await self._handle_cron_result(params)
+        elif method == Event.NOTIFICATION:
+            # 主动通知（如上下文超限提示）
+            chat_id = params.get("chat_id", "")
+            content = params.get("content", "")
+            if content:
+                await self.wecom.send_text(chat_id, content)
 
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为企业微信格式并发送。"""

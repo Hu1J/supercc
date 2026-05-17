@@ -276,3 +276,4 @@ class Event:
     PONG = "pong"
     WORKER_STATUS = "worker_status"
     BACKGROUND_COMPLETE = "background_complete"  # SkillNudge/Memory Review 等后台任务完成通知
+    NOTIFICATION = "notification"  # 主动通知（如上下文超限提示）
