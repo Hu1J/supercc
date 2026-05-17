@@ -58,8 +58,9 @@ async def generate_qr_code() -> tuple[str, str]:
     Returns:
         (scode, auth_url)
     """
-    plat = _get_plat_code()
-    url = f"{QR_GENERATE_URL}?source=wecom-cli&plat={plat}"
+    # source=hermes 与 OpenClaw/Hermes agent 保持一致，支持企业微信直接扫码
+    # source=wecom-cli 需要微信辅助扫码，已废弃
+    url = f"{QR_GENERATE_URL}?source=hermes"
     raw = await _https_get(url)
     resp = _parse_json(raw)
     scode = resp.get("data", {}).get("scode", "")
@@ -258,7 +259,7 @@ def run_wecom_install_flow(config_path: str = "config.json", bypass_accepted: bo
         else:
             print("请使用企业微信扫码以下二维码：\n")
             render_qr_ascii(auth_url)
-            print(f"也可打开二维码链接扫码: https://work.weixin.qq.com/ai/qc/gen?source=wecom-cli&scode={scode}")
+            print(f"也可打开二维码链接扫码: https://work.weixin.qq.com/ai/qc/gen?source=hermes&scode={scode}")
             print("等待扫码中...\n")
 
             try:

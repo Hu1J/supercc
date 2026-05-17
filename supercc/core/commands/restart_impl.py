@@ -369,79 +369,39 @@ def check_version() -> tuple[str, str]:
         raise RestartError(f"检查版本失败: {e}")
 
 
-# Step labels for update CLI display
-_UPDATE_CLI_STEP_LABELS = [
-    "检查更新", "检查新版本", "下载完成",
-    "准备重启", "清理文件锁", "启动新实例", "检查新实例", "重启完成",
-]
-
-# Step labels for update Feishu messages
-_UPDATE_FEISHU_STEP_LABELS = [
-    "📋 检查更新", "📦 检查新版本", "✅ 下载完成",
-    "🛑 准备重启", "🧹 清理文件锁", "🚀 启动新实例", "🔍 检查新实例", "✅ 重启完成",
-]
-
-
 @dataclass
 class UpdateStep:
     """A single step in the update process, yielded as it happens."""
-    step: int          # 1–8
-    total: int         # always 8
-    label: str         # short label shown to user
-    status: str        # "done" | "final" | "skip"
-    detail: str = ""   # extra info
+    step: int
+    total: int
+    label: str
+    status: str        # "done" | "skip"
+    detail: str = ""
     success: bool = False
-    new_pid: Optional[int] = None
 
 
 def _do_update():
-    """Check version, install update if needed, restart.
-
-    Yields UpdateStep.
-    """
+    """检查版本，有更新则 pip install，然后 gateway restart。"""
     import packaging.version
 
-    # Step 1: 检查更新
     current_ver, latest_ver = check_version()
-    yield UpdateStep(
-        step=1, total=8,
-        label=_UPDATE_CLI_STEP_LABELS[0],
-        status="done",
-        detail=f"{current_ver} → {latest_ver}",
-    )
 
     has_update = packaging.version.parse(latest_ver) > packaging.version.parse(current_ver)
-
-    if has_update:
-        package = "pysupercc"
-        yield UpdateStep(step=2, total=8, label=_UPDATE_CLI_STEP_LABELS[1], status="done",
-                        detail=f"{current_ver} → {latest_ver}")
-        _pip_install(package)
-    else:
-        # 已是最新，无需更新
-        yield UpdateStep(
-            step=2, total=8,
-            label=_UPDATE_CLI_STEP_LABELS[1],
-            status="skip",
-            detail=current_ver,
-            success=True,
-        )
+    if not has_update:
+        yield UpdateStep(step=1, total=3, label="已是最新", status="skip",
+                        detail=current_ver, success=True)
         return
 
-    # Step 3: 下载完成
-    yield UpdateStep(step=3, total=8, label=_UPDATE_CLI_STEP_LABELS[2], status="done")
+    yield UpdateStep(step=1, total=3, label="检查更新", status="done",
+                    detail=f"{current_ver} → {latest_ver}")
 
-    # Step 4-8: 复用 _restart_to（偏移 3）
-    for restart_step in _restart_to(package=package):
-        yield UpdateStep(
-            step=restart_step.step + 3,
-            total=8,
-            label=_UPDATE_CLI_STEP_LABELS[restart_step.step + 2],
-            status=restart_step.status,
-            detail=restart_step.detail,
-            success=restart_step.success,
-            new_pid=restart_step.new_pid,
-        )
+    _pip_install("pysupercc")
+    yield UpdateStep(step=2, total=3, label="下载安装", status="done")
+
+    from supercc.gateway.cli import run_gateway_restart
+    run_gateway_restart()
+    yield UpdateStep(step=3, total=3, label="重启完成", status="done",
+                    success=True)
 
 
 def _pip_install(package: str) -> None:
@@ -515,100 +475,6 @@ async def run_update(feishu: "FeishuClient",
     return True
 
 
-def run_update_cli(feishu=None, chat_id: str | None = None, project_path: str | None = None):
-    """CLI version of update — yields UpdateStep, optionally sends Feishu notifications.
-
-    Args:
-        feishu: FeishuClient instance (optional, for notifications)
-        chat_id: Feishu chat_id (optional, required if feishu is provided)
-        project_path: Target project directory to switch to before updating.
-                      If None, updates in current directory.
-
-    When status == "skip", sends "already latest" card and returns immediately
-    without sending progress cards.
-    """
-    import asyncio
-    import logging
-    logger = logging.getLogger(__name__)
-
-    async def _run():
-        if project_path:
-            os.chdir(project_path)
-
-        if not feishu or not chat_id:
-            for step in _do_update():
-                yield step
-            return
-
-        async def _send(card_md: str):
-            try:
-                await feishu.send_interactive_reply(chat_id, card_md, "")
-            except Exception:
-                pass  # non-fatal, CLI continues
-
-        # Materialize steps to check final status before sending any cards
-        steps = list(_do_update())
-
-        if steps and steps[-1].status == "skip":
-            # Already latest
-            initial = f"## 🔄 正在更新\n\n⏳ 检查更新，请稍候..."
-            await _send(initial)
-            step1_detail = next(
-                (s.detail for s in steps if s.step == 1 and s.detail),
-                steps[-1].detail
-            )
-            card = (
-                f"## ✅ 已是最新版本\n\n"
-                f"**当前版本**: `{step1_detail}`\n\n"
-                f"无需更新，继续使用吧 🎉"
-            )
-            await _send(card)
-            return
-
-        # Normal update flow: send initial card then process each step
-        initial = f"## 🔄 正在更新\n\n⏳ 检查更新，请稍候..."
-        await _send(initial)
-
-        for step_obj in steps:
-            bar = "▓" * step_obj.step + "░" * (8 - step_obj.step)
-            label = (_UPDATE_FEISHU_STEP_LABELS[step_obj.step - 1]
-                     if step_obj.step <= len(_UPDATE_FEISHU_STEP_LABELS)
-                     else f"步骤 {step_obj.step}")
-
-            if step_obj.status == "final":
-                card = (
-                    f"## ✅ 更新完成\n\n"
-                    f"**当前目录**: `{os.getcwd()}`\n"
-                    f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                    f"🎉 SuperCC 已更新，可以在飞书中继续对话了。"
-                )
-                await _send(card)
-            else:
-                detail_line = (
-                    f"**版本**: `{step_obj.detail}`\n\n"
-                    if step_obj.detail else ""
-                )
-                card = (
-                    f"## 🔄 正在更新\n\n"
-                    f"{detail_line}"
-                    f"{bar} `{step_obj.step}/8` {label}\n\n"
-                    f"⏳ 正在更新，请稍候..."
-                )
-                await _send(card)
-            yield step_obj
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        gen = _run()
-        try:
-            while True:
-                yielded = loop.run_until_complete(gen.__anext__())
-                yield yielded
-        except StopAsyncIteration:
-            pass
-    finally:
-        loop.close()
 
 
 def _cleanup_and_replace(event: str, project_path: str = "") -> None:

@@ -496,7 +496,7 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
 
     # 企业微信
     _wecom_cfg = getattr(config.channels, "wecom", None)
-    if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "corp_id", ""):
+    if _wecom_cfg and getattr(_wecom_cfg, "enabled", False) and getattr(_wecom_cfg, "bot_id", ""):
         task = asyncio.create_task(
             _run_plugin_with_restart("wecom", config, data_dir),
             name="wecom-plugin"
@@ -755,8 +755,8 @@ def _run_config_interactive() -> None:
             "SuperCC 配置",
             choices=[
                 questionary.Choice("🔀  模型", value="model", description="添加/切换/删除模型"),
-                questionary.Choice("🌐  Gateway", value="gateway", description="监听地址/端口/认证配置"),
-                questionary.Choice("💬  Channel", value="channel", description="飞书/企微插件启用状态、凭证"),
+                questionary.Choice("🌐  网关", value="gateway", description="监听地址/端口/认证配置"),
+                questionary.Choice("💬  聊天频道", value="channel", description="飞书/企微插件启用状态、凭证"),
                 questionary.Choice("↩️  继续", value="continue"),
             ],
             style=questionary.Style([
@@ -1128,8 +1128,8 @@ def _run_config_channel_interactive(dirty: list) -> None:
 
     feishu = cfg.channels.feishu
     wecom = cfg.channels.wecom
-    feishu_status = "✅ 已配置" if feishu.app_id else "❌ 未配置"
-    wecom_status = "✅ 已配置" if wecom.corp_id else "❌ 未配置"
+    feishu_status = "已配置" if feishu.app_id else "未配置"
+    wecom_status = "已配置" if wecom.bot_id else "未配置"
 
     choice = questionary.select(
         "Channel 配置",
@@ -1175,7 +1175,7 @@ def _run_config_channel_interactive(dirty: list) -> None:
             if sub == "reconfigure":
                 app_id = questionary.text("App ID", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
                 if not app_id:
-                    print("⚠️  App ID 不能为空")
+                    print("App ID 不能为空")
                     return
                 app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
                 feishu.app_id = app_id
@@ -1196,7 +1196,7 @@ def _run_config_channel_interactive(dirty: list) -> None:
             return
 
     if choice == "wecom":
-        if wecom.corp_id:
+        if wecom.bot_id:
             sub = questionary.select(
                 "企业微信已配置",
                 choices=[
@@ -1214,6 +1214,8 @@ def _run_config_channel_interactive(dirty: list) -> None:
                     return
                 wecom.corp_id = ""
                 wecom.agent_id = ""
+                wecom.corp_secret = ""
+                wecom.bot_id = ""
                 wecom.secret = ""
                 wecom.enabled = False
                 write_config(cfg)
@@ -1223,7 +1225,7 @@ def _run_config_channel_interactive(dirty: list) -> None:
             if sub == "reconfigure":
                 corp_id = questionary.text("Corp ID", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
                 if not corp_id:
-                    print("⚠️  Corp ID 不能为空")
+                    print("Corp ID 不能为空")
                     return
                 agent_id = questionary.text("Agent ID", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
                 secret = questionary.password("Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
@@ -1517,7 +1519,7 @@ def _run_config_command(args) -> None:
 
         if channel_action is None or channel_action == "status":
             feishu_creds = "✅ 已配置" if feishu.app_id else "❌ 未配置"
-            wecom_creds = "✅ 已配置" if wecom.corp_id else "❌ 未配置"
+            wecom_creds = "✅ 已配置" if wecom.bot_id else "❌ 未配置"
             print(f"飞书:      enabled={feishu.enabled}  {feishu_creds}")
             print(f"企业微信:  enabled={wecom.enabled}  {wecom_creds}")
             print()
@@ -1538,8 +1540,8 @@ def _run_config_command(args) -> None:
             if channel_name == "feishu" and not channel.app_id:
                 print("❌ 飞书未配置凭证（app_id 为空），无法启用。请先运行 onboard")
                 return
-            if channel_name == "wecom" and not channel.corp_id:
-                print("❌ 企业微信未配置凭证（corp_id 为空），无法启用。请先运行 onboard")
+            if channel_name == "wecom" and not channel.bot_id:
+                print("❌ 企业微信未配置凭证（bot_id 为空），无法启用。请先运行 onboard")
                 return
             channel.enabled = True
             write_config(cfg)
@@ -1726,19 +1728,17 @@ def main(args=None):
     command = args.command
 
     if command == "update":
-        from supercc.core.commands.restart_impl import run_update_cli, RestartError as UpdateErr
+        from supercc.core.commands.restart_impl import _do_update, RestartError as UpdateErr
         try:
-            for step in run_update_cli(None):
-                bar = "━" * (step.step - 1) + "▓" + "░" * (step.total - step.step)
-                if step.status == "skip":
-                    print(f"✅ 当前版本 {step.detail} 已是最新")
-                    return
-                if step.status == "final":
-                    print(f"\r[{bar}] ✓ {step.label} {step.detail}")
-                else:
+            steps = list(_do_update())
+            if steps and steps[-1].status == "skip":
+                print(f"✅ 当前版本 {steps[-1].detail} 已是最新")
+                return
+            for step in steps:
+                if step.status == "done":
                     detail_str = f"  {step.detail}" if step.detail else ""
-                    print(f"\r[{bar}] {step.label}...{detail_str}")
-            print()
+                    print(f"  {step.label}...{detail_str}")
+            print("✅ 更新完成")
             import os as _os
             _os._exit(0)
         except UpdateErr as e:

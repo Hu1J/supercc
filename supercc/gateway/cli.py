@@ -116,14 +116,6 @@ def run_gateway_run() -> None:
 
 
 def run_gateway_restart() -> None:
-    """gateway restart 子命令：热重启当前实例。"""
-    import sys
-    from supercc.core.commands.restart_impl import run_restart_cli
-    try:
-        for step in run_restart_cli(None):
-            print(f"[{step.step}/{step.total}] {step.label}: {step.detail or ''}")
-            if step.status == "final":
-                break
-    except Exception as e:
-        print(f"Restart failed: {e}", file=sys.stderr)
-        sys.exit(1)
+    """gateway restart 子命令：停止后重新启动。"""
+    run_gateway_stop()
+    run_gateway_start()
