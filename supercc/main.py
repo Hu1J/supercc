@@ -473,6 +473,14 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
                     from supercc.channels.feishu.__main__ import run_plugin as _run
                 elif name == "wecom":
                     from supercc.channels.wecom.__main__ import run_plugin as _run
+                elif name == "telegram":
+                    from supercc.channels.telegram.__main__ import run_plugin as _run
+                elif name == "qq":
+                    from supercc.channels.qq.__main__ import run_plugin as _run
+                elif name == "whatsapp":
+                    from supercc.channels.whatsapp.__main__ import run_plugin as _run
+                elif name == "wechat":
+                    from supercc.channels.wechat.__main__ import run_plugin as _run
                 await _run(config, data_dir)
             except asyncio.CancelledError:
                 raise  # 有序关闭时会被外层 cancel，不继续重启
@@ -503,6 +511,46 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         )
         plugin_tasks.append(task)
         logger.info("[Bridge] WeCom plugin started (async task)")
+
+    # Telegram
+    _telegram_cfg = getattr(config.channels, "telegram", None)
+    if _telegram_cfg and getattr(_telegram_cfg, "enabled", False) and getattr(_telegram_cfg, "bot_token", ""):
+        task = asyncio.create_task(
+            _run_plugin_with_restart("telegram", config, data_dir),
+            name="telegram-plugin"
+        )
+        plugin_tasks.append(task)
+        logger.info("[Bridge] Telegram plugin started (async task)")
+
+    # QQ
+    _qq_cfg = getattr(config.channels, "qq", None)
+    if _qq_cfg and getattr(_qq_cfg, "enabled", False) and getattr(_qq_cfg, "app_id", ""):
+        task = asyncio.create_task(
+            _run_plugin_with_restart("qq", config, data_dir),
+            name="qq-plugin"
+        )
+        plugin_tasks.append(task)
+        logger.info("[Bridge] QQ plugin started (async task)")
+
+    # WhatsApp
+    _whatsapp_cfg = getattr(config.channels, "whatsapp", None)
+    if _whatsapp_cfg and getattr(_whatsapp_cfg, "enabled", False) and getattr(_whatsapp_cfg, "session_dir", ""):
+        task = asyncio.create_task(
+            _run_plugin_with_restart("whatsapp", config, data_dir),
+            name="whatsapp-plugin"
+        )
+        plugin_tasks.append(task)
+        logger.info("[Bridge] WhatsApp plugin started (async task)")
+
+    # 微信个人
+    _wechat_cfg = getattr(config.channels, "wechat", None)
+    if _wechat_cfg and getattr(_wechat_cfg, "enabled", False) and getattr(_wechat_cfg, "token", ""):
+        task = asyncio.create_task(
+            _run_plugin_with_restart("wechat", config, data_dir),
+            name="wechat-plugin"
+        )
+        plugin_tasks.append(task)
+        logger.info("[Bridge] WeChat plugin started (async task)")
 
     # ── 首次使用提示 ────────────────────────────────────────────────────────
     from supercc.core.models.model_config import has_project_model_config
@@ -1128,14 +1176,26 @@ def _run_config_channel_interactive(dirty: list) -> None:
 
     feishu = cfg.channels.feishu
     wecom = cfg.channels.wecom
+    telegram = cfg.channels.telegram
+    qq = cfg.channels.qq
+    whatsapp = cfg.channels.whatsapp
+    wechat = cfg.channels.wechat
     feishu_status = "已配置" if feishu.app_id else "未配置"
     wecom_status = "已配置" if wecom.bot_id else "未配置"
+    telegram_status = "已配置" if telegram.bot_token else "未配置"
+    qq_status = "已配置" if qq.app_id else "未配置"
+    whatsapp_status = "已配置" if whatsapp.session_dir else "未配置"
+    wechat_status = "已配置" if wechat.token else "未配置"
 
     choice = questionary.select(
         "Channel 配置",
         choices=[
             questionary.Choice("📡  飞书 " + feishu_status, value="feishu"),
             questionary.Choice("💬  企业微信 " + wecom_status, value="wecom"),
+            questionary.Choice("📡  Telegram " + telegram_status, value="telegram"),
+            questionary.Choice("📡  QQ " + qq_status, value="qq"),
+            questionary.Choice("📡  WhatsApp " + whatsapp_status, value="whatsapp"),
+            questionary.Choice("📡  微信 " + wechat_status, value="wechat"),
             questionary.Choice("↩️  返回上级", value="back"),
         ],
         style=questionary.Style([
@@ -1249,6 +1309,175 @@ def _run_config_channel_interactive(dirty: list) -> None:
             except Exception as e:
                 print(f"⚠️  企业微信配置出错：{e}\n")
             return
+
+    if choice == "telegram":
+        if telegram.bot_token:
+            sub = questionary.select(
+                "Telegram 已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除 Telegram 配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                telegram.bot_token = ""
+                telegram.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ Telegram 配置已删除")
+                return
+            if sub == "reconfigure":
+                bot_token = questionary.password("Bot Token", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+                if not bot_token:
+                    print("Bot Token 不能为空")
+                    return
+                telegram.bot_token = bot_token
+                telegram.enabled = True
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ Telegram 凭证已保存（重启后生效）")
+                return
+        else:
+            bot_token = questionary.password("Bot Token（向 @BotFather 申请）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            if not bot_token:
+                print("Bot Token 不能为空")
+                return
+            telegram.bot_token = bot_token
+            telegram.enabled = True
+            write_config(cfg)
+            dirty[0] = True
+            print("✅ Telegram 凭证已保存（重启后生效）")
+        return
+
+    if choice == "qq":
+        if qq.app_id:
+            sub = questionary.select(
+                "QQ 已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除 QQ 配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                qq.app_id = ""
+                qq.app_secret = ""
+                qq.bot_openid = ""
+                qq.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ QQ 配置已删除")
+                return
+            if sub == "reconfigure":
+                app_id = questionary.text("App ID", default=qq.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+                app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+                if not app_id or not app_secret:
+                    print("App ID 和 App Secret 不能为空")
+                    return
+                qq.app_id = app_id
+                qq.app_secret = app_secret
+                qq.enabled = True
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ QQ 凭证已保存（重启后生效）")
+                return
+        else:
+            print("\n请在 QQ 开放平台（https://q.qq.com）创建应用获取 App ID 和 App Secret\n")
+            app_id = questionary.text("App ID", default="", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            if not app_id or not app_secret:
+                print("App ID 和 App Secret 不能为空")
+                return
+            qq.app_id = app_id
+            qq.app_secret = app_secret
+            qq.enabled = True
+            write_config(cfg)
+            dirty[0] = True
+            print("✅ QQ 凭证已保存（重启后生效）")
+        return
+
+    if choice == "whatsapp":
+        if whatsapp.session_dir:
+            sub = questionary.select(
+                "WhatsApp 已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除 WhatsApp 配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                whatsapp.session_dir = ""
+                whatsapp.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ WhatsApp 配置已删除")
+                return
+            if sub == "reconfigure":
+                print("WhatsApp 配置变更请参考文档重新扫码")
+                return
+        else:
+            print("\nWhatsApp 需要启动后扫码配置，请先安装并启动\n")
+            session_dir = questionary.text("Session 存储目录", default=str(Path.home() / ".supercc" / "whatsapp-session"), style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            if not session_dir:
+                print("Session 目录不能为空")
+                return
+            whatsapp.session_dir = session_dir
+            whatsapp.enabled = True
+            write_config(cfg)
+            dirty[0] = True
+            print("✅ WhatsApp 配置已保存（重启后请运行 supercc gateway run 并扫码）")
+        return
+
+    if choice == "wechat":
+        if wechat.token:
+            sub = questionary.select(
+                "微信已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除微信配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                wechat.token = ""
+                wechat.account_id = ""
+                wechat.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ 微信配置已删除")
+                return
+            if sub == "reconfigure":
+                print("微信配置变更请参考文档重新扫码")
+                return
+        else:
+            print("\n微信个人账号需要扫码登录，请参考文档配置\n")
+        return
 
 
 

@@ -458,6 +458,7 @@ class WeComCoreWSClient:
         if "id" in data:
             req_id = str(data.get("id"))
             stored = self._pending_message_ids.pop(req_id, None)
+            logger.info(f"[WeComCore] response for req.id={req_id}, stored={stored}")
             if stored:
                 msg_id, chat_id = stored
                 # 流结束，清理 ws_client 中缓存的 frame
@@ -480,6 +481,7 @@ class WeComCoreWSClient:
             is_group = extra.get("is_group_chat", False)
             sender_id = extra.get("user_open_id", "")
             session_info = extra.get("session_info", "")
+            logger.info(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
 
             # ── 群聊 mention：追加 @userid 纯文本 ──────────────────────────────
             if is_group and sender_id:
@@ -566,9 +568,12 @@ class WeComCoreWSClient:
         """Send text to WeCom with reply_req_id based three-level fallback."""
         is_card_content = "<at user_id=" in text or "```" in text or "## " in text
 
+        logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
+
         # Try reply via APP_CMD_RESPONSE using stored reply_req_id
         if message_id:
             reply_req_id = self.ws_client.pop_reply_req_id(message_id)
+            logger.info(f"[WeComCore] pop_reply_req_id({message_id[:20]}) = {reply_req_id[:20] if reply_req_id else 'None'}")
             if reply_req_id:
                 try:
                     await self.ws_client.reply_text(reply_req_id=reply_req_id, content=text)
@@ -933,11 +938,15 @@ class WeComCoreWSClient:
             },
         )
 
+        logger.info(f"[WeComCore] send_message to core: req.id={req.id}, message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, content={inbound.content[:50] if inbound.content else 'None'}")
+
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
+        logger.info(f"[WeComCore] stored pending: req.id={req.id} -> (message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, chat_id={inbound.session_key.chat_id})")
         await self._ws.send(json.dumps(req.to_dict()))
         result = await future
+        logger.info(f"[WeComCore] send_message result: {str(result)[:100] if result else 'None'}")
         # restart/update 首次确认消息
         if result:
             inner = result.get("result", result)

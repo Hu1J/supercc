@@ -275,9 +275,14 @@ class WeComWSClient:
         msg_id = str(body.get("msgid") or self._payload_req_id(payload) or uuid.uuid4().hex)
         req_id = self._payload_req_id(payload)
 
+        logger.info(f"[WeComWS] _on_message: msg_id={msg_id[:20] if msg_id else 'None'}, req_id={req_id[:20] if req_id else 'None'}, cmd={payload.get('cmd')}")
+
         # Store reply_req_id for this message
         if msg_id and req_id:
             self._reply_req_ids[msg_id] = req_id
+            logger.info(f"[WeComWS] stored _reply_req_ids[{msg_id[:20]}] = {req_id[:20]}")
+        else:
+            logger.warning(f"[WeComWS] msg_id or req_id is empty, skipping storage. msg_id={msg_id}, req_id={req_id}")
 
         if self._on_message:
             await self._on_message(body)
