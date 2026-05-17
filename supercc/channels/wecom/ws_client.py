@@ -1,9 +1,11 @@
 """企业微信 WebSocket 客户端（aiohttp 直连实现，替代 wecom-aibot-sdk-python）。"""
 from __future__ import annotations
 
+import aiohttp
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Callable, Awaitable, Optional
 
@@ -55,6 +57,7 @@ class WeComWSClient:
         self._listen_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._device_id = uuid.uuid4().hex
+        self._thread: Optional[threading.Thread] = None
 
     @property
     def is_connected(self) -> bool:
@@ -82,7 +85,6 @@ class WeComWSClient:
 
     async def _open_connection(self) -> None:
         """Open and authenticate websocket connection."""
-        import aiohttp
         await self._cleanup_ws()
         self._session = aiohttp.ClientSession(trust_env=True)
         self._ws = await self._session.ws_connect(
@@ -288,14 +290,15 @@ class WeComWSClient:
 
     def start(self) -> None:
         """Start connection synchronously (non-blocking, schedules tasks in thread)."""
-        import threading
+        if self._thread is not None and self._thread.is_alive():
+            return  # Already running, ignore subsequent calls
         def _connect():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self.connect())
             loop.run_forever()
-        t = threading.Thread(target=_connect, daemon=True)
-        t.start()
+        self._thread = threading.Thread(target=_connect, daemon=True)
+        self._thread.start()
 
     async def close(self) -> None:
         """Disconnect from WeCom."""
