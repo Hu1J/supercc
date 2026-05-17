@@ -35,7 +35,7 @@
 标准 cron 表达式，精准定时触发 AI 执行任务，结果自动推送到 IM 平台。
 
 ### 多模型支持
-内置 llmproxy（kimi/deepseek）、火山引擎 ARK、阿里云通义千问、智谱 GLM、MiniMax 等国内主流供应商，API Key 即插即用。
+内置火山引擎 ARK、阿里云通义千问、智谱 GLM、MiniMax、DeepSeek 等国内主流供应商，API Key 即插即用。
 
 ---
 
@@ -105,8 +105,6 @@ supercc config
 | 指令 | 说明 |
 |------|------|
 | `/memory` | 管理本地记忆库（查看/搜索/增删） |
-| `/remember <内容>` | 主动添加记忆 |
-| `/forget` | 清除当前会话上下文（记忆不受影响） |
 
 ### 定时任务
 
