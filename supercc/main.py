@@ -781,172 +781,255 @@ def _run_config_interactive() -> None:
 
 
 def _run_config_model_interactive(dirty: list) -> None:
-    """交互式模型配置子菜单。"""
+    """交互式模型配置子菜单（一页式，跟 onboard 风格一致）。"""
     import questionary
     from supercc.core.models.model_config import (
         ModelEnv,
-        add_model,
         get_all_models,
         get_active_model,
         switch_model,
         delete_model,
+        validate_model_env,
+        init_model_env,
     )
     from supercc.core.models.model_providers import PROVIDERS
     auth_display_map = {"bearer": "Bearer API Key", "api_key": "API Key", "azure": "Azure AD Token"}
 
-    while True:
-        choice = questionary.select(
-            "模型配置",
-            choices=[
-                questionary.Choice("➕  添加模型", value="add"),
-                questionary.Choice("🔄  切换模型", value="switch"),
-                questionary.Choice("🗑  删除模型", value="delete"),
-                questionary.Choice("📋  查看供应商列表", value="providers"),
-                questionary.Choice("↩️  返回上级", value="back"),
-            ],
+    models = get_all_models()
+    active_entry = get_active_model()
+    active_id = None
+    if active_entry:
+        for mid, mentry in models.items():
+            if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
+                active_id = mid
+                break
+
+    choices = []
+    if active_entry:
+        choices.append(questionary.Choice("🔄  " + active_entry.name + "  ✅", value="manage_active"))
+    for mid, mentry in models.items():
+        if mid == active_id:
+            continue
+        choices.append(questionary.Choice("   " + mentry.name, value=mid))
+    choices.append(questionary.Choice("➕  添加新模型", value="add"))
+    choices.append(questionary.Choice("↩️  返回上级", value="back"))
+
+    choice = questionary.select(
+        "模型配置",
+        choices=choices,
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask()
+    if choice == "back" or choice is None:
+        return
+
+    # ── 添加新模型 ────────────────────────────────────────────────────────────
+    if choice == "add":
+        from supercc.core.models.model_config import get_all_providers
+        all_providers_data = get_all_providers()
+
+        configured, unconfigured = [], []
+        for pid, p in PROVIDERS.items():
+            pdata = all_providers_data.get(pid)
+            has_key = pdata and pdata.api_key
+            (configured if has_key else unconfigured).append((pid, p))
+
+        from dataclasses import dataclass
+        @dataclass
+        class _CP:
+            id: str; base_url: str; models: list
+        for pid in all_providers_data:
+            if pid in PROVIDERS:
+                continue
+            pdata = all_providers_data.get(pid)
+            if pdata and pdata.api_key:
+                configured.append((pid, _CP(id=pid, base_url=pdata.base_url or "", models=pdata.models or [])))
+
+        provider_choices = []
+        for pid, p in configured:
+            provider_choices.append(questionary.Choice(pid + "  (" + (p.base_url or "用户填入") + ")  ✅", value=pid))
+        for pid, p in unconfigured:
+            provider_choices.append(questionary.Choice(pid + "  (" + (p.base_url or "用户填入") + ")", value=pid))
+        provider_choices.append(questionary.Choice("──────────────", value="__sep__", disabled=True))
+        provider_choices.append(questionary.Choice("✨ 新增自定义供应商", value="__add__"))
+
+        provider_id = questionary.select(
+            "请选择供应商（✅ = 已配置过 API Key）",
+            choices=provider_choices,
             style=questionary.Style([
                 ("selected", "fg:#00AA00 bold"),
                 ("choice", "fg:#CCCCCC"),
                 ("pointer", "fg:#00AA00 bold"),
+                ("separator", "fg:#555555"),
             ]),
         ).ask()
-        if choice == "back" or choice is None:
-            break
+        if not provider_id or provider_id == "__sep__":
+            return
 
-        elif choice == "add":
-            provider_choices = [
-                questionary.Choice(f"{p.id}  ({p.base_url or '用户填入'})", value=pid)
-                for pid, p in PROVIDERS.items()
-            ]
-            provider_id = questionary.select("请选择供应商", choices=provider_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
-            if not provider_id:
-                continue
-            provider = PROVIDERS[provider_id]
-
-            if provider_id == "custom":
-                base_url = questionary.text("Base URL（例如 https://api.example.com/v1）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-                if not base_url:
-                    print("⚠️  未提供 Base URL，已取消\n")
-                    continue
-                base_url = base_url.strip().rstrip("/")
-                selected_model = questionary.text("模型 ID（例如 gpt-4）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-                if not selected_model:
-                    print("⚠️  未提供模型 ID，已取消\n")
-                    continue
-                selected_model = selected_model.strip()
-                token = questionary.password("API Key", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-                if not token:
-                    print("⚠️  未提供 API Key，已取消\n")
-                    continue
-                import hashlib
-                model_id = f"custom-{hashlib.md5(selected_model.encode()).hexdigest()[:8]}"
-                name = selected_model
-                env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=base_url, ANTHROPIC_MODEL=selected_model)
-                added = add_model(model_id, name, f"自定义供应商: custom", env, provider_name="custom")
-                switch_model(model_id)
-                dirty[0] = True
-                if not added:
-                    print(f"⚠️  模型 ID `{model_id}` 已存在，已切换到该模型\n")
-                else:
-                    print(f"\n✅ 自定义模型 **{name}** (`{model_id}`) 已添加并设为激活\n")
-                continue
-
-            model_choices = [questionary.Choice(f"`{m}`", value=m) for m in provider.models]
-            selected_model = questionary.select(f"请选择模型（{provider.id}）", choices=model_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
+        # ── 自定义供应商 ──────────────────────────────────────────────────────
+        if provider_id == "__add__":
+            base_url = questionary.text("Base URL（例如 https://api.example.com/v1）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            if not base_url:
+                print("⚠️  未提供 Base URL，已取消")
+                return
+            base_url = base_url.strip().rstrip("/")
+            selected_model = questionary.text("模型 ID（例如 gpt-4）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
             if not selected_model:
-                continue
+                print("⚠️  模型 ID 不能为空，已取消")
+                return
+            selected_model = selected_model.strip()
+            token = questionary.password("API Key", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            if not token:
+                print("⚠️  未提供 API Key，已取消")
+                return
+            import re, hashlib
+            provider_name_raw = questionary.text("供应商名称（英文/数字）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+            provider_name = provider_name_raw.strip() if provider_name_raw else "custom"
+            if not re.fullmatch(r'[a-zA-Z0-9]+', provider_name):
+                print("❌ 供应商名称只允许英文字母和数字")
+                return
+            if provider_name in PROVIDERS:
+                print(f"❌ '{provider_name}' 是内置供应商，请使用其他名称")
+                return
+            env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=base_url, ANTHROPIC_MODEL=selected_model)
+            valid, err = validate_model_env(env)
+            if not valid:
+                print(f"❌ API 验证失败: {err}")
+                return
+            from supercc.core.models.model_config import _load_json, _save_json
+            raw = _load_json()
+            raw.setdefault("providers", {})[provider_name] = {"api_key": token, "models": [selected_model], "base_url": base_url, "provider_name": provider_name}
+            _save_json(raw)
+            from supercc.config import resolve_config_path
+            _, data_dir = resolve_config_path()
+            import os
+            project_path = os.path.dirname(os.path.dirname(data_dir))
+            from supercc.core.models.model_config import set_project_model
+            set_project_model(project_path, provider_name, selected_model)
+            init_model_env(project_path)
+            dirty[0] = True
+            print(f"\n✅ 自定义供应商已添加并设为激活")
+            print(f"   供应商: {provider_name}")
+            print(f"   模型: `{selected_model}`")
+            return
+
+        # ── 预置供应商 ───────────────────────────────────────────────────────
+        provider = PROVIDERS.get(provider_id)
+        pdata = all_providers_data.get(provider_id)
+        has_existing_key = pdata and pdata.api_key
+
+        model_choices = [questionary.Choice(f"`{m}`", value=m) for m in provider.models]
+        selected_model = questionary.select(f"请选择模型（{provider.id}）", choices=model_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
+        if not selected_model:
+            return
+
+        if has_existing_key:
+            token = pdata.api_key
+        else:
             auth_label = auth_display_map.get(provider.auth_type, provider.auth_type)
             token = questionary.password(f"API Key（{auth_label}）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
             if not token:
                 print("⚠️  未提供 API Key，已取消")
-                continue
-            model_id = provider_id
-            name = f"{provider.id} ({selected_model})"
-            env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=provider.base_url, ANTHROPIC_MODEL=selected_model)
-            added = add_model(model_id, name, f"供应商: {provider.id}", env, provider_name=provider.id)
-            if not added:
-                print(f"⚠️  模型 ID `{model_id}` 已存在，请先切换")
-                continue
-            switch_model(model_id)
-            dirty[0] = True
-            print(f"\n✅ 模型 **{name}** (`{model_id}`) 已添加并设为激活\n")
-
-        elif choice == "switch":
-            models = get_all_models()
-            if not models:
-                print("⚠️  没有任何已配置的模型\n")
-                continue
-            active_entry = get_active_model()
-            active_id = None
-            if active_entry:
-                for mid, mentry in models.items():
-                    if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
-                        active_id = mid
-                        break
-            model_choices = [
-                questionary.Choice(f"{mentry.name} (`{mid}`)" + ("  ✅" if mid == active_id else ""), value=mid)
-                for mid, mentry in models.items()
-            ]
-            target_id = questionary.select("请选择要切换的模型", choices=model_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
-            if not target_id or target_id == active_id:
-                continue
-            ok = switch_model(target_id)
+                return
+            from supercc.core.models.model_config import update_provider_api_key
+            ok, err = update_provider_api_key(provider_id, token)
             if not ok:
-                print("❌ 切换失败\n")
-                continue
-            entry = models[target_id]
-            dirty[0] = True
-            print(f"\n✅ 已切换到 **{entry.name}**")
-            print(f"   模型: `{entry.env.ANTHROPIC_MODEL}`\n")
+                print(f"❌ API Key 保存失败: {err}")
+                return
 
-        elif choice == "delete":
-            models = get_all_models()
-            if not models:
-                print("⚠️  没有任何已配置的模型\n")
-                continue
-            active_entry = get_active_model()
-            active_id = None
-            if active_entry:
-                for mid, mentry in models.items():
-                    if mentry.env.ANTHROPIC_BASE_URL == active_entry.env.ANTHROPIC_BASE_URL:
-                        active_id = mid
-                        break
-            model_choices = [
-                questionary.Choice(f"{mentry.name} (`{mid}`)" + ("  （当前激活）" if mid == active_id else ""), value=mid)
-                for mid, mentry in models.items()
-            ]
-            target_id = questionary.select("请选择要删除的模型", choices=model_choices, style=questionary.Style([("selected", "fg:#FF5555 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#FF5555 bold")])).ask()
-            if not target_id:
-                continue
-            if target_id == active_id:
-                print("❌ 无法删除当前激活的模型，请先切换到其他模型\n")
-                continue
-            confirm = questionary.confirm(f"确认删除模型 `{target_id}`？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+        env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=provider.base_url, ANTHROPIC_MODEL=selected_model)
+        valid, err = validate_model_env(env)
+        if not valid:
+            print(f"❌ API 验证失败: {err}")
+            return
+
+        from supercc.config import resolve_config_path
+        _, data_dir = resolve_config_path()
+        import os
+        project_path = os.path.dirname(os.path.dirname(data_dir))
+        from supercc.core.models.model_config import set_project_model
+        set_project_model(project_path, provider_id, selected_model)
+        init_model_env(project_path)
+        dirty[0] = True
+        print(f"\n✅ 模型 {provider.id}/{selected_model} 已添加并设为激活")
+        return
+
+    # ── 管理已激活模型 ─────────────────────────────────────────────────────────
+    if choice == "manage_active":
+        entry = active_entry
+        sub_choices = [
+            questionary.Choice("🔄  重新配置凭证", value="reconfigure"),
+            questionary.Choice("🗑  删除此模型", value="delete"),
+        ]
+        other_models = [(m, e) for m, e in models.items() if m != active_id]
+        if other_models:
+            sub_choices.append(questionary.Choice("🔀  切换到其他模型", value="switch"))
+        sub_choices.append(questionary.Choice("↩️  返回上级", value="back"))
+
+        sub = questionary.select(entry.name, choices=sub_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
+        if sub == "back" or sub is None:
+            return
+
+        if sub == "delete":
+            confirm = questionary.confirm(f"确认删除模型 `{active_id}`？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
             if not confirm:
-                continue
-            ok = delete_model(target_id)
+                return
+            delete_model(active_id)
+            dirty[0] = True
+            print("✅ 模型已删除")
+            return
+
+        if sub == "switch":
+            other_choices = [questionary.Choice(e.name, value=m) for m, e in other_models]
+            target_id = questionary.select("切换到", choices=other_choices, style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")])).ask()
+            if not target_id:
+                return
+            switch_model(target_id)
+            dirty[0] = True
+            print(f"✅ 已切换到 {models[target_id].name}")
+            return
+
+        if sub == "reconfigure":
+            provider_id = active_id
+            for pid in PROVIDERS:
+                if pid in active_id or active_id in pid:
+                    provider_id = pid
+                    break
+            provider = PROVIDERS.get(provider_id)
+            if not provider:
+                print("⚠️  找不到对应供应商，请删除后重新添加")
+                return
+            auth_label = auth_display_map.get(provider.auth_type, provider.auth_type)
+            token = questionary.password(f"新的 API Key（{auth_label}）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            if not token:
+                print("⚠️  未提供 API Key，已取消")
+                return
+            env = ModelEnv(ANTHROPIC_AUTH_TOKEN=token, ANTHROPIC_BASE_URL=provider.base_url, ANTHROPIC_MODEL=active_entry.env.ANTHROPIC_MODEL)
+            valid, err = validate_model_env(env)
+            if not valid:
+                print(f"❌ API 验证失败: {err}")
+                return
+            from supercc.core.models.model_config import update_provider_api_key
+            ok, err = update_provider_api_key(provider_id, token)
             if ok:
                 dirty[0] = True
-            print(f"{'✅' if ok else '❌'} 模型 `{target_id}` {'已删除' if ok else '删除失败'}\n")
+                print("✅ 凭证已更新")
+            else:
+                print(f"❌ 保存失败: {err}")
+            return
 
-        elif choice == "providers":
-            from supercc.core.models.model_providers import PROVIDERS
-            lines = ["支持的模型供应商：\n"]
-            for pid, p in PROVIDERS.items():
-                auth = auth_display_map.get(p.auth_type, p.auth_type)
-                models_preview = ", ".join(p.models[:3])
-                if len(p.models) > 3:
-                    models_preview += f" ... (+{len(p.models) - 3})"
-                lines.append(f"  `{pid}`")
-                lines.append(f"    端点: {p.base_url or '(用户填入)'}")
-                lines.append(f"    认证: {auth}")
-                lines.append(f"    模型: {models_preview}")
-                lines.append("")
-            print("\n".join(lines))
+    # ── 切换到其他已配置模型 ─────────────────────────────────────────────────
+    if choice in models and choice != active_id:
+        switch_model(choice)
+        dirty[0] = True
+        print(f"✅ 已切换到 {models[choice].name}")
 
 
 def _run_config_gateway_interactive(dirty: list) -> None:
-    """交互式 Gateway/Core 配置子菜单。"""
+    """交互式 Gateway/Core 配置子菜单（一页式展示当前状态）。"""
     import questionary
     from supercc.config import resolve_config_path, init_config, get_config, write_config
     import secrets
@@ -954,84 +1037,90 @@ def _run_config_gateway_interactive(dirty: list) -> None:
     init_config(cfg_path)
     cfg = get_config()
 
-    while True:
-        choice = questionary.select(
-            "Gateway 配置",
+    auth_mode = "Token" if cfg.core.token else ("用户名密码" if cfg.core.username else "未配置")
+
+    choices = [
+        questionary.Choice("🔑  Token（重新生成）", value="token"),
+        questionary.Choice("👤  账号密码（设置/清除）", value="auth"),
+        questionary.Choice("🌐  监听地址（" + cfg.core.host + "）", value="host"),
+        questionary.Choice("🔌  监听端口（" + str(cfg.core.port) + "）", value="port"),
+        questionary.Choice("↩️  返回上级", value="back"),
+    ]
+
+    choice = questionary.select(
+        "Gateway 配置",
+        choices=choices,
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask()
+    if choice == "back" or choice is None:
+        return
+
+    if choice == "token":
+        new_token = secrets.token_urlsafe(32)
+        cfg.core.token = new_token
+        write_config(cfg)
+        dirty[0] = True
+        print(f"✅ Token 已生成并保存: {new_token}")
+        return
+
+    if choice == "auth":
+        username = questionary.text("用户名（回车清除）", default=cfg.core.username or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+        if username is None:
+            return
+        password = questionary.password("密码（回车清除）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+        if password is None:
+            return
+        cfg.core.username = username
+        cfg.core.password = password
+        write_config(cfg)
+        dirty[0] = True
+        if username:
+            print(f"✅ 账号密码已保存: {username}")
+        else:
+            print("✅ 账号密码已清除")
+        return
+
+    if choice == "host":
+        host = questionary.select(
+            "监听地址",
             choices=[
-                questionary.Choice("📡  查看当前配置", value="show"),
-                questionary.Choice("🔑  设置 Token", value="token"),
-                questionary.Choice("👤  设置账号密码", value="auth"),
-                questionary.Choice("🌐  设置监听地址", value="host"),
-                questionary.Choice("🔌  设置监听端口", value="port"),
-                questionary.Choice("↩️  返回上级", value="back"),
+                questionary.Choice("127.0.0.1（推荐，仅本机）", value="127.0.0.1"),
+                questionary.Choice("0.0.0.0（对外部开放）", value="0.0.0.0"),
             ],
-            style=questionary.Style([
-                ("selected", "fg:#00AA00 bold"),
-                ("choice", "fg:#CCCCCC"),
-                ("pointer", "fg:#00AA00 bold"),
-            ]),
+            style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
         ).ask()
-        if choice == "back" or choice is None:
-            break
-        elif choice == "show":
-            print(f"Host: {cfg.core.host}")
-            print(f"Port: {cfg.core.port}")
-            print(f"Token: {'已设置' if cfg.core.token else '❌ 未设置'}")
-            print(f"Username: {cfg.core.username or '❌ 未设置'}")
-            print(f"Password: {'已设置' if cfg.core.password else '❌ 未设置'}")
-            print()
-        elif choice == "token":
-            new_token = secrets.token_urlsafe(32)
-            cfg.core.token = new_token
+        if not host:
+            return
+        cfg.core.host = host
+        write_config(cfg)
+        dirty[0] = True
+        print(f"✅ 监听地址已设置为: {host}（重启后生效）")
+        return
+
+    if choice == "port":
+        port_str = questionary.text("端口（默认 28888）", default=str(cfg.core.port), style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+        if not port_str:
+            return
+        try:
+            port = int(port_str)
+            cfg.core.port = port
             write_config(cfg)
             dirty[0] = True
-            print(f"✅ Token 已生成并保存: {new_token}\n")
-        elif choice == "auth":
-            username = questionary.text("用户名", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-            if not username:
-                print("⚠️  已取消\n")
-                continue
-            password = questionary.password("密码", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-            if not password:
-                print("⚠️  已取消\n")
-                continue
-            cfg.core.username = username
-            cfg.core.password = password
-            write_config(cfg)
-            dirty[0] = True
-            print(f"✅ 账号密码已保存: {username}\n")
-        elif choice == "host":
-            host = questionary.select(
-                "监听地址",
-                choices=[
-                    questionary.Choice("127.0.0.1（推荐，仅本机）", value="127.0.0.1"),
-                    questionary.Choice("0.0.0.0（对外部开放）", value="0.0.0.0"),
-                ],
-                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
-            ).ask()
-            if not host:
-                continue
-            cfg.core.host = host
-            write_config(cfg)
-            dirty[0] = True
-            print(f"✅ Host 已设置为: {host}（重启后生效）\n")
-        elif choice == "port":
-            port_str = questionary.text("端口（默认 28888）", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-            if not port_str:
-                continue
-            try:
-                port = int(port_str)
-                cfg.core.port = port
-                write_config(cfg)
-                dirty[0] = True
-                print(f"✅ Port 已设置为: {port}（重启后生效）\n")
-            except ValueError:
-                print("❌ 端口必须是数字\n")
+            print(f"✅ 端口已设置为: {port}（重启后生效）")
+        except ValueError:
+            print("❌ 端口必须是数字")
+        return
+
 
 
 def _run_config_channel_interactive(dirty: list) -> None:
-    """交互式 Channel 插件子菜单。"""
+    """交互式 Channel 插件子菜单（跟 onboard 风格一致）。"""
     import questionary
+    import asyncio
     from supercc.config import resolve_config_path, init_config, get_config, write_config
     cfg_path, _ = resolve_config_path()
     init_config(cfg_path)
@@ -1045,8 +1134,8 @@ def _run_config_channel_interactive(dirty: list) -> None:
     choice = questionary.select(
         "Channel 配置",
         choices=[
-            questionary.Choice(f"📡  飞书 {feishu_status}", value="feishu"),
-            questionary.Choice(f"💬  企业微信 {wecom_status}", value="wecom"),
+            questionary.Choice("📡  飞书 " + feishu_status, value="feishu"),
+            questionary.Choice("💬  企业微信 " + wecom_status, value="wecom"),
             questionary.Choice("↩️  返回上级", value="back"),
         ],
         style=questionary.Style([
@@ -1057,56 +1146,108 @@ def _run_config_channel_interactive(dirty: list) -> None:
     ).ask()
     if choice == "back" or choice is None:
         return
-    elif choice == "feishu":
-        if not feishu.app_id:
-            print("⚠️  飞书尚未配置，请先运行 onboard 完成初始配置\n")
+
+    if choice == "feishu":
+        if feishu.app_id:
+            sub = questionary.select(
+                "飞书已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除飞书配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                feishu.app_id = ""
+                feishu.app_secret = ""
+                feishu.bot_open_id = ""
+                feishu.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ 飞书配置已删除")
+                return
+            if sub == "reconfigure":
+                app_id = questionary.text("App ID", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+                if not app_id:
+                    print("⚠️  App ID 不能为空")
+                    return
+                app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+                feishu.app_id = app_id
+                if app_secret:
+                    feishu.app_secret = app_secret
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ 飞书凭证已保存（重启后生效）")
+                return
+        else:
+            print("\n正在配置飞书...\n")
+            try:
+                from supercc.install.flow import run_install_flow
+                asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
+                print("✅ 飞书配置完成\n")
+            except Exception as e:
+                print(f"⚠️  飞书配置出错：{e}\n")
             return
-        print(f"\n飞书凭证（当前）：")
-        print(f"  App ID:     {feishu.app_id}")
-        print(f"  App Secret: {'已设置' if feishu.app_secret else '❌ 未设置'}")
-        print(f"  启用状态:   {feishu.enabled}")
-        print()
-        edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
-        if not edit:
+
+    if choice == "wecom":
+        if wecom.corp_id:
+            sub = questionary.select(
+                "企业微信已配置",
+                choices=[
+                    questionary.Choice("🔄  重新配置", value="reconfigure"),
+                    questionary.Choice("🗑  删除配置", value="delete"),
+                    questionary.Choice("↩️  返回上级", value="back"),
+                ],
+                style=questionary.Style([("selected", "fg:#00AA00 bold"), ("choice", "fg:#CCCCCC"), ("pointer", "fg:#00AA00 bold")]),
+            ).ask()
+            if sub == "back" or sub is None:
+                return
+            if sub == "delete":
+                confirm = questionary.confirm("确认删除企业微信配置？", default=False, style=questionary.Style([("selected", "fg:#FF5555 bold")])).ask()
+                if not confirm:
+                    return
+                wecom.corp_id = ""
+                wecom.agent_id = ""
+                wecom.secret = ""
+                wecom.enabled = False
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ 企业微信配置已删除")
+                return
+            if sub == "reconfigure":
+                corp_id = questionary.text("Corp ID", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+                if not corp_id:
+                    print("⚠️  Corp ID 不能为空")
+                    return
+                agent_id = questionary.text("Agent ID", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
+                secret = questionary.password("Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+                wecom.corp_id = corp_id
+                if agent_id:
+                    wecom.agent_id = agent_id
+                if secret:
+                    wecom.secret = secret
+                write_config(cfg)
+                dirty[0] = True
+                print("✅ 企业微信凭证已保存（重启后生效）")
+                return
+        else:
+            print("\n正在配置企业微信...\n")
+            import subprocess, sys
+            subprocess.run([sys.executable, "-m", "pip", "install", "wecom-aibot-sdk-python", "--quiet"], capture_output=True)
+            try:
+                from supercc.install.wecom_flow import run_wecom_install_flow
+                run_wecom_install_flow(cfg_path, bypass_accepted=True)
+                print("✅ 企业微信配置完成\n")
+            except Exception as e:
+                print(f"⚠️  企业微信配置出错：{e}\n")
             return
-        app_id = questionary.text("App ID（回车保持当前）", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-        if not app_id:
-            print("⚠️  App ID 不能为空\n")
-            return
-        app_secret = questionary.password("App Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-        feishu.app_id = app_id
-        if app_secret:
-            feishu.app_secret = app_secret
-        write_config(cfg)
-        dirty[0] = True
-        print("✅ 飞书凭证已保存（重启后生效）\n")
-    elif choice == "wecom":
-        if not wecom.corp_id:
-            print("⚠️  企业微信尚未配置，请先运行 onboard 完成初始配置\n")
-            return
-        print(f"\n企业微信凭证（当前）：")
-        print(f"  Corp ID:    {wecom.corp_id}")
-        print(f"  Agent ID:   {wecom.agent_id or '(未设置)'}")
-        print(f"  Secret:     {'已设置' if wecom.secret else '❌ 未设置'}")
-        print(f"  启用状态:   {wecom.enabled}")
-        print()
-        edit = questionary.confirm("是否修改凭证？", default=False, style=questionary.Style([("selected", "fg:#00AA00 bold")])).ask()
-        if not edit:
-            return
-        corp_id = questionary.text("Corp ID（回车保持当前）", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-        if not corp_id:
-            print("⚠️  Corp ID 不能为空\n")
-            return
-        agent_id = questionary.text("Agent ID（回车保持当前）", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-        secret = questionary.password("Secret（回车保持当前）", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-        wecom.corp_id = corp_id
-        if agent_id:
-            wecom.agent_id = agent_id
-        if secret:
-            wecom.secret = secret
-        write_config(cfg)
-        dirty[0] = True
-        print("✅ 企业微信凭证已保存（重启后生效）\n")
+
 
 
 def _run_config_command(args) -> None:

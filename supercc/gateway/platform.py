@@ -149,17 +149,22 @@ def uninstall_mac(data_dir: str, project_slug: str) -> None:
 
 
 def stop_mac(data_dir: str, project_slug: str) -> None:
-    """停止 macOS LaunchAgent 服务（仅 bootout，不删除 plist）。"""
+    """停止 macOS LaunchAgent 服务：先删除服务，再杀实例。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_name = f"com.supercc.main.{slug}"
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / f"{plist_name}.plist"
 
     uid = os.getuid()
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}/{plist_name}"],
         check=False, timeout=90,
     )
+    # 删除 plist 和标记文件（服务删除）
+    plist_path.unlink(missing_ok=True)
+    Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
 
-    # 等待进程退出（最多 5 秒）
+    # 杀实例
     pid_file = Path(data_dir) / "supercc.pid"
     if pid_file.exists():
         try:
@@ -252,11 +257,21 @@ def uninstall_linux(data_dir: str, project_slug: str) -> None:
 
 
 def stop_linux(data_dir: str, project_slug: str) -> None:
-    """停止 systemd user service（仅 stop，不 disable）。"""
+    """停止 systemd user service：先删除服务，再杀实例。"""
     slug = _slug_to_dns_safe(project_slug)
     service_name = f"supercc-main-{slug}"
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_path = service_dir / f"{service_name}.service"
+    script_path = service_dir / f"{service_name}.sh"
 
-    # 读取 PID（用于等待进程退出）
+    # 删除服务（disable + 删除文件）
+    subprocess.run(["systemctl", "--user", "disable", service_name], capture_output=True, text=True)
+    service_path.unlink(missing_ok=True)
+    script_path.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, text=True)
+    Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
+
+    # 读取 PID（用于杀实例）
     pid_file = Path(data_dir) / "supercc.pid"
     pid = None
     if pid_file.exists():
@@ -270,7 +285,6 @@ def stop_linux(data_dir: str, project_slug: str) -> None:
         stderr = result.stderr.strip()
         if "Could not find" not in stderr:
             print(f"⚠️  systemctl --user stop 失败: {stderr}")
-            return
 
     # 等待进程真正退出（最多 5 秒）
     if pid:
