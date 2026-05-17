@@ -548,6 +548,141 @@ def ensure_project_model_config(project_path: str) -> bool:
         print("\n⚠️  没有已配置 API Key 的模型供应商，请先使用 `supercc config` 配置模型\n")
         return False
 
+
+# ── 向后兼容：旧版 CLI 使用的 model-centric API ──────────────────────────────
+
+@dataclass
+class _ModelEntry:
+    """旧版 _run_config_command 使用的模型条目（向后兼容）。"""
+    name: str = ""
+    description: str = ""
+    env: ModelEnv | None = None
+
+
+def get_all_models() -> dict[str, _ModelEntry]:
+    """兼容旧 API：返回 {model_id: _ModelEntry}，从 providers 转换而来。"""
+    from supercc.core.models.model_providers import PROVIDERS
+
+    raw = _load_json()
+    providers_raw = raw.get("providers", {})
+    models: dict[str, _ModelEntry] = {}
+
+    for pid, provider in PROVIDERS.items():
+        if pid == "custom":
+            continue
+        pcfg = providers_raw.get(pid, {})
+        api_key = pcfg.get("api_key", "")
+        base_url = provider.base_url
+        for model in provider.models:
+            mid = f"{pid}/{model}"
+            models[mid] = _ModelEntry(
+                name=f"{provider.id} ({model})",
+                description=f"供应商: {pid}",
+                env=ModelEnv(
+                    ANTHROPIC_AUTH_TOKEN=api_key,
+                    ANTHROPIC_BASE_URL=base_url,
+                    ANTHROPIC_MODEL=model,
+                ),
+            )
+
+    # 自定义供应商
+    for pid in sorted(set(providers_raw.keys()) - set(PROVIDERS.keys())):
+        pdata = providers_raw[pid]
+        models_models = pdata.get("models", [])
+        for model in models_models:
+            mid = f"{pid}/{model}"
+            models[mid] = _ModelEntry(
+                name=f"{pid} ({model})",
+                description=f"供应商: {pid}",
+                env=ModelEnv(
+                    ANTHROPIC_AUTH_TOKEN=pdata.get("api_key", ""),
+                    ANTHROPIC_BASE_URL=pdata.get("base_url", ""),
+                    ANTHROPIC_MODEL=model,
+                ),
+            )
+    return models
+
+
+def get_active_model() -> _ModelEntry | None:
+    """兼容旧 API：返回当前激活的 _ModelEntry。"""
+    try:
+        env = get_model_env()
+    except RuntimeError:
+        return None
+    if not env or not env.ANTHROPIC_AUTH_TOKEN:
+        return None
+    return _ModelEntry(
+        name=f"{env.provider_id} ({env.ANTHROPIC_MODEL})" if env.provider_id else env.ANTHROPIC_MODEL,
+        description="当前激活",
+        env=env,
+    )
+
+
+def switch_model(model_id: str) -> tuple[bool, str]:
+    """兼容旧 API：按 model_id（格式 provider/model）切换激活模型。"""
+    parts = model_id.split("/", 1)
+    if len(parts) != 2:
+        return False, f"无效的 model_id 格式: {model_id}"
+    pid, mid = parts
+    from supercc.config import resolve_config_path
+    _, data_dir = resolve_config_path()
+    project_path = str(Path(data_dir).resolve().parent)
+    return set_project_model(project_path, pid, mid)
+
+
+def add_model(
+    model_id: str, name: str, description: str,
+    env: ModelEnv, provider_name: str = "",
+) -> bool:
+    """兼容旧 API：将模型作为 provider 保存（已存在返回 False）。"""
+    raw = _load_json()
+    providers_raw: dict = raw.setdefault("providers", {})
+
+    # 用 model_id 的前半部分作为 provider_id
+    pid = model_id.split("/")[0] if "/" in model_id else model_id
+
+    if pid in providers_raw:
+        existing = providers_raw[pid]
+        existing_models = existing.get("models", [])
+        if env.ANTHROPIC_MODEL not in existing_models:
+            existing_models.append(env.ANTHROPIC_MODEL)
+            existing["models"] = existing_models
+        if not existing.get("api_key"):
+            existing["api_key"] = env.ANTHROPIC_AUTH_TOKEN
+        _save_json(raw)
+        return False  # 已存在
+
+    providers_raw[pid] = {
+        "api_key": env.ANTHROPIC_AUTH_TOKEN,
+        "base_url": env.ANTHROPIC_BASE_URL,
+        "models": [env.ANTHROPIC_MODEL],
+    }
+    _save_json(raw)
+    return True
+
+
+def delete_model(model_id: str) -> bool:
+    """兼容旧 API：删除模型（从 provider 中移除）。"""
+    parts = model_id.split("/", 1)
+    if len(parts) != 2:
+        return False
+    pid, mid = parts
+    raw = _load_json()
+    providers_raw: dict = raw.setdefault("providers", {})
+    pdata = providers_raw.get(pid)
+    if not pdata:
+        return False
+    models = pdata.get("models", [])
+    if mid not in models:
+        return False
+    models.remove(mid)
+    if models:
+        pdata["models"] = models
+    else:
+        del providers_raw[pid]
+    _save_json(raw)
+    return True
+
     provider_id, pcfg = configured_provider
     # 取该供应商的第一个模型
     model_id = pcfg.models[0] if pcfg.models else ""

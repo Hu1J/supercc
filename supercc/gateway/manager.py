@@ -149,10 +149,12 @@ class GatewayManager:
         return hashlib.md5(str(path).encode()).hexdigest()[:8]
 
     def install(self) -> None:
-        """安装平台服务（开机自启动）。"""
+        """安装平台服务（开机自启动）。
+
+        install_service 会写入 plist 并执行 launchctl bootstrap/systemctl enable，
+        服务会立即启动并加入开机自启。
+        """
         platform.install_service(self._data_dir, self._project_slug())
-        # 安装后自动启动
-        self.start()
 
     def uninstall(self) -> None:
         """卸载平台服务。"""

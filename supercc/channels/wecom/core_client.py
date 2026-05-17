@@ -671,6 +671,9 @@ class WeComCoreWSClient:
             logger.warning("[cron_progress] no chat_id, skipping")
             return
 
+        if not isinstance(content, str):
+            content = str(content)
+
         try:
             await self.wecom.send_markdown(chat_id, content)
         except Exception:
@@ -689,6 +692,9 @@ class WeComCoreWSClient:
         if not chat_id:
             logger.warning("[cron_result] no chat_id, skipping")
             return
+
+        if not isinstance(content, str):
+            content = str(content)
 
         try:
             if error:

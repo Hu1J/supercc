@@ -414,6 +414,10 @@ class FeishuCoreWSClient:
             logger.warning("[cron_progress] no chat_id, skipping")
             return
 
+        # content 可能为 dict（如 Memory 工具卡片数据），转为字符串
+        if not isinstance(content, str):
+            content = str(content)
+
         try:
             # 实时进度直接发送 Markdown
             if self.formatter.should_use_card(content):
@@ -433,6 +437,9 @@ class FeishuCoreWSClient:
         if not chat_id:
             logger.warning("[cron_result] no chat_id, skipping")
             return
+
+        if not isinstance(content, str):
+            content = str(content)
 
         try:
             if error:

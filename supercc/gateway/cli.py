@@ -24,14 +24,28 @@ def run_gateway_install() -> None:
 
 
 def run_gateway_start() -> None:
-    """gateway start 子命令：启动 gateway（未安装则自动安装）。"""
+    """gateway start 子命令：启动 gateway（未安装则自动安装）。
+
+    通过平台服务管理器（launchd/systemd）启动进程，确保进程生命周期受管理。
+    """
+    import sys
     gm = _gm()
     status = gm.status()
     if not status["installed"]:
         print("Gateway 未安装，正在安装...")
         gm.install()
+
+    # 通过平台服务管理器启动（macOS → launchctl kickstart, Linux → systemctl start）
+    if sys.platform == "darwin":
+        from supercc.gateway.platform import kickstart_mac
+        kickstart_mac(gm._data_dir, gm._project_slug())
+    elif sys.platform.startswith("linux"):
+        from supercc.gateway.platform import kickstart_linux
+        kickstart_linux(gm._data_dir, gm._project_slug())
     else:
-        gm.start()
+        # Windows / 未知平台 fallback 到子进程
+        if not status.get("running"):
+            gm.start()
 
 
 def run_gateway_stop() -> None:

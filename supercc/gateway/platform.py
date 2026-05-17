@@ -31,13 +31,15 @@ def _resolve_supercc() -> str:
 
 
 def _get_start_script(data_dir: str) -> str:
-    """生成 bridge 启动脚本内容。"""
+    """生成 bridge 启动脚本内容。
+
+    所有平台统一使用 --working-dir 参数指定项目目录，不再依赖 cd。
+    """
     project_dir = Path(data_dir).resolve().parent
     supercc_path = _resolve_supercc()
     return (
         f"#!/bin/bash\n"
-        f"cd {project_dir}\n"
-        f"exec {supercc_path} gateway start\n"
+        f"exec {supercc_path} gateway run --working-dir {project_dir}\n"
     )
 
 
@@ -51,19 +53,24 @@ def _slug_to_dns_safe(slug: str) -> str:
 # ── macOS: launchd plist ──────────────────────────────────────────────────────
 
 def install_mac(data_dir: str, project_slug: str) -> None:
-    """安装 macOS LaunchAgent。"""
+    """安装 macOS LaunchAgent。
+
+    直接写 ProgramArguments 运行 supercc gateway run，不使用 wrapper 脚本。
+    """
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
 
     plist_name = f"com.supercc.main.{slug}"
-    script_name = f"com.supercc.main.{slug}.sh"
     plist_path = plist_dir / f"{plist_name}.plist"
-    script_path = plist_dir / script_name
 
-    # 写入启动脚本
-    script_path.write_text(_get_start_script(data_dir), encoding="utf-8")
-    os.chmod(script_path, 0o755)
+    project_dir = Path(data_dir).resolve().parent
+    supercc_path = _resolve_supercc()
+
+    # 构建 launchd 可识别的 PATH（launchd 默认只有 /usr/bin:/bin:/usr/sbin:/sbin）
+    # 捕获当前环境的 PATH 和 VIRTUAL_ENV，确保 conda 环境下的 supercc 可执行
+    sane_path = os.environ.get("PATH", "/usr/bin:/bin")
+    venv_dir = os.environ.get("VIRTUAL_ENV", "")
 
     # 写入 plist
     plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -72,14 +79,33 @@ def install_mac(data_dir: str, project_slug: str) -> None:
 <dict>
     <key>Label</key>
     <string>{plist_name}</string>
+
     <key>ProgramArguments</key>
     <array>
-        <string>{script_path}</string>
+        <string>{supercc_path}</string>
+        <string>gateway</string>
+        <string>run</string>
+        <string>--working-dir</string>
+        <string>{project_dir}</string>
     </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{sane_path}</string>
+        <key>VIRTUAL_ENV</key>
+        <string>{venv_dir}</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
+
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
     <key>StandardOutPath</key>
     <string>{Path(data_dir) / "gateway-stdout.log"}</string>
     <key>StandardErrorPath</key>
@@ -92,70 +118,67 @@ def install_mac(data_dir: str, project_slug: str) -> None:
     # 标记文件
     Path(data_dir).joinpath(".gateway-installed").touch()
 
-    # 加载服务
-    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"⚠️  launchctl load 失败: {result.stderr.strip() or result.stdout.strip()}")
-    else:
-        print(f"✅ Gateway 已安装到 macOS LaunchAgent: {plist_path}")
+    # bootout 旧服务（如已加载），再 bootstrap（如已加载则跳过）
+    uid = os.getuid()
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}/{plist_name}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)],
+        check=True, timeout=30,
+    )
+    print(f"✅ Gateway 已安装到 macOS LaunchAgent: {plist_path}")
 
 
 def uninstall_mac(data_dir: str, project_slug: str) -> None:
-    """卸载 macOS LaunchAgent（unload + 删除 plist + 删除脚本）。"""
+    """卸载 macOS LaunchAgent（bootout + 删除 plist）。"""
     slug = _slug_to_dns_safe(project_slug)
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_name = f"com.supercc.main.{slug}"
     plist_path = plist_dir / f"{plist_name}.plist"
-    script_path = plist_dir / f"{plist_name}.sh"
 
-    result = subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"⚠️  launchctl unload 失败（可能服务未加载），文件未删除")
-        return
+    uid = os.getuid()
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}/{plist_name}"],
+        capture_output=True, check=False, timeout=90,
+    )
     plist_path.unlink(missing_ok=True)
-    script_path.unlink(missing_ok=True)
     Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
     print("✅ Gateway 已从 macOS LaunchAgent 卸载")
 
 
 def stop_mac(data_dir: str, project_slug: str) -> None:
-    """停止 macOS LaunchAgent 服务（仅 unload，不删除 plist）。"""
+    """停止 macOS LaunchAgent 服务（仅 bootout，不删除 plist）。"""
     slug = _slug_to_dns_safe(project_slug)
-    plist_dir = Path.home() / "Library" / "LaunchAgents"
-    plist_path = plist_dir / f"com.supercc.main.{slug}.plist"
+    plist_name = f"com.supercc.main.{slug}"
 
-    # 读取 PID（用于等待进程退出）
+    uid = os.getuid()
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}/{plist_name}"],
+        check=False, timeout=90,
+    )
+
+    # 等待进程退出（最多 5 秒）
     pid_file = Path(data_dir) / "supercc.pid"
-    pid = None
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
         except (ValueError, OSError):
-            pass
+            pid = None
+        if pid:
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.1)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
 
-    result = subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        if "Not loaded" not in stderr and "No such file" not in stderr:
-            print(f"⚠️  launchctl unload 失败: {stderr}")
-            return
-
-    # 等待进程真正退出（最多 5 秒）
-    if pid:
-        for _ in range(50):  # 50 * 0.1s = 5s
-            try:
-                os.kill(pid, 0)  # 检测进程是否还在
-            except OSError:
-                break  # 进程已退出
-            time.sleep(0.1)
-        else:
-            # 超时仍未退出，强制 SIGKILL
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
-
-    # 删除 .instance.lock（如果还在的话）
     lock_file = Path(data_dir) / ".instance.lock"
     lock_file.unlink(missing_ok=True)
 
@@ -197,14 +220,19 @@ WantedBy=default.target
     # 标记文件
     Path(data_dir).joinpath(".gateway-installed").touch()
 
-    # daemon-reload + enable
+    # daemon-reload + enable + start
     r1 = subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, text=True)
     r2 = subprocess.run(["systemctl", "--user", "enable", service_name], capture_output=True, text=True)
     if r2.returncode != 0:
         print(f"⚠️  systemctl --user enable 失败: {r2.stderr.strip() or r2.stdout.strip()}")
         print("   可能是用户 session 未激活（systemd --user 需要 active session）")
     else:
-        print(f"✅ Gateway 已安装为 systemd user service: {service_path}")
+        # 立即启动服务
+        r3 = subprocess.run(["systemctl", "--user", "start", service_name], capture_output=True, text=True)
+        if r3.returncode != 0:
+            print(f"⚠️  systemctl --user start 失败: {r3.stderr.strip()}")
+        else:
+            print(f"✅ Gateway 已安装并启动为 systemd user service: {service_path}")
 
 
 def uninstall_linux(data_dir: str, project_slug: str) -> None:
@@ -276,8 +304,7 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     supercc_path = _resolve_supercc()
     script_content = (
         f'@echo off\n'
-        f'cd /d "{project_dir}"\n'
-        f'"{supercc_path}" gateway start\n'
+        f'"{supercc_path}" gateway run --working-dir "{project_dir}"\n'
     )
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script_content, encoding="utf-8")
@@ -379,6 +406,58 @@ def uninstall_service(data_dir: str, project_slug: str) -> None:
         uninstall_windows(data_dir, project_slug)
     else:
         raise RuntimeError(f"Unsupported platform: {p}")
+
+
+def kickstart_mac(data_dir: str, project_slug: str) -> None:
+    """通过 launchctl 启动已安装的 LaunchAgent 服务（kickstart）。
+
+    如服务未加载则自动重新 bootstrap（参考 Hermes 实现：先 kickstart，
+    失败 error code 3/113 时重新 bootstrap）。plist 缺失时自动重建。
+    """
+    slug = _slug_to_dns_safe(project_slug)
+    plist_name = f"com.supercc.main.{slug}"
+    uid = os.getuid()
+    target = f"gui/{uid}/{plist_name}"
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / f"{plist_name}.plist"
+    try:
+        subprocess.run(
+            ["launchctl", "kickstart", target],
+            check=True, timeout=30,
+        )
+        print("✅ Gateway 已通过 launchd 启动")
+    except subprocess.CalledProcessError as e:
+        if e.returncode not in {3, 113}:
+            print(f"⚠️  launchctl kickstart 失败 (code {e.returncode})")
+            raise
+        # plist 缺失时自动重建
+        if not plist_path.exists():
+            print("↻ launchd plist 缺失，正在重新安装...")
+            install_mac(data_dir, project_slug)
+            return
+        # 服务未加载 → 重新 bootstrap 后再 kickstart
+        print("↻ launchd 服务未加载，正在重新注册...")
+        subprocess.run(
+            ["launchctl", "bootstrap", f"gui/{uid}", str(plist_path)],
+            check=True, timeout=30,
+        )
+        subprocess.run(
+            ["launchctl", "kickstart", target],
+            check=True, timeout=30,
+        )
+        print("✅ Gateway 已通过 launchd 启动")
+
+
+def kickstart_linux(data_dir: str, project_slug: str) -> None:
+    """通过 systemctl 启动已安装的 systemd user service。"""
+    slug = _slug_to_dns_safe(project_slug)
+    service_name = f"supercc-main-{slug}"
+    result = subprocess.run(
+        ["systemctl", "--user", "start", service_name],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"⚠️  systemctl --user start 失败: {result.stderr.strip()}")
 
 
 def _is_service_installed(data_dir: str) -> bool:

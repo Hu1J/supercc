@@ -1534,13 +1534,23 @@ def main(args=None):
     gateway_parser = subparsers.add_parser("gateway", help="Gateway management (后台常驻服务)")
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_action", help="Action")
 
-    gw_install = gateway_subparsers.add_parser("install", help="Install gateway as a system service (开机自启动)")
-    gw_start = gateway_subparsers.add_parser("start", help="Start gateway (auto-install if not installed)")
-    gw_run = gateway_subparsers.add_parser("run", help="Run gateway in foreground (实时打印日志)")
-    gw_stop = gateway_subparsers.add_parser("stop", help="Stop gateway")
-    gw_status = gateway_subparsers.add_parser("status", help="Show gateway status")
-    gw_restart = gateway_subparsers.add_parser("restart", help="热重启当前实例")
-    gw_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway and stop")
+    # 共享给所有 gateway 子命令的 --working-dir 参数
+    # 用 parents 机制避免重复定义，每个子命令都能接受 --working-dir
+    _shared_gw_args = argparse.ArgumentParser(add_help=False)
+    _shared_gw_args.add_argument(
+        "--working-dir",
+        type=str,
+        default="",
+        help="项目工作目录（默认当前目录）。所有 gateway 子命令均支持此参数。",
+    )
+
+    gw_install = gateway_subparsers.add_parser("install", parents=[_shared_gw_args], help="Install gateway as a system service (开机自启动)")
+    gw_start = gateway_subparsers.add_parser("start", parents=[_shared_gw_args], help="Start gateway (auto-install if not installed)")
+    gw_run = gateway_subparsers.add_parser("run", parents=[_shared_gw_args], help="Run gateway in foreground (实时打印日志)")
+    gw_stop = gateway_subparsers.add_parser("stop", parents=[_shared_gw_args], help="Stop gateway")
+    gw_status = gateway_subparsers.add_parser("status", parents=[_shared_gw_args], help="Show gateway status")
+    gw_restart = gateway_subparsers.add_parser("restart", parents=[_shared_gw_args], help="热重启当前实例")
+    gw_uninstall = gateway_subparsers.add_parser("uninstall", parents=[_shared_gw_args], help="Uninstall gateway and stop")
 
     # pairing
     pairing_parser = subparsers.add_parser("pairing", help="P2P pairing management (approve/revoke users)")
@@ -1605,6 +1615,10 @@ def main(args=None):
         return
 
     if command == "gateway":
+        # --working-dir 切换工作目录（所有 gateway 子命令共享）
+        if getattr(args, "working_dir", ""):
+            os.chdir(args.working_dir)
+
         from supercc.gateway.cli import (
             run_gateway_install,
             run_gateway_start,
@@ -1629,7 +1643,9 @@ def main(args=None):
             try:
                 run_gateway_run()
             except Exception as e:
-                print(f"\n❌ Gateway run failed: {e}")
+                _logger = logging.getLogger("supercc")
+                _logger.error("Gateway run failed: %s", e, exc_info=True)
+                print(f"\n❌ Gateway run failed: {e}", file=sys.stderr)
                 sys.exit(1)
         elif action == "restart":
             run_gateway_restart()
