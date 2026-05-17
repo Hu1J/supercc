@@ -11,7 +11,7 @@
 
 ![SuperCC Banner](supercc_poster_final.png)
 
-**超级 Claude Code** — 多平台 AI 工作搭档，让 Claude Code 在飞书、钉钉等 IM 平台中无缝运行。
+**超级 Claude Code** — 让 Claude Code 在飞书、企业微信等 IM 平台中无缝运行。
 
 > 自进化超级 AI · 越用越懂你
 
@@ -20,7 +20,7 @@
 ## 核心亮点
 
 ### 多平台接入
-支持飞书（已上线），框架设计支持钉钉/微信/QQ 等扩展。一个后台，多个平台同时在线。
+支持飞书、企业微信（WS 协议）。框架设计支持扩展更多平台。一个 Core，多个 Plugin 同时在线。
 
 ### 记忆自优化
 每日凌晨自动精炼记忆库 — 合并冗余、精简重复、删除过时信息。记忆越用越精准。
@@ -32,10 +32,10 @@
 每次对话自动检索相关记忆，注入上下文。无需重复描述背景，AI 始终知道你是谁、你在做什么。
 
 ### Cron 定时任务
-标准 cron 表达式，精准定时触发 AI 执行任务，结果自动推送到飞书。
+标准 cron 表达式，精准定时触发 AI 执行任务，结果自动推送到 IM 平台。
 
 ### 多模型支持
-内置 MiniMax、火山引擎 ARK、阿里云通义千问、智谱 GLM、DeepSeek、Kimi 等国内主流供应商，API Key 即插即用。
+内置 llmproxy（kimi/deepseek）、火山引擎 ARK、阿里云通义千问、智谱 GLM、MiniMax 等国内主流供应商，API Key 即插即用。
 
 ---
 
@@ -50,15 +50,39 @@ pip install -U pysupercc
 ### 启动
 
 ```bash
-supercc
-```
+# 首次运行，自动进入安装引导（配置平台 → 配置模型 → 启动服务）
+supercc onboard
 
-首次运行会自动进入安装引导（飞书扫码授权 → 配置模型 API → 启动服务）。
+# 直接前台运行（开发调试用）
+supercc gateway run
+
+# 后台运行 + 开机自启动（生产环境用）
+supercc gateway start
+
+# 查看运行状态
+supercc gateway status
+
+# 停止服务
+supercc gateway stop
+
+# 重启服务
+supercc gateway restart
+```
 
 ### 升级
 
 ```bash
+# CLI 升级
 supercc update
+
+# 或在 IM 里发 /update 指令
+```
+
+### 配置
+
+```bash
+# 交互式配置菜单
+supercc config
 ```
 
 ---
@@ -72,7 +96,7 @@ supercc update
 | `/new` | 创建新会话 |
 | `/status` | 查看当前运行状态 |
 | `/stop` | 打断 Claude 当前正在执行的查询 |
-| `/restart` | 重启 SuperCC 服务 |
+| `/restart` | 热重启 SuperCC（不中断服务） |
 | `/update` | 检查更新并自动升级 |
 | `/help` | 查看所有可用指令 |
 
@@ -97,29 +121,7 @@ supercc update
 | 指令 | 说明 |
 |------|------|
 | `/model` | 查看当前模型配置状态 |
-| `/model switch <provider>` | 切换到已配置的供应商（如 `/model switch volcano`） |
-
-### Codex 子代理
-
-| 指令 | 说明 |
-|------|------|
-| `/codex` | 查看 Codex MCP 状态 |
-| `/codex available` | 快速判断 Codex 当前是否可用 |
-| `/codex models` | 查看 Codex 可选模型 |
-| `/codex setup` | 立即写入/刷新 Claude Code 的 Codex MCP 配置 |
-
-**Codex MCP 集成**（v0.1.7+）：
-- SuperCC 自研 MCP Server（`supercc-codex-mcp-server`），直接执行 `codex exec`，结果通过 JSONL 文件 tailing 实时推送
-- 支持多个 Codex 模型：`gpt-5.5`（推荐）、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.2`
-- Legacy 模型名自动迁移：`gpt-5.5-codex` → `gpt-5.5`
-- Claude Code 对话中自动识别 Codex/GPT-5.5 相关需求，调用 MCP 工具执行
-
-### 项目管理
-
-| 指令 | 说明 |
-|------|------|
-| `/project` | 切换到其他已初始化项目 |
-| `/projects` | 列出所有已初始化项目 |
+| `/model switch <provider>` | 切换到已配置的供应商（如 `/model switch llmproxy`） |
 
 ### 技能管理
 
@@ -150,50 +152,42 @@ supercc update
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      飞书 / 钉钉                          │
+│                      飞书 / 企业微信                      │
 │                   （用户通过 IM 对话）                      │
 └────────────────────────┬────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    SuperCC Bridge                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ 记忆系统  │  │ 技能进化  │  │ 对话引擎  │  │ 定时调度  │  │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│              SuperCC Plugin（WS Client）                │
+│         FeishuPlugin / WeComPlugin                    │
+│    接收 IM 消息 → 转发给 Core；Core 回复 → 推送回 IM   │
+└────────────────────────┬────────────────────────────────┘
+                         │  WebSocket
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              SuperCC Core（WS Server）                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────┐ │
+│  │  记忆系统  │  │  技能进化  │  │  对话引擎  │  │ 定时  │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────┘ │
 └────────────────────────┬────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│                   Claude Code CLI                        │
-│              （本地执行，真正的 AI 能力）                   │
+│                   Claude Code CLI                       │
+│              （本地执行，真正的 AI 能力）                  │
 └─────────────────────────────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │         Codex MCP           │
-          │   SuperCC 自研 MCP Server    │
-          │   直接执行 codex exec        │
-          │   JSONL tailing 实时推送     │
-          └─────────────────────────────┘
 ```
 
-SuperCC 充当 IM 平台和本地 Claude Code 之间的桥梁：
-- 接收飞书消息 → 转发给本地 Claude Code
-- Claude Code 回复 → 转发回飞书
-- 全程对话自动注入记忆，上下文中始终包含相关信息
-- SuperCC 自研 Codex MCP Server，Claude 在需要时通过 MCP 工具调用 Codex/GPT-5.5
-
-启用 Codex MCP 前，请先安装并登录 Codex CLI：
-
-```bash
-codex --version
-codex login
-```
+**架构说明**：
+- **Core**：核心服务，运行 Claude Code，处理对话、记忆、技能、定时任务。通过 WebSocket 与各 Plugin 通信。
+- **Plugin**：平台适配层（飞书/企业微信），负责接收平台消息、推送回复，各自独立运行，互不影响。
+- **Gateway**：Core 的启动器，支持前台运行（`gateway run`）和后台服务（`gateway start`）。
 
 ---
 
 ## 配置文件
 
-- `{project}/.supercc/config.json` — 飞书/钉钉应用配置（2026-05-02 起从 YAML 迁移）
+- `{project}/.supercc/config.json` — 主配置（平台凭证、Core 监听地址、认证方式）
 - `{project}/.supercc/model.json` — 多模型 API 配置（per-project 隔离）
 - `~/.supercc/memories.db` — 记忆数据库（SQLite + FTS5，跨项目共享）
 - `{project}/.supercc/cron_jobs.json` — 定时任务配置（per-project）
@@ -204,25 +198,24 @@ codex login
 ## 目录结构
 
 ```
-SuperCC/
-├── supercc/
-│   ├── main.py              # 入口点
-│   ├── banner.py            # ASCII logo + 版本信息
-│   ├── onboard.py           # 首次安装引导
-│   ├── config.py            # 配置读写
-│   ├── adapter/             # 平台适配层
-│   │   └── feishu/          # 飞书适配器
-│   ├── claude/              # Claude Code 接口
-│   │   ├── model_config.py  # 多模型管理
-│   │   └── model_providers.py # 预设供应商
-│   ├── bridge/              # 消息桥接层
-│   ├── skills/              # 内置 Skills
-│   └── storage/             # 持久化存储
-├── .supercc/                # 用户数据（per-project，{project}/.supercc/）
-│   ├── config.json          # 主配置（飞书/钉钉）
-│   ├── model.json           # 模型配置
-│   └── cron_jobs.json      # 定时任务
-└── README.md
+supercc/
+├── main.py              # 入口点（CLI 分派）
+├── onboard.py           # 首次安装引导
+├── banner.py            # ASCII logo + 版本信息
+├── config.py            # 配置读写
+├── channels/            # 平台适配层
+│   ├── feishu/          # 飞书适配器
+│   └── wecom/           # 企业微信适配器（WS 协议）
+├── core/                # 核心引擎
+│   ├── commands/         # /指令实现
+│   ├── claude/          # Claude Code 接口
+│   ├── models/          # 多模型管理
+│   └── cron_scheduler/  # 定时调度
+├── gateway/             # Gateway（服务启动器）
+│   ├── platform.py       # 跨平台服务安装（launchd/systemd/Task Scheduler）
+│   ├── manager.py        # GatewayManager
+│   └── cli.py           # CLI 处理器
+└── install/             # 安装流程（onboard 调用的平台安装）
 ```
 
 ---
@@ -230,19 +223,22 @@ SuperCC/
 ## 常见问题
 
 **Q: 飞书机器人收不到消息？**
-检查 `{project}/.supercc/config.json` 中的 `app_id`/`app_secret` 是否正确，机器人是否已启用。
+检查 `{project}/.supercc/config.json` 中的 `app_id`/`app_secret` 是否正确，机器人是否已启用，Feishu 应用是否已配置 WS 回调地址。
 
 **Q: 群聊 @CC 时上下文消息注入不生效？**
 确认飞书应用已开通 `im:message.group_msg` 权限，否则 `get_chat_history()` 无法拉取群聊历史。
 
 **Q: 如何切换模型？**
-发送 `/model` 查看当前配置，`/model switch <provider>` 切换供应商。
+发送 `/model` 查看当前配置，`/model switch <provider>` 切换供应商，或用 `supercc config` 进入交互式菜单。
 
 **Q: 记忆不生效？**
 发送 `/memory` 查看记忆库，确认相关记忆已录入。新会话会自动注入相关记忆。
 
 **Q: 定时任务没执行？**
 确认 SuperCC 正在运行，发送 `/cron list` 查看任务状态。
+
+**Q: gateway start 和 gateway run 有什么区别？**
+`gateway run` 是前台阻塞运行（适合开发调试），`gateway start` 是后台守护进程 + 开机自启动（适合生产环境）。
 
 ---
 
