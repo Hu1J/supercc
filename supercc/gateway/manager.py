@@ -90,9 +90,10 @@ class GatewayManager:
         if background:
             stdout_f = open(self._stdout_log, "a")
             stderr_f = open(self._stderr_log, "a")
-            # 设置 PYTHONIOENCODING=utf-8，避免 Windows GBK console 无法打印 emoji
+            # Windows 上设置 PYTHONIOENCODING=utf-8，避免 GBK console 无法打印 emoji
             env = os.environ.copy()
-            env["PYTHONIOENCODING"] = "utf-8"
+            if sys.platform == "win32":
+                env["PYTHONIOENCODING"] = "utf-8"
             try:
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "supercc", "gateway", "run"],
