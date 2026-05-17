@@ -189,3 +189,8 @@ class ReplyFormatter:
         elif tool_input:
             msg += f"\n`{tool_input[:100]}...`"
         return msg
+
+
+def should_use_card(text: str) -> bool:
+    """Telegram 不支持 Interactive Card，始终返回 False。"""
+    return False
