@@ -246,7 +246,7 @@ def format_codex_status(status: CodexMcpStatus) -> str:
     if status.state == "missing_cli":
         lines.extend([
             "",
-            "请先安装并登录 Codex，或在 config.yaml 中设置 `codex.cli_path`。",
+            "请先安装并登录 Codex，或在 config.json 中设置 `codex.cli_path`。",
         ])
     elif status.state == "conflict":
         lines.extend([

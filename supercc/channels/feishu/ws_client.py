@@ -158,7 +158,7 @@ class FeishuWSClient:
         return None
 
     def _write_back_bot_open_id(self, bot_id: str) -> None:
-        """Write the probed bot_open_id back to config.yaml if config_path is set."""
+        """Write the probed bot_open_id back to config.json if config_path is set."""
         if not self._config_path:
             return
         try:
@@ -232,7 +232,7 @@ class FeishuWSClient:
                     # Once is enough: either it's configured or it isn't.
                     if is_group_chat and not hasattr(self, "_bot_open_id_warned"):
                         logger.warning(
-                            "bot_open_id is not set in config.yaml — group @mention detection "
+                            "bot_open_id is not set in config.json — group @mention detection "
                             "will not work. Set feishu.bot_open_id to enable group chat @CC."
                         )
                         self._bot_open_id_warned = True

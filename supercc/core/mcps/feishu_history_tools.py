@@ -31,7 +31,7 @@ def _parse_relative_time(s: str) -> Optional[int]:
 
 
 def _get_feishu_client() -> "FeishuClient":
-    """延迟初始化 FeishuClient（读取 config.yaml）。"""
+    """延迟初始化 FeishuClient（读取 config.json）。"""
     from supercc.config import get_config
     from supercc.channels.feishu.client import FeishuClient
     cfg = get_config()

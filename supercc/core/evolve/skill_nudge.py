@@ -28,7 +28,8 @@ README_CONTENT = """\
 
 此目录用于存放**用户自己的** Claude Code 自定义 Skill。
 
-**重要**：此目录下的 Skill 由 CC 自动维护，通过 Git 管理历史和回退。
+**重要**：此目录是一个本地 Git 仓库（没有 remote，不支持 push）。
+Skill 由 CC 自动维护，Git 仅用于本地历史管理和回退。
 如需安装来自 GitHub 或其他来源的第三方 Skill，请安装到 `~/.claude/skills/` 目录，勿放在此处。
 
 每个 Skill 是一个独立目录，包含 `SKILL.md` 文件，格式如下：
@@ -184,11 +185,13 @@ SKILL_NUDGE_PROMPT = """\
 1. 先查看 {SKILLS_DIR}/ 目录下已有的 Skill
 2. 把完整内容直接写入 {SKILLS_DIR}/<skill-name>/SKILL.md
 3. 格式：YAML frontmatter (name/description/author/version) + Markdown body
-4. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，进入该目录执行：
+4. {SKILLS_DIR}/ 是一个本地 Git 仓库（没有 remote，不支持 push）。
+   写入 SKILL.md 后，进入该目录执行：
    ```
    cd {SKILLS_DIR} && git add <skill-name>/ && git commit -m "<中文 commit message>"
    ```
-   commit message 必须用中文，清晰说明本次改动内容
+   commit message 必须用中文，清晰说明本次改动内容。
+   **不要执行 git push**——此仓库只有本地历史，没有远程仓库。
 
 注意：
 - 只创建真正有价值的 Skill，不要为了"有"而创建

@@ -61,15 +61,40 @@ def run_onboard_flow() -> bool:
     _do_model_config_step()
 
     # ── Step 2: Platform selection ─────────────────────────────────────────────
+    import asyncio
+    from supercc.config import resolve_config_path
+    try:
+        cfg_path, data_dir = resolve_config_path()
+    except Exception:
+        cfg_path = os.path.join(os.getcwd(), "config.json")
+        data_dir = os.path.join(os.getcwd(), ".supercc")
+
+    # 检测已配置的平台
+    _feishu_has_app = bool(os.path.exists(cfg_path))
+    _feishu_has_app = False
+    _wecom_has_corp = False
+    try:
+        from supercc.config import init_config, get_config
+        init_config(cfg_path)
+        cfg = get_config()
+        feishu_cfg = getattr(cfg.channels, "feishu", None)
+        wecom_cfg = getattr(cfg.channels, "wecom", None)
+        _feishu_has_app = bool(feishu_cfg and getattr(feishu_cfg, "app_id", ""))
+        _wecom_has_corp = bool(wecom_cfg and getattr(wecom_cfg, "corp_id", ""))
+    except Exception:
+        pass
+
     _print_step(2, TOTAL_STEPS, "选择平台")
+
+    platform_choices = [
+        questionary.Choice("飞书 (Feishu)" + ("  ✅ 已配置" if _feishu_has_app else ""), value="feishu"),
+        questionary.Choice("企业微信 (WeCom)" + ("  ✅ 已配置" if _wecom_has_corp else ""), value="wecom"),
+        questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
+    ]
 
     platform_choice = questionary.select(
         "请选择要配置的聊天平台（后续可随时通过 `supercc config` 修改）",
-        choices=[
-            questionary.Choice("飞书 (Feishu)", value="feishu"),
-            questionary.Choice("企业微信 (WeCom)", value="wecom"),
-            questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
-        ],
+        choices=platform_choices,
         style=questionary.Style([
             ("selected", "fg:#00AA00 bold"),
             ("choice", "fg:#CCCCCC"),
@@ -79,27 +104,88 @@ def run_onboard_flow() -> bool:
 
     if platform_choice == "skip":
         print("\n⏭  跳过平台配置\n")
-        feishu_configured = False
-        wecom_configured = False
+        feishu_configured = _feishu_has_app
+        wecom_configured = _wecom_has_corp
+    elif (platform_choice == "feishu" and _feishu_has_app) or (platform_choice == "wecom" and _wecom_has_corp):
+        # 已配置的平台：提供管理选项
+        platform_name = "飞书" if platform_choice == "feishu" else "企业微信"
+        manage_choice = questionary.select(
+            f"{platform_name} 已配置，请选择操作",
+            choices=[
+                questionary.Choice("🔄  重新配置", value="reconfigure"),
+                questionary.Choice("🗑  删除配置", value="delete"),
+                questionary.Choice("↩️  返回上一级", value="back"),
+            ],
+            style=questionary.Style([
+                ("selected", "fg:#00AA00 bold"),
+                ("choice", "fg:#CCCCCC"),
+                ("pointer", "fg:#00AA00 bold"),
+            ]),
+        ).ask()
+
+        if manage_choice == "back" or manage_choice is None:
+            print("\n⏭  跳过平台配置\n")
+            feishu_configured = _feishu_has_app
+            wecom_configured = _wecom_has_corp
+        elif manage_choice == "delete":
+            # 清除配置
+            try:
+                from supercc.config import init_config, get_config, write_config
+                init_config(cfg_path)
+                cfg = get_config()
+                channel = getattr(cfg.channels, platform_choice, None)
+                if channel:
+                    channel.app_id = ""
+                    channel.app_secret = ""
+                    channel.bot_open_id = ""
+                    channel.enabled = False
+                write_config(cfg)
+                print(f"✅ {platform_name} 配置已删除\n")
+            except Exception as e:
+                print(f"⚠️  删除失败：{e}\n")
+            feishu_configured = _feishu_has_app if platform_choice != "feishu" else False
+            wecom_configured = _wecom_has_corp if platform_choice != "wecom" else False
+        else:
+            # reconfigure: 重新走安装流程
+            feishu_configured = False
+            wecom_configured = False
+            _print_step(3, TOTAL_STEPS, "配置平台")
+            if platform_choice == "feishu":
+                try:
+                    from supercc.install.flow import run_install_flow
+                    asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
+                    print("✅ 飞书配置完成\n")
+                    feishu_configured = True
+                except Exception as e:
+                    print(f"⚠️  飞书配置出错：{e}（稍后可手动配置）\n")
+            else:
+                print("\n正在安装企业微信 SDK...\n")
+                import subprocess
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "wecom-aibot-sdk-python", "--quiet"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    print(f"⚠️  企业微信 SDK 安装失败：{result.stderr.strip()}\n")
+                else:
+                    print("✅ 企业微信 SDK 安装完成\n")
+                print("请按照提示输入企业微信凭证...\n")
+                try:
+                    from supercc.install.wecom_flow import run_wecom_install_flow
+                    run_wecom_install_flow(cfg_path, bypass_accepted=True)
+                    print("✅ 企业微信配置完成\n")
+                    wecom_configured = True
+                except Exception as e:
+                    print(f"⚠️  企业微信配置出错：{e}（稍后可手动配置）\n")
     else:
-        # ── Step 3: Platform-specific config ────────────────────────────────
+        # 未配置的平台：正常流程
         _print_step(3, TOTAL_STEPS, "配置平台")
-
-        import asyncio
-        from supercc.config import resolve_config_path
-
-        try:
-            cfg_path, data_dir = resolve_config_path()
-        except Exception:
-            cfg_path = os.path.join(os.getcwd(), "config.yaml")
-            data_dir = os.path.join(os.getcwd(), ".supercc")
 
         Path(cfg_path).parent.mkdir(parents=True, exist_ok=True)
         feishu_configured = False
         wecom_configured = False
 
         if platform_choice == "feishu":
-            print("\n🚀 扫码创建飞书机器人...\n")
             try:
                 from supercc.install.flow import run_install_flow
                 asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
@@ -134,31 +220,55 @@ def run_onboard_flow() -> bool:
     _print_step(3, TOTAL_STEPS, "配置认证方式")
 
     import secrets
-    print("选择 plugin 连接 core WS 时的认证方式（可多选）：")
-    print("1. Token 认证（自动生成，推荐）")
-    print("2. 账号密码认证")
 
-    auth_choice = input("请选择（1/2/1,2）：").strip()
+    auth_choices = questionary.checkbox(
+        "选择 plugin 连接 core WS 时的认证方式",
+        choices=[
+            questionary.Choice("Token 认证（自动生成，推荐）", value="token", checked=True),
+            questionary.Choice("账号密码认证（需设置用户名和密码）", value="password"),
+        ],
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask() or []
 
     token = ""
     username = ""
     password = ""
 
-    if "1" in auth_choice:
+    if "token" in auth_choices:
         token = secrets.token_urlsafe(32)
         print(f"已生成 Token: {token}")
 
-    if "2" in auth_choice:
-        username = input("请输入用户名：").strip()
-        password = input("请输入密码：").strip()
+    if "password" in auth_choices:
+        while True:
+            username = questionary.text("请输入用户名", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or ""
+            if username:
+                break
+            print("⚠️  用户名不能为空，请重新输入\n")
+        while True:
+            password = questionary.password("请输入密码", style=questionary.Style([("password", "fg:#CCCCCC")])).ask() or ""
+            if password:
+                break
+            print("⚠️  密码不能为空，请重新输入\n")
 
     # ── Core listen address/port ───────────────────────────────────────────────
     _print_step(4, TOTAL_STEPS, "配置监听地址")
 
-    print("配置 SuperCC Core 的监听地址（plugin 通过此地址连接）：\n")
-    print("1. 127.0.0.1:28888（推荐，仅本机可访问）")
-    print("2. 0.0.0.0:28888（对外部开放）")
-    listen_choice = input("请选择（1/2），直接回车使用默认值（1）：").strip()
+    listen_choice = questionary.select(
+        "选择 SuperCC Core 的监听地址（plugin 通过此地址连接）",
+        choices=[
+            questionary.Choice("127.0.0.1:28888（推荐，仅本机可访问）", value="1"),
+            questionary.Choice("0.0.0.0:28888（对外部开放）", value="2"),
+        ],
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask() or "1"
 
     if listen_choice == "2":
         core_host = "0.0.0.0"

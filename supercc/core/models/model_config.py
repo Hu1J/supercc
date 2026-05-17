@@ -545,7 +545,7 @@ def ensure_project_model_config(project_path: str) -> bool:
             break
 
     if not configured_provider:
-        print("\n⚠️  没有已配置 API Key 的模型供应商，请先使用 `supercc config` 配置模型\n")
+        print("\n⚠️  没有已配置 API Key 的模型供应商，请先执行 `supercc onboard` 完成初始化配置\n")
         return False
 
 

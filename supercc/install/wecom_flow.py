@@ -201,7 +201,7 @@ def save_wecom_config(
 # Install flow
 # ============================================================================
 
-def run_wecom_install_flow(config_path: str = "config.yaml", bypass_accepted: bool = False) -> None:
+def run_wecom_install_flow(config_path: str = "config.json", bypass_accepted: bool = False) -> None:
     """Run the WeCom install flow.
 
     Offers two options:

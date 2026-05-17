@@ -493,8 +493,6 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         )
         plugin_tasks.append(task)
         logger.info("[Bridge] Feishu plugin started (async task)")
-    else:
-        logger.info("[Bridge] Feishu not enabled (skipping)")
 
     # 企业微信
     _wecom_cfg = getattr(config.channels, "wecom", None)
@@ -505,8 +503,16 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         )
         plugin_tasks.append(task)
         logger.info("[Bridge] WeCom plugin started (async task)")
-    else:
-        logger.info("[Bridge] WeCom not configured (skipping)")
+
+    # ── 首次使用提示 ────────────────────────────────────────────────────────
+    from supercc.core.models.model_config import has_project_model_config
+    cfg_path = Path(data_dir) / "config.json"
+    cfg_configured = cfg_path.exists() and cfg_path.stat().st_size > 3
+    if not cfg_configured or not has_project_model_config(config.claude.approved_directory):
+        print("\n📋 **首次运行检测**：项目尚未完成初始配置。")
+        print("   请执行以下命令完成初始化设置：")
+        print("   supercc onboard\n")
+        return
 
     # ── Phase 4: Cron scheduler ────────────────────────────────────────────
     cron_scheduler = CronScheduler(config, data_dir)
@@ -535,7 +541,10 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _on_signal)
+        try:
+            loop.add_signal_handler(sig, _on_signal)
+        except NotImplementedError:
+            pass  # Windows 不支持 add_signal_handler
 
     try:
         await stop_event.wait()
@@ -712,13 +721,13 @@ def detect_config() -> tuple[bool, bool]:
 
     Returns (is_installed, yaml_exists):
     - is_installed: True if config.json is non-empty
-    - yaml_exists: True if config.yaml exists (for migration)
+    - yaml_exists: True if config.json exists (for migration)
     """
     # Use same logic as resolve_config_path() but WITHOUT creating files
     cwd = os.getcwd()
     cfg_dir = Path(cwd).resolve() / ".supercc"
     json_path = cfg_dir / "config.json"
-    yaml_path = cfg_dir / "config.yaml"
+    yaml_path = cfg_dir / "config.json"
     yaml_exists = yaml_path.exists() and yaml_path.stat().st_size > 0
     is_installed = json_path.exists() and json_path.stat().st_size > 0
     return (is_installed, yaml_exists)
@@ -1567,6 +1576,11 @@ def main(args=None):
 
     args = parser.parse_args(args)
 
+    # --working-dir 必须在所有配置之前处理
+    wd = getattr(args, "working_dir", "") or ""
+    if wd:
+        os.chdir(wd)
+
     # Print banner before any logging setup
     print_banner(_version)
 
@@ -1615,10 +1629,6 @@ def main(args=None):
         return
 
     if command == "gateway":
-        # --working-dir 切换工作目录（所有 gateway 子命令共享）
-        if getattr(args, "working_dir", ""):
-            os.chdir(args.working_dir)
-
         from supercc.gateway.cli import (
             run_gateway_install,
             run_gateway_start,
@@ -1643,9 +1653,11 @@ def main(args=None):
             try:
                 run_gateway_run()
             except Exception as e:
+                import traceback
                 _logger = logging.getLogger("supercc")
-                _logger.error("Gateway run failed: %s", e, exc_info=True)
-                print(f"\n❌ Gateway run failed: {e}", file=sys.stderr)
+                err_msg = str(e) or traceback.format_exc() or "未知错误"
+                _logger.error("Gateway run failed: %s", err_msg)
+                print(f"\n❌ Gateway run failed: {err_msg}", file=sys.stderr)
                 sys.exit(1)
         elif action == "restart":
             run_gateway_restart()
@@ -1657,14 +1669,12 @@ def main(args=None):
         from supercc.onboard import run_onboard_flow
         ok = run_onboard_flow()
         if ok:
-            cfg_path, data_dir = resolve_config_path()
-            init_config(cfg_path)
-            asyncio.run(start_bridge(cfg_path, data_dir))
+            print("\n💡 现在可以运行以下命令启动 SuperCC：")
+            print("   supercc gateway start\n")
         return
 
     if command == "pairing":
         from supercc.core.pairing import get_pairing_store
-        from supercc.config import get_config, write_config, init_config, resolve_config_path
         cfg_path, _ = resolve_config_path()
         init_config(cfg_path)
         store = get_pairing_store()

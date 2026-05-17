@@ -53,7 +53,7 @@ def _resolve_path(file_path: str) -> str:
 
 
 def _get_feishu_client() -> "FeishuClient":
-    """延迟初始化 FeishuClient（读取 config.yaml）。"""
+    """延迟初始化 FeishuClient（读取 config.json）。"""
     from supercc.config import get_config
     from supercc.channels.feishu.client import FeishuClient
     cfg = get_config()

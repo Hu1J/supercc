@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted: bool = False) -> None:
-    """Write the app credentials and defaults to config.yaml.
+    """Write the app credentials and defaults to config.json.
 
     Uses init_config + get_config + write_config to preserve existing settings
     (e.g. groups) when re-running the install flow.
@@ -70,9 +70,49 @@ def save_config(result: AppRegistrationResult, config_path: str, bypass_accepted
     print(f"\n✅ 配置已保存到 {config_path}")
 
 
-async def run_install_flow(config_path: str = "config.yaml", bypass_accepted: bool = False) -> AppRegistrationResult:
+async def run_install_flow(config_path: str = "config.json", bypass_accepted: bool = False) -> AppRegistrationResult | None:
+    """Run the full install flow: init → begin → QR → poll → save config.
+
+    支持扫码创建和手动输入两种方式。
+    """
     config_path = str(Path(config_path).absolute())
-    """Run the full install flow: init → begin → QR → poll → save config."""
+
+    import questionary
+
+    method = questionary.select(
+        "请选择飞书机器人接入方式：",
+        choices=[
+            questionary.Choice("🔍 扫码创建（推荐）", value="qrcode"),
+            questionary.Choice("⌨️  手动输入 App ID 和 App Secret", value="manual"),
+        ],
+        style=questionary.Style([
+            ("selected", "fg:#00AA00 bold"),
+            ("choice", "fg:#CCCCCC"),
+            ("pointer", "fg:#00AA00 bold"),
+        ]),
+    ).ask()
+
+    if method == "manual":
+        print("\n📋 手动配置飞书机器人\n")
+        print("请将已有的飞书应用凭证填入以下内容：\n")
+        app_id = questionary.text("App ID", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or ""
+        app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask() or ""
+        bot_name = questionary.text("机器人名称（如 Claude）", default="Claude", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or "Claude"
+
+        if not app_id or not app_secret:
+            print("\n❌ App ID 和 App Secret 不能为空\n")
+            return None
+
+        class _ManualResult:
+            app_id = app_id
+            app_secret = app_secret
+            bot_name = bot_name
+            domain = ""
+            user_open_id = ""
+        result = _ManualResult()
+        save_config(result, config_path, bypass_accepted=bypass_accepted)
+        return result
+
     print("\n🚀 扫码创建飞书机器人...\n")
 
     api = FeishuInstallAPI()
