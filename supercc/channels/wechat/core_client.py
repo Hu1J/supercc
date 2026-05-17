@@ -8,7 +8,7 @@ import random
 import traceback
 from typing import Any, Optional
 
-from supercc.core.protocol import JsonRpcRequest, Event
+from supercc.core.protocol import JsonRpcRequest, Event, IncomingMessage
 from supercc.channels.wechat.lp_client import WeChatLongPollingClient
 from supercc.channels.wechat.client import WeChatClient
 
@@ -259,6 +259,10 @@ class WeChatCoreWSClient:
         # Typing ticket 缓存
         self._typing_tickets: dict[str, tuple[str, float]] = {}
 
+        # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
+        self._group_history: dict[str, list[IncomingMessage]] = {}
+        self._MAX_GROUP_HISTORY = 10
+
         self.formatter = WeChatReplyFormatter()
 
     def _context_key(self, user_id: str) -> str:
@@ -281,6 +285,25 @@ class WeChatCoreWSClient:
 
     def _set_typing_ticket(self, user_id: str, ticket: str) -> None:
         self._typing_tickets[user_id] = (ticket, asyncio.get_event_loop().time())
+
+    def _enrich_group_context(self, chat_id: str, current_message_id: str) -> str:
+        """从群聊历史构建上下文字符串。"""
+        hist = self._group_history.get(chat_id, [])
+        if not hist:
+            return ""
+
+        history_lines = []
+        for h_msg in hist:
+            h_msg_id = h_msg.get("message_id", "") if isinstance(h_msg, dict) else ""
+            # 跳过当前消息，避免重复注入
+            if h_msg_id == current_message_id:
+                continue
+            h_user_open_id = h_msg.get("user_open_id", "") if isinstance(h_msg, dict) else ""
+            h_content = h_msg.get("content", "") if isinstance(h_msg, dict) else ""
+            if h_content:
+                history_lines.append(f"{h_user_open_id}: {h_content}")
+
+        return "\n".join(history_lines)
 
     async def _send_auth(self) -> None:
         """发送 auth 消息到核心。"""
@@ -503,14 +526,40 @@ class WeChatCoreWSClient:
         item_list = msg.get("item_list") or []
         text = _extract_text(item_list)
 
+        # 检测群聊
+        chat_type, chat_id = _guess_chat_type(msg, self._account_id)
+        is_group_chat = chat_type == "group"
+
+        # ── 群聊所有消息：记录到 _group_history ────────────────────────────
+        if is_group_chat:
+            hist = self._group_history.setdefault(chat_id, [])
+            # 构建简化消息对象用于历史记录
+            hist_entry = {
+                "message_id": message_id,
+                "user_open_id": sender_id,
+                "content": text,
+                "message_type": "text",
+                "raw_content": json.dumps(msg),
+            }
+            hist.append(hist_entry)
+            if len(hist) > self._MAX_GROUP_HISTORY:
+                hist.pop(0)
+
         # 权限检查
-        if not self._is_dm_allowed(sender_id):
+        if is_group_chat:
+            pass  # 群聊暂不检查 allowlist
+        elif not self._is_dm_allowed(sender_id):
             logger.info("[WeChatCore] user %s not in allowlist, skipping", sender_id[:8])
             return
 
         # 异步获取 typing ticket
         if self._client:
             asyncio.create_task(self._maybe_fetch_typing_ticket(sender_id, context_token))
+
+        # ── 构建 group_context ────────────────────────────────────────────
+        group_context = ""
+        if is_group_chat:
+            group_context = self._enrich_group_context(chat_id, message_id)
 
         # 发送到核心
         req = JsonRpcRequest(
@@ -519,13 +568,14 @@ class WeChatCoreWSClient:
             platform="wechat",
             params={
                 "message_id": message_id,
-                "chat_id": sender_id,
+                "chat_id": chat_id if is_group_chat else sender_id,
                 "user_open_id": sender_id,
                 "project_path": self._project_path,
                 "content": text,
                 "message_type": "text",
-                "is_group_chat": False,
+                "is_group_chat": is_group_chat,
                 "mention_bot": False,
+                "group_context": group_context,
             },
         )
 

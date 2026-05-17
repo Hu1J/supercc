@@ -1,4 +1,4 @@
-"""微信个人消息格式化工具。
+"""微信个人消息格式化。
 
 用于将工具调用结果渲染为微信友好的 Markdown 格式。
 微信支持有限 Markdown（bold/code），不支持复杂卡片。
@@ -7,6 +7,15 @@ from __future__ import annotations
 
 import json
 from typing import Optional
+
+
+def should_use_card(text: str) -> bool:
+    """Decide whether to send as WeChat Interactive Card vs plain text.
+
+    WeChat does NOT support CardKit, so this always returns False.
+    All messages are sent as plain text with markdown formatting.
+    """
+    return False
 
 
 class WeChatReplyFormatter:
@@ -114,6 +123,13 @@ class WeChatReplyFormatter:
                 wrapped = textwrap.wrap(line, width=120, break_long_words=False, break_on_hyphens=False)
                 wrapped_lines.extend(wrapped or [line])
         return "\n".join(wrapped_lines)
+
+    def should_use_card(self, text: str) -> bool:
+        """Decide whether to send as WeChat Interactive Card vs plain text.
+
+        WeChat does NOT support CardKit, so this always returns False.
+        """
+        return should_use_card(text)
 
 
 def format_tool_call(tool_name: str, tool_input: Optional[str] = None) -> str:
