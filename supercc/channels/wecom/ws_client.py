@@ -71,10 +71,13 @@ class WeComWSClient:
         """SDK 消息回调：提取 msgid/req_id 映射，转发给业务回调。"""
         body = frame.body
         if not isinstance(body, dict):
+            logger.warning(f"[WeComWS] received non-dict body: {type(body)}")
             return
 
+        msgtype = body.get("msgtype", "")
         msg_id = str(body.get("msgid") or "")
         req_id = str((frame.headers or {}).get("req_id") or "")
+        logger.info(f"[WeComWS] ★ received msgtype={msgtype}, msgid={msg_id[:20] if msg_id else 'None'}, req_id={req_id[:20] if req_id else 'None'}, body_keys={list(body.keys())}")
 
         if msg_id and req_id:
             with self._reply_lock:
