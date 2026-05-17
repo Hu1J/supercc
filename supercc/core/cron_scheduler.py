@@ -1,5 +1,5 @@
 """
-Cron job scheduler — executes time-based jobs and delivers output to Feishu.
+Cron job scheduler — executes time-based jobs and delivers output to Plugin via WsServer.
 
 Stores jobs in {data_dir}/cron_jobs.json
 Output logs in {data_dir}/cron_logs/{job_id}/{timestamp}.md
@@ -7,7 +7,8 @@ Output logs in {data_dir}/cron_logs/{job_id}/{timestamp}.md
 Architecture:
 - CronScheduler runs tick() every 60s from a background thread
 - Each due job runs in its own ClaudeIntegration subprocess (avoids concurrent conflicts)
-- Job output is saved to file AND sent to the job's chat_id via FeishuClient
+- Job output is saved to file AND sent to Plugin via cron_delivery_queue
+- Plugin (feishu/wecom) receives cron events via WS and handles rendering
 """
 
 from __future__ import annotations
@@ -30,7 +31,126 @@ from typing import Optional
 
 from supercc.config import Config, SESSIONS_DB_PATH
 from supercc.core.claude.integration import ClaudeIntegration
-from supercc.channels.feishu.client import FeishuClient
+from supercc.core.cron_delivery import cron_delivery_queue, CronDeliveryItem
+from supercc.core.protocol import SessionKey
+from supercc.channels.common.format import (
+    colorize_diff,
+    MemoryCardMarker,
+    _AskUserQuestionMarker,
+)
+
+
+def _format_tool_call_markdown(tool_name: str, tool_input: str | None, memory_manager=None) -> str | None:
+    """将工具调用格式化为 Markdown 字符串（平台无关实现）。
+
+    Core 层只生成 Markdown，具体渲染由 Plugin 决定。
+    """
+    if tool_input is None:
+        tool_input = ""
+
+    # Edit / Write → diff Markdown
+    if tool_name in ("Edit", "Write"):
+        if not tool_input.strip():
+            return None
+        try:
+            data = json.loads(tool_input)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        file_path = data.get("file_path", "unknown")
+        if tool_name == "Edit":
+            old_str = data.get("old_string", "")
+            new_str = data.get("new_string", "")
+        else:  # Write
+            old_str = ""
+            new_str = data.get("content", "")
+
+        diff_lines = colorize_diff(old_str, new_str)
+        diff_text = "\n".join(f"{d.prefix()}{d.content}" for d in diff_lines)
+        return f"**{file_path}**\n```diff\n{diff_text}\n```"
+
+    # Bash → Markdown 代码块
+    if tool_name == "Bash":
+        if not tool_input:
+            return ""
+        try:
+            data = json.loads(tool_input)
+            command = data.get("command", tool_input)
+            description = data.get("description")
+        except (json.JSONDecodeError, TypeError):
+            command = tool_input
+            description = None
+
+        header = f"💻 **Bash**"
+        if description:
+            header += f" — {description}"
+        return f"{header}\n```bash\n{command}\n```"
+
+    # TodoWrite → Markdown 表格
+    if tool_name == "TodoWrite":
+        if not tool_input:
+            return ""
+        try:
+            data = json.loads(tool_input)
+            items = data.get("todos", [])
+        except (json.JSONDecodeError, TypeError):
+            return f"📋 **{tool_name}**\n`{tool_input}`"
+
+        lines = ["📋 **TodoWrite**"]
+        for i, item in enumerate(items, 1):
+            done = "✅" if item.get("done") else "⬜"
+            content = item.get("content", "")
+            lines.append(f"{done} {i}. {content}")
+        return "\n".join(lines)
+
+    # AskUserQuestion → 问卷 Markdown
+    if tool_name == "AskUserQuestion":
+        marker = _AskUserQuestionMarker(tool_name, tool_input)
+        return marker.render()
+
+    # Memory MCP tools → 卡片 Markdown
+    if tool_name and tool_name.startswith("mcp__SuperCC__Memory"):
+        try:
+            marker = MemoryCardMarker(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                memory_manager=memory_manager,
+            )
+            return marker.render()
+        except Exception:
+            pass
+
+    # Read → 文件路径
+    if tool_name == "Read":
+        if not tool_input:
+            return ""
+        try:
+            data = json.loads(tool_input)
+            file_path = data.get("file_path", tool_input)
+        except (json.JSONDecodeError, TypeError):
+            file_path = tool_input
+        return f"📖 **Read** — `{file_path}`"
+
+    # Agent → 描述
+    if tool_name == "Agent":
+        if not tool_input:
+            return "🤖 **Agent**"
+        try:
+            data = json.loads(tool_input)
+            desc = data.get("description", tool_input)
+        except (json.JSONDecodeError, TypeError):
+            desc = tool_input
+        return f"🤖 **Agent** — {desc}"
+
+    # 其他工具 → 通用格式
+    icon_map = {
+        "Glob": "🔍", "Grep": "🔎", "WebFetch": "🌐", "WebSearch": "🌐",
+        "Task": "📋", "MemorySearch": "🧠", "MemoryList": "🧠", "MemoryAdd": "🧠",
+    }
+    icon = icon_map.get(tool_name, "🔀")
+    if tool_input and len(tool_input) <= 500:
+        return f"{icon} **{tool_name}**\n`{tool_input}`"
+    return f"{icon} **{tool_name}**"
 
 
 def _get_user_open_id_by_chat_id(data_dir: str, chat_id: str) -> str | None:
@@ -670,24 +790,6 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     )
     _log("CONTEXT_SET")
 
-    # Create platform client for delivery
-    if platform == "wecom":
-        from supercc.channels.wecom.client import WeComClient
-        client = WeComClient(
-            bot_id=config.channels.wecom.bot_id,
-            bot_secret=config.channels.wecom.bot_secret,
-            data_dir=data_dir,
-        )
-        _log("WECOM_CLIENT_CREATED")
-    else:
-        client = FeishuClient(
-            app_id=config.channels.feishu.app_id,
-            app_secret=config.channels.feishu.app_secret,
-            bot_name=config.channels.feishu.bot_name,
-            data_dir=data_dir,
-        )
-        _log("FEISHU_CLIENT_CREATED")
-
     # Memory manager for formatting memory tool calls
     from supercc.core.claude.memory_manager import get_memory_manager
     memory_manager = get_memory_manager()
@@ -731,88 +833,37 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     intermediates: list[dict] = []
 
     # ── Platform-specific formatters and send helpers ──────────────────────────
-    if platform == "wecom":
-        from supercc.channels.wecom.format.reply_formatter import WeComReplyFormatter as PlatformFormatter
-        from supercc.channels.wecom.format.edit_diff import _DiffMarker as PlatformDiffMarker
-        from supercc.channels.common.format import MemoryCardMarker as PlatformMemoryMarker
-        platform_formatter = PlatformFormatter()
-
-        async def _send_now(card_or_text):
-            """Send to WeCom: markdown → send_markdown, dict card → send_template_card."""
-            if isinstance(card_or_text, dict):
-                await client.send_template_card(chat_id, "text_notice",
-                    title=card_or_text.get("header", {}).get("title", {}).get("content", "通知"),
-                    desc=str(card_or_text)[:500])
-            else:
-                try:
-                    await client.send_markdown(chat_id, str(card_or_text))
-                except Exception:
-                    await client.send_text(chat_id, str(card_or_text)[:2000])
-    else:
-        from supercc.channels.feishu.format.reply_formatter import ReplyFormatter as PlatformFormatter
-        from supercc.channels.feishu.format.edit_diff import _DiffMarker as PlatformDiffMarker
-        from supercc.channels.common.format import MemoryCardMarker as PlatformMemoryMarker
-        from supercc.channels.feishu.format.questionnaire_card import _AskUserQuestionMarker as PlatformQuestionnaireMarker, format_questionnaire_card
-        platform_formatter = PlatformFormatter()
-
-        async def _send_now(card_or_text):
-            """Send to Feishu: dict → send_card, text → send_interactive_card."""
-            if isinstance(card_or_text, dict):
-                await client.send_card(chat_id, card_or_text)
-            else:
-                text = str(card_or_text)
-                if platform_formatter.should_use_card(text):
-                    await client.send_interactive_card(chat_id, text)
-                else:
-                    await client.send_post(chat_id, text)
+    # Build session key for delivery
+    session_key = SessionKey(
+        bot_id=bot_id,
+        project_path=str(Path(data_dir).resolve().parent),
+        platform=platform,
+        chat_id=chat_id,
+    )
 
     async def _on_stream(claude_msg):
         try:
             if claude_msg.tool_name:
-                result = platform_formatter.format_tool_call(
-                    claude_msg.tool_name, claude_msg.tool_input,
+                # Format as Markdown (platform-independent)
+                md = _format_tool_call_markdown(
+                    claude_msg.tool_name,
+                    claude_msg.tool_input,
                     memory_manager=memory_manager,
-                    platform=platform, chat_id=chat_id or "",
-                    default_project_path=config.claude.approved_directory,
                 )
 
-                if stream_realtime:
-                    # Send immediately
-                    if isinstance(result, PlatformDiffMarker):
-                        await _send_now(result.card)
-                    elif isinstance(result, list):
-                        for marker in result:
-                            if isinstance(marker, PlatformDiffMarker):
-                                await _send_now(marker.card)
-                    elif isinstance(result, PlatformMemoryMarker):
-                        md = result.render()
-                        if md:
-                            await _send_now(md)
-                    elif platform == "feishu" and isinstance(result, PlatformQuestionnaireMarker):
-                        card = format_questionnaire_card(result)
-                        if card:
-                            await _send_now(card)
-                    else:
-                        await _send_now(str(result))
-                else:
-                    # Collect for later delivery
-                    if isinstance(result, PlatformDiffMarker):
-                        intermediates.append({"type": "card", "content": result.card})
-                    elif isinstance(result, list):
-                        for marker in result:
-                            if isinstance(marker, PlatformDiffMarker):
-                                intermediates.append({"type": "card", "content": marker.card})
-                    elif isinstance(result, PlatformMemoryMarker):
-                        md = result.render()
-                        if md:
-                            intermediates.append({"type": "markdown", "content": md})
-                    elif platform == "feishu" and isinstance(result, PlatformQuestionnaireMarker):
-                        card = format_questionnaire_card(result)
-                        if card:
-                            intermediates.append({"type": "card", "content": card})
-                    else:
-                        text = str(result)
-                        intermediates.append({"type": "markdown", "content": text})
+                if stream_realtime and md:
+                    # Send progress immediately via queue
+                    cron_delivery_queue.put(CronDeliveryItem(
+                        event="progress",
+                        session_key=session_key,
+                        job_id=job_id,
+                        job_name=job_name,
+                        platform=platform,
+                        content=md,
+                    ))
+                elif md:
+                    # Collect for later delivery (keep same format for pending store)
+                    intermediates.append({"type": "markdown", "content": md})
 
                 await _stream_log(claude_msg)
             elif claude_msg.content:
@@ -827,29 +878,8 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         _log("CLAUDE_QUERY_DONE", f"elapsed={elapsed:.1f}s, session_id={session_id!r}, cost=${cost:.4f}")
 
         # For skill scan jobs, detect changes via git state comparison
-        if is_skill_scan and before_state is not None:
-            from supercc.core.evolve.skill_nudge import _detect_skill_changes
-
-            async def _skill_send(cid, text):
-                if platform == "feishu":
-                    from supercc.channels.feishu.format.reply_formatter import should_use_card
-                    if should_use_card(text):
-                        await client.send_interactive_card(cid, text)
-                    else:
-                        await client.send_post(cid, text)
-                else:
-                    try:
-                        await client.send_markdown(cid, text)
-                    except Exception:
-                        await client.send_text(cid, text[:2000])
-
-            await _detect_skill_changes(
-                before_state=before_state,
-                skills_dir=skills_dir,
-                chat_id=chat_id,
-                send_to_feishu=_skill_send,
-                notify=False,
-            )
+        # Note: skill changes are detected but not sent via WS here;
+        # Plugin will receive the final result via cron_result event
     except Exception as e:
         logger.warning(f"[cron] Job {job_id} Claude error: {e}")
         _log("CLAUDE_QUERY_ERROR", str(e))
@@ -887,29 +917,23 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         running_jobs.discard(job_id)
         return
 
-    header = f"⏰ **{job_name}**"
+    # Send result via queue
     try:
-        _log("PLATFORM_DELIVERY_START")
-        if platform == "feishu":
-            from supercc.channels.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
-            body = optimize_markdown_style(response.strip(), card_version=2)
-            text = f"{header}\n\n{body}"
-            if should_use_card(body):
-                await client.send_interactive_card(chat_id, text)
-            else:
-                await client.send_post(chat_id, text)
-        else:
-            text = f"{header}\n\n{response.strip()}"
-            try:
-                await client.send_markdown(chat_id, text)
-            except Exception:
-                await client.send_text(chat_id, text[:2000])
-        _log("PLATFORM_DELIVERY_DONE")
-        logger.info(f"[cron] Job {job_id} delivered to {chat_id} via {platform}")
+        _log("QUEUE_DELIVERY")
+        header = f"⏰ **{job_name}**"
+        content = f"{header}\n\n{response.strip()}" if response else header
+        cron_delivery_queue.put(CronDeliveryItem(
+            event="result",
+            session_key=session_key,
+            job_id=job_id,
+            job_name=job_name,
+            platform=platform,
+            content=content,
+        ))
+        logger.info(f"[cron] Job {job_id} result queued for {chat_id} via {platform}")
     except Exception as e:
-        logger.warning(f"[cron] Job {job_id} delivery failed: {e}")
-        _log("PLATFORM_DELIVERY_ERROR", str(e))
-        mark_run(job_id, success=True, error=f"Delivery failed: {e}", data_dir=data_dir)
+        logger.warning(f"[cron] Job {job_id} queue failed: {e}")
+        mark_run(job_id, success=True, error=f"Queue failed: {e}", data_dir=data_dir)
         running_jobs.discard(job_id)
         return
 
@@ -1027,77 +1051,58 @@ class CronScheduler:
             due_pending = [e for e in due_pending if e.get("chat_id") == self.chat_id]
         sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
         if due_pending:
-            # Platform clients are created per-entry since each entry may have a different platform
-            from supercc.channels.feishu.client import FeishuClient
             for entry in due_pending:
                 pending_key = entry.get("pending_key", entry.get("job_id", ""))
                 if pending_key in sent_this_tick:
                     continue
                 try:
                     p = entry.get("platform", "feishu")
-                    if p == "wecom":
-                        from supercc.channels.wecom.client import WeComClient
-                        p_client = WeComClient(
-                            bot_id=self.config.channels.wecom.bot_id,
-                            bot_secret=self.config.channels.wecom.bot_secret,
-                            data_dir=self.data_dir,
-                        )
-                    else:
-                        p_client = FeishuClient(
-                            app_id=self.config.channels.feishu.app_id,
-                            app_secret=self.config.channels.feishu.app_secret,
-                            bot_name=self.config.channels.feishu.bot_name,
-                            data_dir=self.data_dir,
-                        )
+                    chat_id = entry.get("chat_id", "")
 
-                    # Send intermediate messages first (in order)
+                    # Build session key for this delivery
+                    if p == "wecom":
+                        bot_id = getattr(self.config.channels.wecom, "bot_id", "")
+                    else:
+                        bot_id = getattr(self.config.channels.feishu, "bot_id", "")
+                    session_key = SessionKey(
+                        bot_id=bot_id,
+                        project_path=str(Path(self.data_dir).resolve().parent),
+                        platform=p,
+                        chat_id=chat_id,
+                    )
+
+                    # Send intermediate messages first (in order) via queue
                     intermediates = entry.get("intermediates", [])
                     for msg in intermediates:
-                        msg_type = msg.get("type", "text")
-                        content = msg.get("content", "")
-                        if p == "feishu":
-                            from supercc.channels.feishu.format.reply_formatter import should_use_card
-                            if msg_type == "card":
-                                await p_client.send_card(entry["chat_id"], content)
-                            elif msg_type == "interactive_card":
-                                await p_client.send_interactive_card(entry["chat_id"], content)
-                            else:
-                                if should_use_card(content):
-                                    await p_client.send_interactive_card(entry["chat_id"], content)
-                                else:
-                                    await p_client.send_post(entry["chat_id"], content)
-                        else:
-                            if isinstance(content, dict):
-                                await p_client.send_template_card(entry["chat_id"], "text_notice",
-                                    title="通知", desc=str(content)[:500])
-                            else:
-                                try:
-                                    await p_client.send_markdown(entry["chat_id"], str(content))
-                                except Exception:
-                                    await p_client.send_text(entry["chat_id"], str(content)[:2000])
+                        content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+                        if content:
+                            cron_delivery_queue.put(CronDeliveryItem(
+                                event="progress",
+                                session_key=session_key,
+                                job_id=entry.get("job_id", ""),
+                                job_name=entry.get("job_name", ""),
+                                platform=p,
+                                content=content,
+                            ))
 
-                    # Send final response
+                    # Send final response via queue
                     header = f"⏰ **{entry['job_name']}**"
-                    if p == "feishu":
-                        from supercc.channels.feishu.format.reply_formatter import should_use_card, optimize_markdown_style
-                        body = optimize_markdown_style(entry["response"], card_version=2)
-                        text = f"{header}\n\n{body}"
-                        if should_use_card(body):
-                            await p_client.send_interactive_card(entry["chat_id"], text)
-                        else:
-                            await p_client.send_post(entry["chat_id"], text)
-                    else:
-                        text = f"{header}\n\n{entry['response']}"
-                        try:
-                            await p_client.send_markdown(entry["chat_id"], text)
-                        except Exception:
-                            await p_client.send_text(entry["chat_id"], text[:2000])
+                    response = entry.get("response", "")
+                    content = f"{header}\n\n{response}" if response else header
+                    cron_delivery_queue.put(CronDeliveryItem(
+                        event="result",
+                        session_key=session_key,
+                        job_id=entry.get("job_id", ""),
+                        job_name=entry.get("job_name", ""),
+                        platform=p,
+                        content=content,
+                    ))
 
                     pending_store.remove(pending_key)
                     sent_this_tick.add(pending_key)
-                    logger.info(f"[cron] Pending notification delivered for job {pending_key} via {p}")
+                    logger.info(f"[cron] Pending notification queued for job {pending_key} via {p}")
                 except Exception as e:
-                    logger.warning(f"[cron] Pending notification delivery failed: {e}")
+                    logger.warning(f"[cron] Pending notification queue failed: {e}")
 
         due = get_due_jobs(self.data_dir, chat_id=self.chat_id)
         # Filter out jobs that are already running (prevents overlap if job takes >60s)

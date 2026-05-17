@@ -26,6 +26,44 @@ class ModelHandler(CommandHandler):
         parts = args.strip().split(maxsplit=2)
         action = parts[0].lower() if parts else ""
 
+        # /model switch — 列出所有可选供应商
+        if action == "switch" and len(parts) == 1:
+            providers_cfg = get_all_providers()
+            lines = ["## 🤖 可选供应商\n"]
+            for pid, provider in PROVIDERS.items():
+                if pid == "custom":
+                    continue
+                pcfg = providers_cfg.get(pid)
+                api_key = pcfg.api_key if pcfg else ""
+                status = "✅ 已配置" if api_key else "📛 未配置"
+                lines.append(f"- **{pid}** {status} — 可用模型：`{'` / `'.join(provider.models[:5])}`")
+            raw = _load_json()
+            for pid in sorted(set(raw.get("providers", {}).keys()) - set(PROVIDERS.keys())):
+                pdata = raw["providers"].get(pid, {})
+                models = pdata.get("models", [])
+                lines.append(f"- **{pid}** 📛 未配置 — 可用模型：`{'` / `'.join(models[:5])}`")
+            lines.append(f"\n💡 使用 `/model switch <供应商> <模型ID>` 切换模型")
+            return CommandResult(content="\n".join(lines))
+
+        # /model switch <provider> — 列出该供应商可选模型
+        if action == "switch" and len(parts) == 2:
+            target_pid = parts[1]
+            provider_models = PROVIDERS.get(target_pid)
+            if not provider_models:
+                raw = _load_json()
+                pdata = raw.get("providers", {}).get(target_pid, {})
+                models = pdata.get("models", [])
+            else:
+                models = provider_models.models
+            env = get_model_env()
+            current = env.ANTHROPIC_MODEL if env.provider_id == target_pid else None
+            lines = [f"## 🤖 {target_pid} 可选模型\n"]
+            for m in models:
+                mark = " ← 当前" if m == current else ""
+                lines.append(f"- `{m}`{mark}")
+            lines.append(f"\n💡 使用 `/model switch {target_pid} <模型ID>` 切换模型")
+            return CommandResult(content="\n".join(lines))
+
         # /model switch <provider> <model>
         if action == "switch" and len(parts) >= 3:
             target_pid = parts[1]
@@ -93,7 +131,7 @@ class ModelHandler(CommandHandler):
         table_content = "\n".join(table_lines)
 
         content = (
-            f"## 🔀 模型配置\n"
+            f"## 🤖 模型配置\n"
             f"当前使用：**{active_name}**（`{current_mid or '未设置'}`）\n\n"
             f"{table_content}\n\n"
             f"💡 切换模型：`/model switch <供应商> <模型ID>` 或者对我说：帮我切换到<供应商>的<模型ID>"

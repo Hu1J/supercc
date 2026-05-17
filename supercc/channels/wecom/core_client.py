@@ -133,7 +133,7 @@ class WeComReplyFormatter:
         if tool_input is None:
             tool_input = ""
 
-        icon = self.ICONS.get(tool_name, "🔀")
+        icon = self.ICONS.get(tool_name, "🤖")
         short_name = tool_name.replace("mcp__SuperCC__", "")
 
         # Edit → diff markdown
@@ -509,6 +509,10 @@ class WeComCoreWSClient:
             pass  # 心跳响应
         elif method == "command_progress":
             await self._handle_command_progress(params)
+        elif method == "cron_progress":
+            await self._handle_cron_progress(params)
+        elif method == "cron_result":
+            await self._handle_cron_result(params)
 
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为企业微信格式并发送。"""
@@ -656,6 +660,47 @@ class WeComCoreWSClient:
                 await self.wecom.send_text(chat_id, text[:2000])
             except Exception as e:
                 logger.warning("[command_progress] send failed: %s", e)
+
+    async def _handle_cron_progress(self, params: dict):
+        """处理 cron 中间过程消息。"""
+        job_id = params.get("job_id", "")
+        content = params.get("content", "")
+        chat_id = params.get("chat_id") or self._last_chat_id or ""
+
+        if not chat_id:
+            logger.warning("[cron_progress] no chat_id, skipping")
+            return
+
+        try:
+            await self.wecom.send_markdown(chat_id, content)
+        except Exception:
+            try:
+                await self.wecom.send_text(chat_id, content[:2000])
+            except Exception as e:
+                logger.warning(f"[cron_progress] failed to send: {e}")
+
+    async def _handle_cron_result(self, params: dict):
+        """处理 cron 最终结果消息。"""
+        job_name = params.get("job_name", "")
+        content = params.get("content", "")
+        error = params.get("error")
+        chat_id = params.get("chat_id") or self._last_chat_id or ""
+
+        if not chat_id:
+            logger.warning("[cron_result] no chat_id, skipping")
+            return
+
+        try:
+            if error:
+                text = f"⏰ **{job_name}**\n\n❌ 错误: {error}"
+                await self.wecom.send_text(chat_id, text)
+            else:
+                try:
+                    await self.wecom.send_markdown(chat_id, content)
+                except Exception:
+                    await self.wecom.send_text(chat_id, content[:2000])
+        except Exception as e:
+            logger.warning(f"[cron_result] failed to send: {e}")
 
     async def _handle_tool_call(self, params: dict):
         """tool_call 事件：格式化工具结果并发送给用户。"""

@@ -1,6 +1,6 @@
 """企业微信消息格式化。"""
+from supercc.channels.common.format.diff import colorize_diff
 from supercc.channels.wecom.format.edit_diff import (
-    colorize_diff,
     format_diff_markdown,
     format_edit_markdown,
     format_write_markdown,

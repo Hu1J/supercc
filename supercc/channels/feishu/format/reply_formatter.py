@@ -51,7 +51,9 @@ class ReplyFormatter:
             "MemoryDelete": "🧠",
             "MemoryClear": "🧠",
             "FeishuSendFile": "📬",
+            "Skill": "🧰",
             "SkillSearch": "🎯",
+            "SkillInvoke": "🧰",
             "EnterPlanMode": "🎯",
             "ExitPlanMode": "🎯",
             "AskUserQuestion": "🎯",
@@ -152,7 +154,7 @@ class ReplyFormatter:
             return self._format_codex_tool(tool_input)
 
         # 其他工具 → backtick 格式（原有逻辑）
-        icon = self.tool_icons.get(tool_name, "🔀")
+        icon = self.tool_icons.get(tool_name, "🤖")
         msg = f"{icon} **{tool_name}**"
         if tool_input:
             if len(tool_input) <= FEISHU_MAX_MESSAGE_LENGTH - len(msg) - 5:

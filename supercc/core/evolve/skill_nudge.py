@@ -315,7 +315,8 @@ async def trigger_skill_review(
 
     logger.info("[skill_nudge] triggering skill review")
 
-    skills_dir = skills_dir or (Path.home() / ".supercc" / "skills")
+    from supercc.config import get_config
+    skills_dir = skills_dir or (Path(get_config().data_dir) / "skills")
 
     # Snapshot before state
     before_state = _get_skill_git_state(skills_dir)

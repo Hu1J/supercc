@@ -324,6 +324,10 @@ class FeishuCoreWSClient:
                 await self._safe_send(chat_id, msg_id, formatted)
         elif method == "command_progress":
             await self._handle_command_progress(params)
+        elif method == "cron_progress":
+            await self._handle_cron_progress(params)
+        elif method == "cron_result":
+            await self._handle_cron_result(params)
 
     async def _handle_command_progress(self, params: dict):
         """渲染 restart/update 步骤进度卡片，发到飞书。
@@ -399,6 +403,49 @@ class FeishuCoreWSClient:
                 await self.feishu.send_text(chat_id, card)
             except Exception:
                 pass
+
+    async def _handle_cron_progress(self, params: dict):
+        """处理 cron 中间过程消息。"""
+        job_id = params.get("job_id", "")
+        content = params.get("content", "")
+        chat_id = params.get("chat_id") or self._last_chat_id or ""
+
+        if not chat_id:
+            logger.warning("[cron_progress] no chat_id, skipping")
+            return
+
+        try:
+            # 实时进度直接发送 Markdown
+            if self.formatter.should_use_card(content):
+                await self.feishu.send_interactive_card(chat_id, content)
+            else:
+                await self.feishu.send_post(chat_id, content)
+        except Exception as e:
+            logger.warning(f"[cron_progress] failed to send: {e}")
+
+    async def _handle_cron_result(self, params: dict):
+        """处理 cron 最终结果消息。"""
+        job_name = params.get("job_name", "")
+        content = params.get("content", "")
+        error = params.get("error")
+        chat_id = params.get("chat_id") or self._last_chat_id or ""
+
+        if not chat_id:
+            logger.warning("[cron_result] no chat_id, skipping")
+            return
+
+        try:
+            if error:
+                text = f"⏰ **{job_name}**\n\n❌ 错误: {error}"
+                await self.feishu.send_text(chat_id, text)
+            else:
+                # 发送最终结果，使用卡片格式
+                if self.formatter.should_use_card(content):
+                    await self.feishu.send_interactive_card(chat_id, content)
+                else:
+                    await self.feishu.send_post(chat_id, content)
+        except Exception as e:
+            logger.warning(f"[cron_result] failed to send: {e}")
 
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为飞书格式并发送。
@@ -539,7 +586,7 @@ class FeishuCoreWSClient:
                             icon = "📝"
                         fallback = f"{icon} **{result.tool_name}** — `{file_path}`"
                     except Exception:
-                        fallback = f"🔀 **{result.tool_name}**\n`{result.tool_input[:500]}`"
+                        fallback = f"🤖 **{result.tool_name}**\n`{result.tool_input[:500]}`"
                     await self._safe_send(chat_id, msg_id, fallback)
 
         elif isinstance(result, list):
@@ -568,7 +615,7 @@ class FeishuCoreWSClient:
                                     icon = "📝"
                                 fallback = f"{icon} **{marker.tool_name}** — `{file_path}`"
                             except Exception:
-                                fallback = f"🔀 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
+                                fallback = f"🤖 **{marker.tool_name}**\n`{marker.tool_input[:500]}`"
                             await self._safe_send(chat_id, msg_id, fallback)
 
         elif isinstance(result, MemoryCardMarker):
@@ -608,7 +655,7 @@ class FeishuCoreWSClient:
             if isinstance(result, str):
                 await self._safe_send(chat_id, msg_id, result)
             else:
-                await self._safe_send(chat_id, msg_id, f"🔀 **{tool_name}**")
+                await self._safe_send(chat_id, msg_id, f"🤖 **{tool_name}**")
 
 
     def _render_memory_card(self, marker: MemoryCardMarker) -> dict:

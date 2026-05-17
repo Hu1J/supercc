@@ -330,6 +330,7 @@ class WsServer:
             if auth_ok:
                 platform = raw.get("platform", "unknown")
                 self._plugin_authenticated[platform] = True
+                conn.platform = platform  # auth 消息中带有 platform，覆盖 WS 路径解析的空值
                 await conn.ws.send(json.dumps({"type": "auth_ok"}))
             else:
                 await conn.ws.send(json.dumps({"type": "auth_failed"}))
@@ -437,6 +438,44 @@ class WsServer:
             if key in conn.subscribed_keys:
                 await self._send_event(conn, method, params)
 
+    async def _cron_delivery_loop(self):
+        """每 10 秒检查一次 cron delivery queue，投递 cron 消息给 Plugin。
+
+        注意：使用 platform 匹配连接，不依赖 subscribe 订阅。
+        因为 Plugin 连接不调用 core.subscribe，subscribed_keys 始终为空。
+
+        发送失败（0 connection）时重新入队，避免启动窗口期丢消息。
+        """
+        from supercc.core.cron_delivery import cron_delivery_queue
+
+        while self._running.is_set():
+            await asyncio.sleep(10)
+
+            for item in cron_delivery_queue.get_all():
+                params = {
+                    "job_id": item.job_id,
+                    "job_name": item.job_name,
+                    "content": item.content,
+                    "error": item.error,
+                    "chat_id": item.session_key.chat_id,
+                }
+                method = f"cron_{item.event}"  # "cron_progress" or "cron_result"
+
+                # 发送给所有匹配 platform 的活跃连接
+                target_platform = item.session_key.platform
+                sent = 0
+                for conn in self._connections.values():
+                    if conn.platform == target_platform and conn.alive:
+                        await self._send_event(conn, method, params)
+                        sent += 1
+
+                logger.info(f"[WsServer] Sent {method} for job {item.job_id} to {sent} connection(s) (platform={target_platform})")
+
+                # 如果没发送成功（plugin 还没连上来），重新入队等待下次轮询
+                if sent == 0:
+                    logger.info(f"[WsServer] No connections for {target_platform}, re-queueing {method} for job {item.job_id}")
+                    cron_delivery_queue.put(item)
+
     # ── 服务器生命周期 ────────────────────────────────────────────────────
 
     async def start(self):
@@ -495,6 +534,9 @@ class WsServer:
         )
         self._running.set()
         logger.info(f"[WsServer] Listening on ws://{self.host}:{self.port}")
+
+        # 启动 cron delivery 投递循环
+        asyncio.create_task(self._cron_delivery_loop())
 
     async def stop(self):
         """停止 WebSocket 服务器。"""
