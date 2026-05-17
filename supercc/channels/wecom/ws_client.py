@@ -378,3 +378,28 @@ class WeComWSClient:
             },
             timeout=30.0,
         )
+
+    async def send_message(
+        self,
+        chat_id: str,
+        msgtype: str,
+        content: str | None = None,
+        markdown: dict | None = None,
+        text: dict | None = None,
+        template_card: dict | None = None,
+        file: dict | None = None,
+        image: dict | None = None,
+    ) -> dict:
+        """Send a message via aibot_send_msg with flexible message types."""
+        body: dict = {"chatid": chat_id, "msgtype": msgtype}
+        if markdown is not None:
+            body["markdown"] = markdown
+        if text is not None:
+            body["text"] = text
+        if template_card is not None:
+            body["template_card"] = template_card
+        if file is not None:
+            body["file"] = file
+        if image is not None:
+            body["image"] = image
+        return await self._send_request(APP_CMD_SEND, body)

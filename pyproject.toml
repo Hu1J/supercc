@@ -21,6 +21,7 @@ dependencies = [
     "croniter>=2.0",
     "rich>=13.0",
     "questionary>=2.0",
+    "pycryptodome>=3.19.0",
 ]
 authors = [
     { name = "Hu1J", email = "2948696442@qq.com" },
