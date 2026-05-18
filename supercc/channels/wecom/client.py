@@ -44,19 +44,10 @@ class WeComClient:
     # ── 专用业务消息 ─────────────────────────────────────────────────────────
 
     async def send_authorization_card(self, chat_id: str, reason: str, reply_req_id: str = "") -> str:
-        """发送权限不足引导卡片（优先用 reply_req_id 通过 APP_CMD_RESPONSE 发送）。"""
+        """发送权限不足引导卡片（fire-and-forget，不等待回调）。"""
         logger.info(f"[WeComClient] send_authorization_card: chat_id={chat_id}, reason_len={len(reason)}, reply_req_id={reply_req_id[:20] if reply_req_id else 'None'}")
-        # 优先用 APP_CMD_RESPONSE（reply），Hermes 验证这是 WeCom AI Bot 的标准方式
-        if reply_req_id:
-            text = f"🔒 **权限不足**\n\n{reason}"
-            return await self.reply_text(reply_req_id, text)
-        # Fallback: proactive send via APP_CMD_SEND
-        return await self.send_template_card(
-            chat_id=chat_id,
-            card_type="text_notice",
-            title="权限不足",
-            desc=reason,
-        )
+        text = f"🔒 **权限不足**\n\n{reason}"
+        return await self.send_markdown(chat_id, text)
 
     async def reply_text(self, reply_req_id: str, content: str) -> str:
         """通过 APP_CMD_RESPONSE (reply) 发送文本消息。"""

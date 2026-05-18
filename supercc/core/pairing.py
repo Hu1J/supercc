@@ -15,9 +15,12 @@ Storage: {project}/.supercc/pairing/
 """
 
 import json
+import logging
 import os
 import secrets
 import tempfile
+
+logger = logging.getLogger(__name__)
 import threading
 import time
 from pathlib import Path
@@ -180,12 +183,17 @@ class PairingStore:
             pending = self._load_json(self._pending_path(platform))
 
             # Reuse existing pending code for this user
+            logger.debug(f"[Pairing] generate_code platform={platform} user_id={user_id!r} pending_keys={list(pending.keys())} pending={pending}")
             for code, info in pending.items():
-                if info.get("user_id") == user_id:
+                stored_uid = info.get("user_id", "")
+                logger.debug(f"[Pairing] comparing user_id={user_id!r} with stored={stored_uid!r} match={stored_uid == user_id}")
+                if stored_uid == user_id:
+                    logger.info(f"[Pairing] reuse existing code {code} for user_id={user_id!r}")
                     return code
 
             # Generate cryptographically random code
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
+            logger.info(f"[Pairing] generated NEW code {code} for user_id={user_id!r} (pending had {len(pending)} entries, no match found)")
 
             # Store pending request
             pending[code] = {
