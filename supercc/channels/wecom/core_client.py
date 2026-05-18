@@ -9,12 +9,20 @@ import traceback
 from typing import Any
 
 from supercc.core.protocol import JsonRpcRequest, Event
-from supercc.channels.feishu.media import save_bytes
 from supercc.channels.common.format import MemoryCardMarker
 from supercc.channels.wecom.client import WeComClient
 from supercc.channels.wecom.core_protocol import incoming_to_inbound
 
 logger = logging.getLogger(__name__)
+
+
+def save_bytes(path: str, data: bytes) -> None:
+    """将字节写入文件。"""
+    import os
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    logger.info(f"[wecom] wrote {len(data):,} bytes → {path}")
 
 
 class WeComReplyFormatter:
