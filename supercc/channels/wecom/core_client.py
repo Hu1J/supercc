@@ -5,8 +5,14 @@ import asyncio
 import json
 import logging
 import random
+import re
 import traceback
 from typing import Any
+
+_COMMAND_RE = re.compile(r"^/[a-zA-Z][a-zA-Z0-9_-]*(?:\s.*)?$")
+
+def _is_command(text: str) -> bool:
+    return bool(_COMMAND_RE.match(text))
 
 from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.channels.feishu.media import save_bytes
@@ -942,39 +948,57 @@ class WeComCoreWSClient:
 
         logger.info(f"[WeComCore] send_message to core: req.id={req.id}, message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, content={inbound.content[:50] if inbound.content else 'None'}")
 
+        # 检测 slash command：发给 core 后立即返回，结果通过 callback 处理
+        is_slash_command = _is_command(inbound.content)
+
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
         logger.info(f"[WeComCore] stored pending: req.id={req.id} -> (message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, chat_id={inbound.session_key.chat_id})")
         await self._ws.send(json.dumps(req.to_dict()))
+
+        if is_slash_command:
+            # slash command：发完立即返回，不等 core 执行结果（秒回）
+            # 结果由 callback 在 future resolved 时处理
+            def handle_result(fut: asyncio.Future):
+                try:
+                    result = fut.result()
+                    self._handle_command_result(inbound, result)
+                except Exception as e:
+                    logger.error(f"[WeComCore] slash command result callback error: {e}", exc_info=True)
+
+            future.add_done_callback(handle_result)
+            logger.info(f"[WeComCore] slash command sent, returning immediately (result via callback)")
+            return None
+
         result = await future
         logger.info(f"[WeComCore] send_message result: {str(result)[:100] if result else 'None'}")
-        # restart/update 首次确认消息
-        if result:
-            inner = result.get("result", result)
-            result_event = inner.get("event", "") if isinstance(inner, dict) else ""
-            result_content = inner.get("content", "") if isinstance(inner, dict) else ""
-            if result_event in ("restart", "update"):
-                msg_id, chat_id = inbound.message_id, inbound.session_key.chat_id
-                if msg_id in self._streamed_msg_ids:
-                    logger.info("[command] /%s skip (streamed)", result_event)
-                else:
-                    logger.info("[command] /%s forwarding confirmation", result_event)
-                    await self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}...")
-            elif result_content:
-                # slash command 结果（/status、/git 等）：
-                # -  slash commands don't stream → msg_id NOT in _streamed_msg_ids
-                # -  streaming AI responses DO stream → msg_id already IS in _streamed_msg_ids (sent via accumulator)
-                # Feishu uses the same pattern to distinguish.
-                msg_id = inbound.message_id
-                if msg_id in self._streamed_msg_ids:
-                    logger.info("[command] skip %s (already streamed)", msg_id)
-                else:
-                    chat_id = inbound.session_key.chat_id
-                    logger.info("[command] slash command result, sending via send_markdown, content_len=%d", len(result_content))
-                    ack = await self.wecom.send_markdown(chat_id, result_content)
-                    logger.info("[command] send_markdown ack: errcode=%s, errmsg=%s", ack.get("errcode"), ack.get("errmsg"))
+        self._handle_command_result(inbound, result)
         return result or {}
+
+    def _handle_command_result(self, inbound, result):
+        """处理 command 结果（供 await 和 callback 两条路径共用）。"""
+        if not result:
+            return
+        inner = result.get("result", result)
+        result_event = inner.get("event", "") if isinstance(inner, dict) else ""
+        result_content = inner.get("content", "") if isinstance(inner, dict) else ""
+        if result_event in ("restart", "update"):
+            msg_id, chat_id = inbound.message_id, inbound.session_key.chat_id
+            if msg_id in self._streamed_msg_ids:
+                logger.info("[command] /%s skip (streamed)", result_event)
+            else:
+                logger.info("[command] /%s forwarding confirmation", result_event)
+                asyncio.create_task(self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}..."))
+        elif result_content:
+            # slash command 结果（/status、/git 等）
+            msg_id = inbound.message_id
+            if msg_id in self._streamed_msg_ids:
+                logger.info("[command] skip %s (already streamed)", msg_id)
+            else:
+                chat_id = inbound.session_key.chat_id
+                logger.info("[command] slash command result, sending via send_markdown, content_len=%d", len(result_content))
+                asyncio.create_task(self.wecom.send_markdown(chat_id, result_content))
 
     async def _download_and_resolve_media(
         self, msg_id: str, url: str, aeskey: str, msg_type: str, sender: str, file_name: str = ""
