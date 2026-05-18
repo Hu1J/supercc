@@ -1029,10 +1029,15 @@ class WeComCoreWSClient:
                 logger.info("[command] /%s forwarding confirmation", result_event)
                 asyncio.create_task(self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}..."))
         elif result_content:
-            # callback 结果（包括流式已发过的文本，避免误跳过）
-            chat_id = inbound.session_key.chat_id
-            logger.info("[command] sending result via send_markdown, chat_id=%s, content_len=%d", chat_id, len(result_content))
-            asyncio.create_task(self.wecom.send_markdown(chat_id, result_content))
+            # 回调结果：如果流式已发送则不重复推送
+            # 若流式发送失败，_do_send_text 已从 _streamed_msg_ids 移除 msg_id，此处可补发
+            msg_id = inbound.message_id
+            if msg_id in self._streamed_msg_ids:
+                logger.debug("[command] skip %s (already streamed)", msg_id)
+            else:
+                chat_id = inbound.session_key.chat_id
+                logger.info("[command] sending result via send_markdown, chat_id=%s, content_len=%d", chat_id, len(result_content))
+                asyncio.create_task(self.wecom.send_markdown(chat_id, result_content))
 
     async def _download_and_resolve_media(
         self, msg_id: str, url: str, aeskey: str, msg_type: str, sender: str, file_name: str = ""
