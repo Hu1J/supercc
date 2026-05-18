@@ -566,28 +566,11 @@ class WeComCoreWSClient:
     async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
         """Send text to WeCom via proactive send (no response_url timeout).
 
-        使用 send_markdown/send_text 主动发送，不依赖 response_url 的 30 秒有效期。
-        缺点是消息不在原消息线程下方，但对于长任务更可靠。
+        统一使用 send_markdown，WeCom 支持 markdown 渲染。
+        不使用 template card（不支持 markdown）。
         """
-        is_card_content = "<at user_id=" in text or "```" in text
-
         logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
 
-        # 卡片内容用 template card
-        if is_card_content:
-            try:
-                ack = await self.wecom.send_template_card(
-                    chat_id=chat_id,
-                    card_type="text_notice",
-                    title="消息",
-                    desc=text[:500],
-                )
-                logger.info(f"[WeComCore] send_template_card ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
-                return
-            except Exception as e:
-                logger.warning(f"[WeComCore] send_template_card failed: {e}")
-
-        # 普通文本用 markdown 或纯文本主动发送
         ack = await self.wecom.send_markdown(chat_id, text)
         logger.info(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
         if ack.get("errcode") != 0:
