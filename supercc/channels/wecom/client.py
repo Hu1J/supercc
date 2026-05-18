@@ -131,14 +131,35 @@ class WeComClient:
     # ── 下载 ─────────────────────────────────────────────────────────────────
 
     async def download_file(self, url: str, aes_key: str = "") -> bytes:
-        """下载 WeCom 图片/文件。
+        """下载并解密 WeCom 图片/文件。
 
-        注意：WeCom COS URL 已在签名中包含认证，图片返回时已是解密状态。
-        aes_key 参数不再用于 AES 解密（URL 签名仅用于访问控制）。
+        WeCom COS URL 签名仅用于访问控制，文件内容仍需 AES 解密。
+        参考 Hermes: 使用 cryptography 库，32-byte key，IV=key[:16]。
         """
         import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 data = await resp.read()
-        logger.info(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}")
+        logger.info(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}")
+        if aes_key:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            import base64
+            # WeCom doesn't pad base64 keys; add padding if needed
+            padded_key = aes_key + '=' * ((4 - len(aes_key) % 4) % 4)
+            key = base64.b64decode(padded_key)
+            if len(key) != 32:
+                logger.warning(f"[WeComClient] Invalid WeCom AES key length: expected 32 bytes, got {len(key)}, skipping decrypt")
+                return data
+            cipher = Cipher(algorithms.AES(key), modes.CBC(key[:16]))
+            decryptor = cipher.decryptor()
+            decrypted = decryptor.update(data) + decryptor.finalize()
+            pad_len = decrypted[-1]
+            if pad_len < 1 or pad_len > 32 or pad_len > len(decrypted):
+                logger.warning(f"[WeComClient] Invalid PKCS#7 padding: {pad_len}, skipping decrypt")
+                return data
+            if any(byte != pad_len for byte in decrypted[-pad_len:]):
+                logger.warning(f"[WeComClient] PKCS#7 padding mismatch, skipping decrypt")
+                return data
+            data = decrypted[:-pad_len]
+            logger.info(f"[WeComClient] decrypted to {len(data)} bytes")
         return data
