@@ -191,50 +191,52 @@ class WeComWSClient:
 
     async def _listen_loop(self) -> None:
         """Read websocket events forever, reconnecting on errors."""
-        while self._running and self._ws is not None:
-            try:
-                msg = await self._ws.receive()
-            except Exception as e:
-                logger.warning(f"[WeComWS] receive error: {e}, reconnecting...")
-                break
-
-            if msg.type == aiohttp.WSMsgType.TEXT:
+        while self._running:
+            while self._running and self._ws is not None:
                 try:
-                    payload = json.loads(msg.data)
-                except Exception:
-                    continue
+                    msg = await self._ws.receive()
+                except Exception as e:
+                    logger.warning(f"[WeComWS] receive error: {e}, reconnecting...")
+                    break
 
-                cmd = payload.get("cmd", "")
-                req_id = self._payload_req_id(payload)
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        payload = json.loads(msg.data)
+                    except Exception:
+                        continue
 
-                # Correlated response
-                if req_id and req_id in self._pending_responses:
-                    future = self._pending_responses.pop(req_id)
-                    if not future.done():
-                        future.set_result(payload)
-                    continue
+                    cmd = payload.get("cmd", "")
+                    req_id = self._payload_req_id(payload)
 
-                # Ping
-                if cmd == APP_CMD_PING:
-                    await self._send_json({"cmd": APP_CMD_PING, "headers": {"req_id": req_id or self._new_req_id("pong")}})
-                    continue
+                    # Correlated response
+                    if req_id and req_id in self._pending_responses:
+                        future = self._pending_responses.pop(req_id)
+                        if not future.done():
+                            future.set_result(payload)
+                        continue
 
-                # Dispatch to message handler
-                if cmd in (APP_CMD_CALLBACK, APP_CMD_LEGACY_CALLBACK, APP_CMD_EVENT_CALLBACK):
-                    # 不 await：消息处理是独立任务，不阻塞 listener 循环
-                    # 这样私聊和群聊的消息可以并发处理，不串行等待
-                    asyncio.create_task(self._dispatch_payload(payload))
+                    # Ping
+                    if cmd == APP_CMD_PING:
+                        await self._send_json({"cmd": APP_CMD_PING, "headers": {"req_id": req_id or self._new_req_id("pong")}})
+                        continue
 
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                logger.warning("[WeComWS] WebSocket error")
+                    # Dispatch to message handler
+                    if cmd in (APP_CMD_CALLBACK, APP_CMD_LEGACY_CALLBACK, APP_CMD_EVENT_CALLBACK):
+                        asyncio.create_task(self._dispatch_payload(payload))
+
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.warning("[WeComWS] WebSocket error")
+                    break
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                    logger.warning("[WeComWS] WebSocket closed")
+                    break
+
+            if not self._running:
                 break
-            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
-                logger.warning("[WeComWS] WebSocket closed")
-                break
 
-        # Reconnect
-        if self._running:
-            await self._reconnect()
+            # Reconnect and continue listening
+            if self._running:
+                await self._reconnect()
 
     async def _reconnect(self) -> None:
         """Reconnect with exponential backoff."""
