@@ -4,7 +4,32 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.3.0] - 2026-05-17
+## [0.3.1] - 2026-05-18
+
+### Added
+- **WeCom 文件/图片发送**：MCP 工具 WeComSendFile，使用 aiohttp 直连 WeCom WS
+- **WeCom 秒回机制**：所有消息发完立即返回，结果由 callback 异步处理，体感大幅提升
+- **WeCom 流式输出**：StreamAccumulator 缓冲 + 定时 flush，支持实时打字效果
+- **WeCom 引用消息**：支持图片/文件的 quote 引用内容解析，注入 AI 上下文
+- **WeCom /restart 确认消息**：收到重启指令后立即回复"正在重启..."
+
+### Fixed
+- **WeCom WS 连接冲突**：WeComSendFile 建第二条 WS 踢掉 channel 连接 → 通过 TOOL_CALL 事件检测 + 发前重连 WS 解决
+- **WeCom _listen_loop 重连后不继续监听**：外层加 while 循环，重连后继续接收消息，修复 channel 发文件后永久死亡
+- **WeCom 消息重复**：callback 全量结果与流式 RESPONSE 事件双重发送 → _streamed_msg_ids 去重 + _do_send_text 失败兜底
+- **/stop 指令失效**：consume_task（asyncio.create_task）fire-and-forget 不随父协程退出 → finally 中显式 cancel + _current_task.cancel 还原
+- **/restart 在 start 模式无法启动**：daemon 分支走 gateway start（重装服务）→ 统一用 os.execvp gateway run
+- **MemoryCardMarker 参数顺序**：cron_scheduler 中位置全错 + except Exception: pass 静默吞 TypeError → 正确定序并补充查库逻辑
+- **WeCom 文件名原汁原味保留**：下载文件从 Content-Disposition 提取完整原始文件名
+- **WeCom aiohttp 兼容**：ClientWSTimeout(total=) 低版本不支持 → try/except fallback
+- **WeCom aiohttp import 作用域**：局部 import 导致 NameError → 提升到模块级别
+
+### Changed
+- **删除 dingtalk/qq/telegram/whatsapp 四个 channel**：精简维护范围
+- **wecom_tools.py 路径**：从 core/claude 移至 core/mcps，与其他 MCP 工具统一
+- **WeCom 日志配色**：main.py MODULE_COLORS 新增 wecom=orange
+- **多条 WeCom 日志降级**：高频日志从 INFO 改为 DEBUG（RESPONSE event、send_markdown ack、WeComSendFile 诊断打印）
+- **WeComSendFile 超时缩短**：30s→8-10s，发完即断不等待
 
 ### Added
 
