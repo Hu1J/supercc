@@ -260,6 +260,7 @@ class ColoredFormatter(_BaseLogFormatter):
         "supercc": "\033[38;5;214m",  # bright gold
         "evolve": "\033[32m",       # green
         "feishu": "\033[36m",       # cyan
+        "wecom": "\033[38;5;208m",  # orange
         "adapter": "\033[33m",      # yellow
         "claude": "\033[35m",       # purple
         "gateway": "\033[31m",      # red

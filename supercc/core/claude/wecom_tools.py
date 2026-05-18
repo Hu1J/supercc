@@ -21,6 +21,9 @@ MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
 UPLOAD_CHUNK_SIZE = 1024 * 1024   # 1MB chunks
 DEFAULT_WS_URL = "wss://openws.work.weixin.qq.com"
 
+# SSL verification can be disabled for development with self-signed certs
+_WS_SSL_VERIFY = True
+
 WECOM_FILE_GUIDE = """
 【企业微信文件】用户要求发送文件/图片/截图时，调用 mcp__SuperCC__WeComSendFile(file_paths: list[str])。
 """
@@ -87,7 +90,11 @@ class WeComUploader:
         self._device_id = uuid.uuid4().hex
 
     async def __aenter__(self):
-        await self._connect()
+        try:
+            await self._connect()
+        except BaseException:
+            await self.disconnect()
+            raise
         return self
 
     async def __aexit__(self, *args):
@@ -96,11 +103,20 @@ class WeComUploader:
     async def _connect(self):
         """连接 WeCom WS 并认证。"""
         import aiohttp
+        import ssl as ssl_module
+
+        ssl_ctx = None
+        if not _WS_SSL_VERIFY:
+            ssl_ctx = ssl_module.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl_module.CERT_NONE
+
         self._session = aiohttp.ClientSession()
         self._ws = await self._session.ws_connect(
             DEFAULT_WS_URL,
             protocols=["wss"],
             timeout=aiohttp.ClientWSTimeout(total=30),
+            ssl=ssl_ctx,
         )
 
         # 1. 发送 subscribe 认证
@@ -134,11 +150,19 @@ class WeComUploader:
             raise RuntimeError("WeCom subscribe timed out")
 
     async def disconnect(self):
-        """断开连接。"""
-        if self._ws:
-            await self._ws.close()
-        if self._session:
-            await self._session.close()
+        """断开连接（幂等，异常不扩散）。"""
+        try:
+            if self._ws:
+                await self._ws.close()
+        except Exception:
+            pass
+        try:
+            if self._session:
+                await self._session.close()
+        except Exception:
+            pass
+        self._ws = None
+        self._session = None
 
     async def _send_request(self, cmd: str, body: dict, timeout: float = 20.0) -> dict:
         """发送请求并等待关联响应。"""
@@ -146,16 +170,22 @@ class WeComUploader:
         future = asyncio.get_event_loop().create_future()
 
         async def listener():
-            async for msg in self._ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    resp_req_id = data.get("headers", {}).get("req_id", "")
-                    if resp_req_id == req_id:
-                        future.set_result(data)
+            try:
+                async for msg in self._ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        resp_req_id = data.get("headers", {}).get("req_id", "")
+                        if resp_req_id == req_id:
+                            future.set_result(data)
+                            return
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        future.set_result({"errcode": -1, "errmsg": f"WS error: {msg.data}"})
                         return
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    future.set_result({"errcode": -1, "errmsg": f"WS error: {msg.data}"})
-                    return
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                if not future.done():
+                    future.set_result({"errcode": -1, "errmsg": f"listener error: {e}"})
 
         listener_task = asyncio.create_task(listener())
 
@@ -168,6 +198,10 @@ class WeComUploader:
             return {"errcode": -1, "errmsg": f"{cmd} timeout ({timeout}s)"}
         finally:
             listener_task.cancel()
+            try:
+                await listener_task
+            except asyncio.CancelledError:
+                pass
 
     async def _upload_bytes(
         self, data: bytes, media_type: str, file_name: str
@@ -234,10 +268,10 @@ class WeComUploader:
                 "msgtype": media_type,
                 media_type: {"media_id": media_id},
             },
-            timeout=10.0,
+            timeout=30.0,
         )
         if resp.get("errcode", -1) != 0:
-            raise RuntimeError(f"send_msg failed: {resp.get('errmsg')}")
+            raise RuntimeError(f"send_msg failed: errcode={resp.get('errcode')}, errmsg={resp.get('errmsg')}")
         return resp.get("body", {}).get("msgid", "")
 
     async def send_image_file(self, chat_id: str, file_path: str) -> str:
@@ -263,12 +297,15 @@ async def _send_single_file(file_path: str, chat_id: str) -> str:
     bot_id, secret = _get_wecom_credentials()
     resolved = _resolve_path(file_path)
     ext = os.path.splitext(resolved)[1].lower()
+    print(f"[WeComSendFile] bot_id={bot_id[:8]}..., chat_id={chat_id}, file={os.path.basename(resolved)}, ext={ext}")
 
     async with WeComUploader(bot_id, secret) as uploader:
         if ext in SUPPORTED_IMAGE_EXTS:
-            return await uploader.send_image_file(chat_id, resolved)
+            msg_id = await uploader.send_image_file(chat_id, resolved)
         else:
-            return await uploader.send_document(chat_id, resolved)
+            msg_id = await uploader.send_document(chat_id, resolved)
+    print(f"[WeComSendFile] sent successfully: msg_id={msg_id}, file={os.path.basename(resolved)}")
+    return msg_id
 
 
 # ── tool ──────────────────────────────────────────────────────────────────────
