@@ -866,6 +866,30 @@ class WeComCoreWSClient:
             if resolved:
                 msg["_resolved_content"] = resolved
 
+        # ── 处理 quote 引用附件 ────────────────────────────────────────────
+        quote = msg.get("quote", {})
+        if quote:
+            quote_type = quote.get("msgtype", "")
+            sender = msg.get("from", {}).get("userid", "")
+            msg_id = msg.get("msgid", "")
+            existing_content = msg.get("_resolved_content", "")
+            quote_resolved = None
+            if quote_type == "image":
+                img = quote.get("image", {})
+                url = img.get("url", "")
+                aeskey = img.get("aeskey", "")
+                if url:
+                    quote_resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "image", sender)
+            elif quote_type == "file":
+                file_info = quote.get("file", {})
+                url = file_info.get("url", "")
+                aeskey = file_info.get("aeskey", "")
+                fname = file_info.get("name", "文件")
+                if url:
+                    quote_resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "file", sender, fname)
+            if quote_resolved:
+                msg["_resolved_content"] = (existing_content + "\n" + quote_resolved).strip() if existing_content else quote_resolved
+
         # ── 群聊 @mention 前缀剥离 ─────────────────────────────────────────
         # 当机器人被 @mention 时，content 可能包含 "@_user_1 " 前缀，
         # 这会导致命令检测（^/）失败。剥离后再送入 core 处理。
