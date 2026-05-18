@@ -359,7 +359,12 @@ class WeComWSClient:
         file: dict | None = None,
         image: dict | None = None,
     ) -> dict:
-        """General proactive send."""
+        """General proactive send (fire-and-forget, no correlation wait).
+
+        WeCom's aibot_send_msg doesn't send a correlated response frame —
+        the ack comes via aibot_msg_callback which goes through on_message.
+        Using _send_request correlation would timeout after 10s.
+        """
         body: dict[str, Any] = {"chatid": chat_id, "msgtype": msgtype}
         if markdown is not None:
             body["markdown"] = markdown
@@ -373,8 +378,8 @@ class WeComWSClient:
             body["image"] = image
 
         try:
-            ack = await self._send_request(APP_CMD_SEND, body)
-            return {"errcode": ack.get("errcode", 0), "errmsg": ack.get("errmsg", "")}
+            await self._send_json({"cmd": APP_CMD_SEND, "headers": {"req_id": self._new_req_id("send")}, "body": body})
+            return {"errcode": 0, "errmsg": ""}
         except Exception as e:
             return {"errcode": -1, "errmsg": str(e)}
 
