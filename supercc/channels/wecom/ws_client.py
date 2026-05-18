@@ -29,6 +29,12 @@ APP_CMD_LEGACY_CALLBACK = "aibot_callback"
 APP_CMD_EVENT_CALLBACK = "aibot_event_callback"
 APP_CMD_SEND = "aibot_send_msg"
 APP_CMD_PING = "ping"
+APP_CMD_UPLOAD_MEDIA_INIT = "aibot_upload_media_init"
+APP_CMD_UPLOAD_MEDIA_CHUNK = "aibot_upload_media_chunk"
+APP_CMD_UPLOAD_MEDIA_FINISH = "aibot_upload_media_finish"
+
+# WeCom upload chunk size (1MB, matching Hermes)
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 class WeComWSClient:
@@ -420,6 +426,70 @@ class WeComWSClient:
             return {"errcode": 0, "errmsg": ""}
         except Exception as e:
             return {"errcode": -1, "errmsg": str(e)}
+
+    # ── 媒体上传（3-step WS 协议，Hermes 方式）────────────────────
+
+    async def _upload_media_bytes(
+        self, data: bytes, media_type: str, file_name: str, timeout: float = 60.0
+    ) -> dict:
+        """上传字节数据到 WeCom，返回 media_id。
+
+        3-step 协议（参考 Hermes）：
+        1. aibot_upload_media_init — 获取 upload_id
+        2. aibot_upload_media_chunk — 分片上传
+        3. aibot_upload_media_finish — 完成，获取 media_id
+        """
+        import hashlib
+
+        total_size = len(data)
+        total_chunks = (total_size + UPLOAD_CHUNK_SIZE - 1) // UPLOAD_CHUNK_SIZE
+
+        # Step 1: init
+        init_body = {
+            "type": media_type,
+            "filename": file_name,
+            "total_size": total_size,
+            "total_chunks": total_chunks,
+            "md5": hashlib.md5(data).hexdigest(),
+        }
+        init_resp = await self._send_request(APP_CMD_UPLOAD_MEDIA_INIT, init_body, timeout=timeout)
+        init_errcode = init_resp.get("errcode", -1) if init_resp else -1
+        if init_errcode != 0:
+            return {"errcode": init_errcode, "errmsg": f"upload_media_init failed: {init_resp.get('errmsg', 'unknown')}"}
+        init_body_resp = init_resp.get("body", {}) if isinstance(init_resp.get("body"), dict) else {}
+        upload_id = str(init_body_resp.get("upload_id", "")).strip()
+        if not upload_id:
+            return {"errcode": -1, "errmsg": "upload_media_init returned no upload_id"}
+
+        # Step 2: chunks
+        for idx in range(total_chunks):
+            start = idx * UPLOAD_CHUNK_SIZE
+            chunk = data[start : start + UPLOAD_CHUNK_SIZE]
+            import base64
+            chunk_body = {
+                "upload_id": upload_id,
+                "chunk_index": idx,
+                "total_chunks": total_chunks,
+                "base64_data": base64.b64encode(chunk).decode("ascii"),
+            }
+            chunk_resp = await self._send_request(APP_CMD_UPLOAD_MEDIA_CHUNK, chunk_body, timeout=timeout)
+            chunk_errcode = chunk_resp.get("errcode", -1) if chunk_resp else -1
+            if chunk_errcode != 0:
+                return {"errcode": chunk_errcode, "errmsg": f"upload_media_chunk {idx} failed: {chunk_resp.get('errmsg', 'unknown')}"}
+
+        # Step 3: finish
+        finish_body = {"upload_id": upload_id}
+        finish_resp = await self._send_request(APP_CMD_UPLOAD_MEDIA_FINISH, finish_body, timeout=timeout)
+        finish_errcode = finish_resp.get("errcode", -1) if finish_resp else -1
+        if finish_errcode != 0:
+            return {"errcode": finish_errcode, "errmsg": f"upload_media_finish failed: {finish_resp.get('errmsg', 'unknown')}"}
+        finish_body_resp = finish_resp.get("body", {}) if isinstance(finish_resp.get("body"), dict) else {}
+        media_id = str(finish_body_resp.get("media_id", "")).strip()
+        if not media_id:
+            return {"errcode": -1, "errmsg": "upload_media_finish returned no media_id"}
+
+        logger.info(f"[WeComWS] upload_media_bytes: uploaded {file_name} ({total_size} bytes, {total_chunks} chunks) -> media_id={media_id[:20]}")
+        return {"errcode": 0, "media_id": media_id, "type": str(finish_body_resp.get("type", media_type))}
 
     # ── 公开接口 ─────────────────────────────────────────────────────
 

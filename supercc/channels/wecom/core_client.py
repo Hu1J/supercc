@@ -918,9 +918,9 @@ class WeComCoreWSClient:
         try:
             import json as _json
             raw_body = _json.dumps(msg, ensure_ascii=False, indent=None)
-            logger.debug(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body}")
+            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body}")
         except Exception:
-            logger.debug(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
+            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
 
         # 保存当前 chat 上下文，供 command_progress 使用
         self._last_chat_id = inbound.session_key.chat_id
@@ -1035,6 +1035,7 @@ class WeComCoreWSClient:
         """下载 WeCom 图片/文件，保存到本地，返回 markdown 格式字符串。
 
         使用 _media_cache 避免重复下载（同一个 message_id 只下载一次）。
+        扩展名优先从 file_name 提取，若无则从 HTTP Content-Disposition 推断。
         """
         if not msg_id or not url:
             return None
@@ -1049,29 +1050,55 @@ class WeComCoreWSClient:
 
         try:
             import os
+            import re as re_module
 
-            data = await self.wecom.download_file(url, aeskey or None)
+            data, content_disposition = await self.wecom.download_file(url, aeskey or None)
 
-            # 保存到 data_dir/received_images 或 data_dir/received_files（与 Feishu 保持一致）
+            # 从 Content-Disposition 提取原始文件名（不含路径，只取basename）
+            def _safe_filename(cd: str) -> str:
+                if cd:
+                    m = re_module.search(r'filename="?([^";\n]+)"?', cd, re_module.IGNORECASE)
+                    if m:
+                        name = m.group(1)
+                        name = name.replace("\\", "/").split("/")[-1]
+                        name = re_module.sub(r'[<>:"|?*]', "_", name)
+                        return name
+                return ""
+
+            # 推断扩展名：优先用 file_name，其次从 Content-Disposition 提取
+            def _guess_ext() -> str:
+                if file_name:
+                    _, ext = os.path.splitext(file_name)
+                    if ext and ext != ".":
+                        return ext.lower()
+                if content_disposition:
+                    m = re_module.search(r'filename="?([^";\n]+)"?', content_disposition, re_module.IGNORECASE)
+                    if m:
+                        _, ext = os.path.splitext(m.group(1))
+                        if ext and ext != ".":
+                            return ext.lower()
+                return ".bin"
+
+            safe_name = _safe_filename(content_disposition)
+            ext = _guess_ext()
+
+            # 优先用原始文件名，否则用 msg_id
+            base_name = safe_name if safe_name else msg_id
+            # 确保有扩展名
+            if not os.path.splitext(base_name)[1]:
+                base_name = base_name + ext
+
             data_dir = self._data_dir or ""
             if msg_type == "image":
                 images_dir = os.path.join(data_dir, "received_images")
                 os.makedirs(images_dir, exist_ok=True)
-                ext = ".png"
-                save_path = os.path.join(images_dir, f"{msg_id}{ext}")
+                save_path = os.path.join(images_dir, base_name)
             else:
-                # file: 保留原扩展名
-                if file_name:
-                    _, ext = os.path.splitext(file_name)
-                    if not ext or ext == ".":
-                        ext = ".bin"
-                else:
-                    ext = ".bin"
                 files_dir = os.path.join(data_dir, "received_files")
                 os.makedirs(files_dir, exist_ok=True)
-                save_path = os.path.join(files_dir, f"{msg_id}{ext}")
+                save_path = os.path.join(files_dir, base_name)
 
-            logger.info(f"[WeComCore] downloading {msg_type} to {save_path}")
+            logger.info(f"[WeComCore] downloading {msg_type} to {save_path} (cd={content_disposition[:50] if content_disposition else 'None'})")
             save_bytes(save_path, data)
             self._media_cache[msg_id] = save_path
 

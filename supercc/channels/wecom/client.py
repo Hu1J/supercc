@@ -100,24 +100,36 @@ class WeComClient:
 
     # ── 媒体 ─────────────────────────────────────────────────────────────────
 
-    async def upload_media(self, file_path: str) -> str:
-        """上传本地文件，返回 media_id。"""
-        import aiohttp
-        # WeCom media upload via HTTP POST
-        # This is a simplified implementation - full implementation would need
-        # the actual upload URL and authentication
-        async with aiohttp.ClientSession() as session:
-            # Placeholder - actual implementation depends on WeCom media upload API
-            raise NotImplementedError("upload_media requires WeCom media API integration")
+    # 支持的图片扩展名
+    IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
-    async def send_file(self, chat_id: str, media_id: str) -> str:
-        """发送文件消息。"""
-        ack = await self._ws.send_message(
-            chat_id=chat_id,
-            msgtype="file",
-            file={"media_id": media_id},
-        )
-        return ack.get("body", {}).get("msgid", "") if ack else ""
+    def _detect_media_type(self, file_path: str) -> str:
+        """根据扩展名推断 WeCom media type。"""
+        import os
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext in {".jpg", ".jpeg"}:
+            return "image"
+        if ext == ".gif":
+            return "image"
+        if ext == ".webp":
+            return "image"
+        if ext == ".bmp":
+            return "image"
+        # 其他默认为 file
+        return "file"
+
+    async def upload_media(self, file_path: str) -> str:
+        """上传本地文件，返回 media_id（Hermes 3-step 协议）。"""
+        import os
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        data = await asyncio.to_thread(open(file_path, "rb").read)
+        file_name = os.path.basename(file_path)
+        media_type = self._detect_media_type(file_path)
+        result = await self._ws._upload_media_bytes(data, media_type, file_name)
+        if result.get("errcode") != 0:
+            raise RuntimeError(f"upload_media failed: {result.get('errmsg', 'unknown')}")
+        return result["media_id"]
 
     async def send_image(self, chat_id: str, media_id: str) -> str:
         """发送图片消息。"""
@@ -128,19 +140,40 @@ class WeComClient:
         )
         return ack.get("body", {}).get("msgid", "") if ack else ""
 
+    async def send_file(self, chat_id: str, media_id: str) -> str:
+        """发送文件消息。"""
+        ack = await self._ws.send_message(
+            chat_id=chat_id,
+            msgtype="file",
+            file={"media_id": media_id},
+        )
+        return ack.get("body", {}).get("msgid", "") if ack else ""
+
+    async def send_image_file(self, chat_id: str, file_path: str) -> str:
+        """上传并发送图片（一站式，Hermes send_image_file 方式）。"""
+        media_id = await self.upload_media(file_path)
+        return await self.send_image(chat_id, media_id)
+
+    async def send_document(self, chat_id: str, file_path: str) -> str:
+        """上传并发送文件（一站式，Hermes send_document 方式）。"""
+        media_id = await self.upload_media(file_path)
+        return await self.send_file(chat_id, media_id)
+
     # ── 下载 ─────────────────────────────────────────────────────────────────
 
-    async def download_file(self, url: str, aes_key: str = "") -> bytes:
+    async def download_file(self, url: str, aes_key: str = "") -> tuple[bytes, str]:
         """下载并解密 WeCom 图片/文件。
 
-        WeCom COS URL 签名仅用于访问控制，文件内容仍需 AES 解密。
-        参考 Hermes: 使用 cryptography 库，32-byte key，IV=key[:16]。
+        Returns:
+            tuple: (data_bytes, content_disposition_header)
+            content_disposition 可用于提取原文件名（如 'attachment; filename="xxx.pdf"'）。
         """
         import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 data = await resp.read()
-        logger.debug(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}")
+                content_disposition = resp.headers.get("Content-Disposition", "")
+        logger.debug(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}, cd={content_disposition[:50] if content_disposition else 'None'}")
         if aes_key:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             import base64
@@ -149,17 +182,17 @@ class WeComClient:
             key = base64.b64decode(padded_key)
             if len(key) != 32:
                 logger.warning(f"[WeComClient] Invalid WeCom AES key length: expected 32 bytes, got {len(key)}, skipping decrypt")
-                return data
+                return data, content_disposition
             cipher = Cipher(algorithms.AES(key), modes.CBC(key[:16]))
             decryptor = cipher.decryptor()
             decrypted = decryptor.update(data) + decryptor.finalize()
             pad_len = decrypted[-1]
             if pad_len < 1 or pad_len > 32 or pad_len > len(decrypted):
                 logger.warning(f"[WeComClient] Invalid PKCS#7 padding: {pad_len}, skipping decrypt")
-                return data
+                return data, content_disposition
             if any(byte != pad_len for byte in decrypted[-pad_len:]):
                 logger.warning(f"[WeComClient] PKCS#7 padding mismatch, skipping decrypt")
-                return data
+                return data, content_disposition
             data = decrypted[:-pad_len]
             logger.debug(f"[WeComClient] decrypted to {len(data)} bytes")
-        return data
+        return data, content_disposition

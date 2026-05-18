@@ -70,7 +70,9 @@ def incoming_to_inbound(
     resolved_content = msg.get("_resolved_content", "")
 
     if msg_type == "text":
-        content = msg.get("text", {}).get("content", "")
+        # _resolved_content 在 send_message 中填充了 quote 引用的媒体内容，
+        # 优先使用（包含 [引用消息]:... 前缀）；否则用原始文字
+        content = resolved_content if resolved_content else msg.get("text", {}).get("content", "")
     elif msg_type == "image":
         content = resolved_content if resolved_content else "[图片]"
         img = msg.get("image", {})

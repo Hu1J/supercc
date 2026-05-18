@@ -1,14 +1,16 @@
 """WeCom 文件发送 MCP 工具 — 暴露 WeComSendFile 给 Claude Code 使用。
 
-注意：企业微信的 upload_media 使用 3-step WebSocket 协议，
-需要在 WeCom 插件进程中有活跃的 WS 连接才能调用。
-WeComSendFile 通过在 MCP 工具进程内创建独立的 SDK WSClient 实例来实现
-（connect 用于触发认证，但不接收消息），适用于偶发的文件上传场景。
+使用 aiohttp 直接实现 3-step 上传协议（Hermes 方式），
+不依赖 wecom-aibot-sdk，避免 SDK 连接管理问题。
 """
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import os
+import uuid
 from typing import Optional
 
 from claude_agent_sdk import tool
@@ -16,7 +18,8 @@ from claude_agent_sdk import tool
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
-
+UPLOAD_CHUNK_SIZE = 1024 * 1024   # 1MB chunks
+DEFAULT_WS_URL = "wss://openws.work.weixin.qq.com"
 
 WECOM_FILE_GUIDE = """
 【企业微信文件】用户要求发送文件/图片/截图时，调用 mcp__SuperCC__WeComSendFile(file_paths: list[str])。
@@ -65,34 +68,207 @@ def _get_chat_id() -> Optional[str]:
     return get_current_chat_id()
 
 
-async def _send_single_file(file_path: str, chat_id: str) -> str:
-    """发送单个文件，返回 msg_id 或抛出异常。"""
-    from wecom_aibot_sdk import WSClient, WSClientOptions
+def _detect_media_type(file_path: str) -> str:
+    """根据扩展名推断 WeCom media type。"""
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}:
+        return "image"
+    return "file"
 
-    bot_id, secret = _get_wecom_credentials()
-    options = WSClientOptions(bot_id=bot_id, secret=secret)
-    sdk_client = WSClient(options)
 
-    resolved_path = _resolve_path(file_path)
-    ext = os.path.splitext(resolved_path)[1].lower()
-    file_name = os.path.basename(resolved_path)
+class WeComUploader:
+    """WeCom 文件上传器 — aiohttp 直连，3-step WS 协议（Hermes 方式）。"""
 
-    try:
-        media_result = await sdk_client.upload_media(resolved_path)
-        media_id = media_result.media_id
+    def __init__(self, bot_id: str, bot_secret: str):
+        self.bot_id = bot_id
+        self.bot_secret = bot_secret
+        self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._device_id = uuid.uuid4().hex
 
-        if ext in SUPPORTED_IMAGE_EXTS:
-            msg_id = await sdk_client.send_image(chat_id, media_id)
+    async def __aenter__(self):
+        await self._connect()
+        return self
+
+    async def __aexit__(self, *args):
+        await self.disconnect()
+
+    async def _connect(self):
+        """连接 WeCom WS 并认证。"""
+        import aiohttp
+        self._session = aiohttp.ClientSession()
+        self._ws = await self._session.ws_connect(
+            DEFAULT_WS_URL,
+            protocols=["wss"],
+            timeout=aiohttp.ClientWSTimeout(total=30),
+        )
+
+        # 1. 发送 subscribe 认证
+        req_id = uuid.uuid4().hex
+        await self._ws.send_json({
+            "cmd": "aibot_subscribe",
+            "headers": {"req_id": req_id},
+            "body": {
+                "bot_id": self.bot_id,
+                "secret": self.bot_secret,
+                "device_id": self._device_id,
+            },
+        })
+
+        # 2. 等待认证响应
+        async for msg in self._ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                cmd = data.get("cmd", "")
+                resp_req_id = data.get("headers", {}).get("req_id", "")
+                if cmd == "pong":
+                    continue
+                if resp_req_id == req_id:
+                    errcode = data.get("errcode", -1)
+                    if errcode != 0:
+                        raise RuntimeError(f"WeCom subscribe failed: errcode={errcode}, errmsg={data.get('errmsg', 'unknown')}")
+                    break
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                raise RuntimeError(f"WeCom WS error: {msg.data}")
         else:
-            msg_id = await sdk_client.send_file(chat_id, media_id)
+            raise RuntimeError("WeCom subscribe timed out")
 
-        return msg_id
-    finally:
-        # 不需要保持 WS 连接，上传完成后关闭
+    async def disconnect(self):
+        """断开连接。"""
+        if self._ws:
+            await self._ws.close()
+        if self._session:
+            await self._session.close()
+
+    async def _send_request(self, cmd: str, body: dict, timeout: float = 20.0) -> dict:
+        """发送请求并等待关联响应。"""
+        req_id = uuid.uuid4().hex
+        future = asyncio.get_event_loop().create_future()
+
+        async def listener():
+            async for msg in self._ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    resp_req_id = data.get("headers", {}).get("req_id", "")
+                    if resp_req_id == req_id:
+                        future.set_result(data)
+                        return
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    future.set_result({"errcode": -1, "errmsg": f"WS error: {msg.data}"})
+                    return
+
+        listener_task = asyncio.create_task(listener())
+
+        await self._ws.send_json({"cmd": cmd, "headers": {"req_id": req_id}, "body": body})
+
         try:
-            await sdk_client.disconnect()
-        except Exception:
-            pass
+            result = await asyncio.wait_for(future, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            return {"errcode": -1, "errmsg": f"{cmd} timeout ({timeout}s)"}
+        finally:
+            listener_task.cancel()
+
+    async def _upload_bytes(
+        self, data: bytes, media_type: str, file_name: str
+    ) -> str:
+        """3-step 上传协议，返回 media_id。"""
+        total_size = len(data)
+        total_chunks = (total_size + UPLOAD_CHUNK_SIZE - 1) // UPLOAD_CHUNK_SIZE
+
+        # Step 1: init
+        init_resp = await self._send_request(
+            "aibot_upload_media_init",
+            {
+                "type": media_type,
+                "filename": file_name,
+                "total_size": total_size,
+                "total_chunks": total_chunks,
+                "md5": hashlib.md5(data).hexdigest(),
+            },
+            timeout=30.0,
+        )
+        if init_resp.get("errcode", -1) != 0:
+            raise RuntimeError(f"upload_media_init failed: {init_resp.get('errmsg')}")
+        upload_id = str(init_resp.get("body", {}).get("upload_id", "")).strip()
+        if not upload_id:
+            raise RuntimeError("upload_media_init returned no upload_id")
+
+        # Step 2: chunks
+        for idx in range(total_chunks):
+            start = idx * UPLOAD_CHUNK_SIZE
+            chunk = data[start : start + UPLOAD_CHUNK_SIZE]
+            chunk_resp = await self._send_request(
+                "aibot_upload_media_chunk",
+                {
+                    "upload_id": upload_id,
+                    "chunk_index": idx,
+                    "total_chunks": total_chunks,
+                    "base64_data": base64.b64encode(chunk).decode("ascii"),
+                },
+                timeout=30.0,
+            )
+            if chunk_resp.get("errcode", -1) != 0:
+                raise RuntimeError(f"upload_media_chunk {idx} failed: {chunk_resp.get('errmsg')}")
+
+        # Step 3: finish
+        finish_resp = await self._send_request(
+            "aibot_upload_media_finish",
+            {"upload_id": upload_id},
+            timeout=30.0,
+        )
+        if finish_resp.get("errcode", -1) != 0:
+            raise RuntimeError(f"upload_media_finish failed: {finish_resp.get('errmsg')}")
+        media_id = str(finish_resp.get("body", {}).get("media_id", "")).strip()
+        if not media_id:
+            raise RuntimeError("upload_media_finish returned no media_id")
+
+        return media_id
+
+    async def _do_send(self, chat_id: str, media_type: str, media_id: str):
+        """发送图片/文件消息。"""
+        resp = await self._send_request(
+            "aibot_send_msg",
+            {
+                "chatid": chat_id,
+                "msgtype": media_type,
+                media_type: {"media_id": media_id},
+            },
+            timeout=10.0,
+        )
+        if resp.get("errcode", -1) != 0:
+            raise RuntimeError(f"send_msg failed: {resp.get('errmsg')}")
+        return resp.get("body", {}).get("msgid", "")
+
+    async def send_image_file(self, chat_id: str, file_path: str) -> str:
+        """上传图片文件并发送。"""
+        resolved = _resolve_path(file_path)
+        data = await asyncio.to_thread(lambda: open(resolved, "rb").read())
+        file_name = os.path.basename(resolved)
+        media_type = _detect_media_type(file_path)
+        media_id = await self._upload_bytes(data, media_type, file_name)
+        return await self._do_send(chat_id, media_type, media_id)
+
+    async def send_document(self, chat_id: str, file_path: str) -> str:
+        """上传普通文件并发送。"""
+        resolved = _resolve_path(file_path)
+        data = await asyncio.to_thread(lambda: open(resolved, "rb").read())
+        file_name = os.path.basename(resolved)
+        media_id = await self._upload_bytes(data, "file", file_name)
+        return await self._do_send(chat_id, "file", media_id)
+
+
+async def _send_single_file(file_path: str, chat_id: str) -> str:
+    """发送单个文件，返回 msg_id。"""
+    bot_id, secret = _get_wecom_credentials()
+    resolved = _resolve_path(file_path)
+    ext = os.path.splitext(resolved)[1].lower()
+
+    async with WeComUploader(bot_id, secret) as uploader:
+        if ext in SUPPORTED_IMAGE_EXTS:
+            return await uploader.send_image_file(chat_id, resolved)
+        else:
+            return await uploader.send_document(chat_id, resolved)
 
 
 # ── tool ──────────────────────────────────────────────────────────────────────
