@@ -84,7 +84,9 @@ class CoreExecutor:
 
     def _get_authenticator_for_platform(self, platform: str):
         """按 platform 获取对应的 Authenticator。"""
-        config = self._config
+        from supercc.config import reload_config
+
+        config = reload_config()
         if config is None:
             return None
         channels = getattr(config, "channels", None)
