@@ -824,6 +824,35 @@ class WeComCoreWSClient:
             resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "image", sender)
             if resolved:
                 msg["_resolved_content"] = resolved
+        elif msg_type == "mixed":
+            # 解析混合消息：遍历所有 item，下载图片并组合文本
+            mixed = msg.get("mixed", {})
+            msg_items = mixed.get("msg_item", [])
+            parts = []
+            for item in msg_items:
+                item_type = item.get("msgtype", "")
+                if item_type == "text":
+                    text_content = item.get("text", {}).get("content", "")
+                    if text_content:
+                        parts.append(text_content)
+                elif item_type == "image":
+                    img = item.get("image", {})
+                    url = img.get("url", "")
+                    aeskey = img.get("aeskey", "")
+                    if url and aeskey:
+                        sender = msg.get("from", {}).get("userid", "")
+                        resolved = await self._download_and_resolve_media(msg.get("msgid", ""), url, aeskey, "image", sender)
+                        if resolved:
+                            parts.append(resolved)
+                        else:
+                            parts.append("[图片]")
+                    else:
+                        parts.append("[图片]")
+                elif item_type == "file":
+                    file_info = item.get("file", {})
+                    fname = file_info.get("name", "文件")
+                    parts.append(f"[文件: {fname}]")
+            msg["_resolved_content"] = "\n".join(parts) if parts else "[混合消息]"
         elif msg_type == "file":
             file_info = msg.get("file", {})
             url = file_info.get("url", "")

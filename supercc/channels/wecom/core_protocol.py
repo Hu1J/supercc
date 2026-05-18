@@ -85,7 +85,8 @@ def incoming_to_inbound(
     elif msg_type == "voice":
         content = "[语音]"
     elif msg_type == "mixed":
-        content = "[混合消息]"
+        # _resolved_content 由 send_message 在解析媒体后设置
+        content = resolved_content if resolved_content else "[混合消息]"
 
     key = SessionKey(
         bot_id=bot_id,
@@ -99,6 +100,7 @@ def incoming_to_inbound(
         "image": MessageType.IMAGE,
         "file": MessageType.FILE,
         "voice": MessageType.FILE,
+        "mixed": MessageType.TEXT,
     }
 
     is_group_chat = msg.get("chattype") == "group"
