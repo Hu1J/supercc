@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Tuple
 
+from supercc.channels.common.media import save_bytes
+
 logger = logging.getLogger("feishu")
 
 # MIME type → 文件扩展名
@@ -103,13 +105,6 @@ def make_file_path(data_dir: str, message_id: str, original_name: str, file_type
     os.makedirs(files_dir, exist_ok=True)
     return os.path.join(files_dir, filename)
 
-
-def save_bytes(path: str, data: bytes) -> None:
-    """将字节写入文件。"""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(data)
-    logger.info(f"[media] wrote {len(data):,} bytes → {path}")
 
 
 # 扩展名 → 飞书 file_type
