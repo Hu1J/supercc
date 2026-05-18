@@ -13,6 +13,8 @@ import os
 import uuid
 from typing import Optional
 
+import aiohttp
+
 from claude_agent_sdk import tool
 
 
@@ -102,7 +104,6 @@ class WeComUploader:
 
     async def _connect(self):
         """连接 WeCom WS 并认证。"""
-        import aiohttp
         import ssl as ssl_module
 
         ssl_ctx = None
