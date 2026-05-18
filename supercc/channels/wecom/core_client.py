@@ -310,6 +310,7 @@ class WeComCoreWSClient:
         wecom_client: WeComClient,
         bot_id: str,
         project_path: str,
+        data_dir: str = "",
         groups: dict | None = None,
         allowed_users: list | None = None,
     ):
@@ -318,6 +319,7 @@ class WeComCoreWSClient:
         self.wecom = wecom_client        # WeComClient (消息发送)
         self.bot_id = bot_id
         self.project_path = project_path
+        self._data_dir = data_dir
         self._groups = groups or {}
         self._allowed_users = allowed_users or []
         self._ws: Any = None
@@ -1018,18 +1020,17 @@ class WeComCoreWSClient:
                 return f"{sender}: [File: {cached}] ({file_name})"
 
         try:
-            import tempfile
             import os
 
             data = await self.wecom.download_file(url, aeskey or None)
 
-            # 保存到 temp 目录
-            tmp_dir = os.path.join(tempfile.gettempdir(), "supercc-wecom-media")
-            os.makedirs(tmp_dir, exist_ok=True)
-
+            # 保存到 data_dir/received_images 或 data_dir/received_files（与 Feishu 保持一致）
+            data_dir = self._data_dir or ""
             if msg_type == "image":
+                images_dir = os.path.join(data_dir, "received_images")
+                os.makedirs(images_dir, exist_ok=True)
                 ext = ".png"
-                save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
+                save_path = os.path.join(images_dir, f"{msg_id}{ext}")
             else:
                 # file: 保留原扩展名
                 if file_name:
@@ -1038,7 +1039,9 @@ class WeComCoreWSClient:
                         ext = ".bin"
                 else:
                     ext = ".bin"
-                save_path = os.path.join(tmp_dir, f"{msg_id}{ext}")
+                files_dir = os.path.join(data_dir, "received_files")
+                os.makedirs(files_dir, exist_ok=True)
+                save_path = os.path.join(files_dir, f"{msg_id}{ext}")
 
             logger.info(f"[WeComCore] downloading {msg_type} to {save_path}")
             save_bytes(save_path, data)

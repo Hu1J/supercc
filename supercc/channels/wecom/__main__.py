@@ -79,6 +79,7 @@ async def run_plugin(config, data_dir):
         wecom_client=wecom,
         bot_id=ws_bot_id,
         project_path=config.claude.approved_directory,
+        data_dir=data_dir,
         groups=config.channels.wecom.groups,
         allowed_users=config.channels.wecom.allowed_users,
     )
