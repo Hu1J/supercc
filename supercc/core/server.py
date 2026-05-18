@@ -479,7 +479,11 @@ class WsServer:
     # ── 服务器生命周期 ────────────────────────────────────────────────────
 
     async def start(self):
-        """启动 WebSocket 服务器。"""
+        """启动 WebSocket 服务器，自动处理端口冲突。
+
+        如果指定端口被占用，自动尝试后续端口（最多尝试 50 次）。
+        成功后返回实际使用的端口。
+        """
         import websockets
 
         # websockets 15.x: handler receives (connection,) only, no path param.
@@ -525,13 +529,26 @@ class WsServer:
             self._conn_path[id(connection)] = getattr(request, "path", "/unknown/unknown")
             return None
 
-        self._server = await websockets.serve(
-            _ws_handler,
-            self.host,
-            self.port,
-            reuse_address=True,
-            process_request=_process_request,
-        )
+        self._server = None
+        bound_port = self.port
+        for attempt in range(50):
+            try:
+                self._server = await websockets.serve(
+                    _ws_handler,
+                    self.host,
+                    bound_port,
+                    reuse_address=True,
+                    process_request=_process_request,
+                )
+                break
+            except OSError as e:
+                if e.errno == 98 and attempt < 49:  # Address already in use
+                    logger.warning(f"[WsServer] Port {bound_port} is already in use, trying {bound_port + 1}...")
+                    bound_port += 1
+                    continue
+                raise
+
+        self.port = bound_port
         self._running.set()
         logger.info(f"[WsServer] Listening on ws://{self.host}:{self.port}")
 

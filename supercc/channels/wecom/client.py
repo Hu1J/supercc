@@ -25,14 +25,14 @@ class WeComClient:
     # ── 主动发送 ────────────────────────────────────────────────────────────────
 
     async def send_text(self, chat_id: str, text: str) -> str:
-        """发送文本消息（主动发送，无原始帧）。"""
+        """发送文本消息（主动发送，fire-and-forget）。"""
         ack = await self._ws.send_text(chat_id, text)
-        return ack.get("body", {}).get("msgid", "") if ack else ""
+        return "ok" if ack.get("errcode") == 0 else f"err: {ack.get('errmsg')}"
 
     async def send_markdown(self, chat_id: str, content: str) -> str:
-        """发送 Markdown 消息（主动发送，无原始帧）。"""
+        """发送 Markdown 消息（主动发送，fire-and-forget）。"""
         ack = await self._ws.send_markdown(chat_id, content)
-        return ack.get("body", {}).get("msgid", "") if ack else ""
+        return "ok" if ack.get("errcode") == 0 else f"err: {ack.get('errmsg')}"
 
     async def send_template_card(
         self, chat_id: str, card_type: str, title: str, desc: str = "", buttons: list | None = None

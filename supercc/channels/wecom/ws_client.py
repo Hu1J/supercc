@@ -294,24 +294,26 @@ class WeComWSClient:
             raise TimeoutError(f"WeCom {cmd} timeout ({timeout}s)")
 
     async def send_markdown(self, chat_id: str, content: str) -> dict:
-        """Proactively send markdown message."""
+        """Proactively send markdown message (fire-and-forget)."""
         try:
-            ack = await self._send_request(
-                APP_CMD_SEND,
-                {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": content[:4000]}},
-            )
-            return {"errcode": ack.get("errcode", 0), "errmsg": ack.get("errmsg", "")}
+            await self._send_json({
+                "cmd": APP_CMD_SEND,
+                "headers": {"req_id": self._new_req_id("send")},
+                "body": {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": content[:4000]}},
+            })
+            return {"errcode": 0, "errmsg": ""}
         except Exception as e:
             return {"errcode": -1, "errmsg": str(e)}
 
     async def send_text(self, chat_id: str, content: str) -> dict:
-        """Proactively send text message."""
+        """Proactively send text message (fire-and-forget)."""
         try:
-            ack = await self._send_request(
-                APP_CMD_SEND,
-                {"chatid": chat_id, "msgtype": "text", "text": {"content": content[:4000]}},
-            )
-            return {"errcode": ack.get("errcode", 0), "errmsg": ack.get("errmsg", "")}
+            await self._send_json({
+                "cmd": APP_CMD_SEND,
+                "headers": {"req_id": self._new_req_id("send")},
+                "body": {"chatid": chat_id, "msgtype": "text", "text": {"content": content[:4000]}},
+            })
+            return {"errcode": 0, "errmsg": ""}
         except Exception as e:
             return {"errcode": -1, "errmsg": str(e)}
 

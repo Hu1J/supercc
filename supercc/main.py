@@ -462,7 +462,13 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         executor=executor,
     )
     await core_server.start()
-    logger.info(f"[Phase2] Core WsServer started on port {core_port}")
+    actual_port = core_server.port
+    if actual_port != core_port:
+        logger.warning(f"[SuperCC] Port {core_port} is already in use, using {actual_port} instead")
+        config.core.port = actual_port
+        write_config(config)
+        logger.info(f"[SuperCC] Updated config: core.port = {actual_port}")
+    logger.info(f"[Phase2] Core WsServer started on port {actual_port}")
 
     # ── Plugin restart helper ───────────────────────────────────────────────
     async def _run_plugin_with_restart(name: str, config, data_dir, delay: float = 5.0):

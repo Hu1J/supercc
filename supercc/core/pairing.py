@@ -9,7 +9,6 @@ Security features:
   - 8-char codes from 32-char unambiguous alphabet (no 0/O/1/I)
   - Cryptographic randomness via secrets.choice()
   - 1-hour code expiry
-  - Rate limiting: 1 request per user per 10 minutes
   - File permissions: chmod 0600 on all data files
 
 Storage: {project}/.supercc/pairing/
@@ -30,7 +29,6 @@ CODE_LENGTH = 8
 
 # Timing constants
 CODE_TTL_SECONDS = 3600             # Codes expire after 1 hour
-RATE_LIMIT_SECONDS = 600            # 1 request per user per 10 minutes
 
 # No hard limit on pending codes — each code is unique, expiry handles cleanup
 
@@ -89,7 +87,6 @@ class PairingStore:
     Data files per platform:
       - {platform}-pending.json   : pending pairing requests
       - {platform}-approved.json : approved (paired) users
-      - _rate_limits.json        : rate limit tracking
     """
 
     _instance: Optional["PairingStore"] = None
@@ -117,9 +114,6 @@ class PairingStore:
 
     def _approved_path(self, platform: str) -> Path:
         return self._pairing_dir / f"{platform}-approved.json"
-
-    def _rate_limit_path(self) -> Path:
-        return self._pairing_dir / "_rate_limits.json"
 
     def _load_json(self, path: Path) -> dict:
         if path.exists():
@@ -177,18 +171,18 @@ class PairingStore:
         """
         Generate a pairing code for a new user.
 
-        Returns the code string, or None if:
-          - User is rate-limited (too recent request)
+        Returns the code string. If the user already has a pending code, reuse it.
         """
         with self._lock:
             self._cleanup_expired(platform)
 
-            # Check rate limit for this specific user
-            if self._is_rate_limited(platform, user_id):
-                return None
-
             # Load pending requests
             pending = self._load_json(self._pending_path(platform))
+
+            # Reuse existing pending code for this user
+            for code, info in pending.items():
+                if info.get("user_id") == user_id:
+                    return code
 
             # Generate cryptographically random code
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
@@ -200,9 +194,6 @@ class PairingStore:
                 "created_at": time.time(),
             }
             self._save_json(self._pending_path(platform), pending)
-
-            # Record rate limit
-            self._record_rate_limit(platform, user_id)
 
             return code
 
@@ -283,22 +274,6 @@ class PairingStore:
                 count += len(pending)
                 self._save_json(self._pending_path(p), {})
         return count
-
-    # ----- Rate limiting -----
-
-    def _is_rate_limited(self, platform: str, user_id: str) -> bool:
-        """Check if a user has requested a code too recently."""
-        limits = self._load_json(self._rate_limit_path())
-        key = f"{platform}:{user_id}"
-        last_request = limits.get(key, 0)
-        return (time.time() - last_request) < RATE_LIMIT_SECONDS
-
-    def _record_rate_limit(self, platform: str, user_id: str) -> None:
-        """Record the time of a pairing request for rate limiting."""
-        limits = self._load_json(self._rate_limit_path())
-        key = f"{platform}:{user_id}"
-        limits[key] = time.time()
-        self._save_json(self._rate_limit_path(), limits)
 
     # ----- Cleanup -----
 
