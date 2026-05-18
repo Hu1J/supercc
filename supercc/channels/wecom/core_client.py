@@ -461,7 +461,7 @@ class WeComCoreWSClient:
             req_id = str(data.get("id"))
             stored = self._pending_message_ids.pop(req_id, None)
             if stored is not None:
-                logger.info(f"[WeComCore] response for req.id={req_id}, stored={stored}")
+                logger.debug(f"[WeComCore] response for req.id={req_id}, stored={stored}")
             if stored:
                 msg_id, chat_id = stored
                 # Flush and clean up the stream accumulator for this message
@@ -782,7 +782,7 @@ class WeComCoreWSClient:
             allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
             # 先检查静态白名单（空列表 = 不设限，所有人都走配对检查）
             do_pairing_check = not allowed_users or user_id not in allowed_users
-            logger.info(f"[WeComCore] P2P check: user_id={user_id}, allowed_users={allowed_users}, do_pairing_check={do_pairing_check}")
+            logger.debug(f"[WeComCore] P2P check: user_id={user_id}, allowed_users={allowed_users}, do_pairing_check={do_pairing_check}")
             if do_pairing_check:
                     # 未授权用户，生成 pairing code 并发送
                     try:
@@ -812,7 +812,7 @@ class WeComCoreWSClient:
 
     async def send_message(self, msg: dict) -> dict:
         """将 WeCom 消息转发给核心，并等待响应。"""
-        logger.info(f"[WeComCore] ★ send_message called: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
+        logger.debug(f"[WeComCore] ★ send_message called: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
         # 保存当前 chat 上下文，供 command_progress 使用
         # 图片/文件：解析 url+aeskey，下载到本地后转为 markdown 路径
         # 直接修改 msg 的 content，这样 incoming_to_inbound 会拿到已解析的内容
@@ -890,9 +890,9 @@ class WeComCoreWSClient:
         try:
             import json as _json
             raw_body = _json.dumps(msg, ensure_ascii=False, indent=None)
-            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body}")
+            logger.debug(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body}")
         except Exception:
-            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
+            logger.debug(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
 
         # 保存当前 chat 上下文，供 command_progress 使用
         self._last_chat_id = inbound.session_key.chat_id
@@ -924,7 +924,7 @@ class WeComCoreWSClient:
                 await self._ws.send(json.dumps(notify_req.to_dict()))
             except Exception:
                 pass
-            logger.info(f"[WeComCore] group msg stored, hist_len={len(hist)}")
+            logger.debug(f"[WeComCore] group msg stored, hist_len={len(hist)}")
             return {}
 
         # ── 群聊上下文 enrichment（历史、成员列表、引用消息）───────────────
@@ -954,7 +954,7 @@ class WeComCoreWSClient:
             },
         )
 
-        logger.info(f"[WeComCore] send_message to core: req.id={req.id}, message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, content={inbound.content[:50] if inbound.content else 'None'}")
+        logger.debug(f"[WeComCore] send_message to core: req.id={req.id}, message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, content={inbound.content[:50] if inbound.content else 'None'}")
 
         # 所有消息：发给 core 后立即返回，不等执行结果
         # - slash command：结果由 callback 处理（不流式）
@@ -963,7 +963,7 @@ class WeComCoreWSClient:
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
-        logger.info(f"[WeComCore] stored pending: req.id={req.id} -> (message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, chat_id={inbound.session_key.chat_id})")
+        logger.debug(f"[WeComCore] stored pending: req.id={req.id} -> (message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, chat_id={inbound.session_key.chat_id})")
         await self._ws.send(json.dumps(req.to_dict()))
 
         def handle_result(fut: asyncio.Future):
@@ -974,7 +974,7 @@ class WeComCoreWSClient:
                 logger.error(f"[WeComCore] send_message callback error: {e}", exc_info=True)
 
         future.add_done_callback(handle_result)
-        logger.info(f"[WeComCore] sent, returning immediately (result via callback)")
+        logger.debug(f"[WeComCore] sent, returning immediately (result via callback)")
         return None
 
     def _handle_command_result(self, inbound, result):

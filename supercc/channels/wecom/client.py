@@ -140,7 +140,7 @@ class WeComClient:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 data = await resp.read()
-        logger.info(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}")
+        logger.debug(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}")
         if aes_key:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             import base64
@@ -161,5 +161,5 @@ class WeComClient:
                 logger.warning(f"[WeComClient] PKCS#7 padding mismatch, skipping decrypt")
                 return data
             data = decrypted[:-pad_len]
-            logger.info(f"[WeComClient] decrypted to {len(data)} bytes")
+            logger.debug(f"[WeComClient] decrypted to {len(data)} bytes")
         return data

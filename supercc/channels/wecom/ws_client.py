@@ -266,13 +266,13 @@ class WeComWSClient:
         req_id = headers.get("req_id", "") or ""
 
         msg_id = str(body.get("msgid") or "")
-        logger.info(f"[WeComWS] ★ received cmd={cmd}, msgid={msg_id[:20] if msg_id else 'None'}, req_id={req_id[:20] if req_id else 'None'}, body_keys={list(body.keys())}")
+        logger.debug(f"[WeComWS] ★ received cmd={cmd}, msgid={msg_id[:20] if msg_id else 'None'}, req_id={req_id[:20] if req_id else 'None'}, body_keys={list(body.keys())}")
 
         # Store msgid → req_id mapping for reply
         if msg_id and req_id:
             with self._reply_lock:
                 self._reply_req_ids[msg_id] = req_id
-            logger.info(f"[WeComWS] stored _reply_req_ids[{msg_id[:20]}] = {req_id[:20] if req_id else 'None'}")
+            logger.debug(f"[WeComWS] stored _reply_req_ids[{msg_id[:20]}] = {req_id[:20] if req_id else 'None'}")
 
         if self._on_message:
             await self._on_message(body)
