@@ -74,8 +74,6 @@ class Worker:
         for integ in (self.integration, self.integration_mem, self.integration_skill):
             if integ is not None:
                 integ.stop_event.set()
-        if self._current_task is not None and not self._current_task.done():
-            self._current_task.cancel()
         logger.info(f"[Worker] Stop requested for {self.key}")
 
 
