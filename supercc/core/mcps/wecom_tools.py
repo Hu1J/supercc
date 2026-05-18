@@ -112,10 +112,15 @@ class WeComUploader:
             ssl_ctx.verify_mode = ssl_module.CERT_NONE
 
         self._session = aiohttp.ClientSession()
+        # Compat: some aiohttp versions don't have ClientWSTimeout(total=...)
+        try:
+            ws_timeout = aiohttp.ClientWSTimeout(total=30)
+        except (AttributeError, TypeError):
+            ws_timeout = 30.0
         self._ws = await self._session.ws_connect(
             DEFAULT_WS_URL,
             protocols=["wss"],
-            timeout=aiohttp.ClientWSTimeout(total=30),
+            timeout=ws_timeout,
             ssl=ssl_ctx,
         )
 
