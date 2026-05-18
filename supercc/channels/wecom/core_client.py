@@ -5,14 +5,8 @@ import asyncio
 import json
 import logging
 import random
-import re
 import traceback
 from typing import Any
-
-_COMMAND_RE = re.compile(r"^/[a-zA-Z][a-zA-Z0-9_-]*(?:\s.*)?$")
-
-def _is_command(text: str) -> bool:
-    return bool(_COMMAND_RE.match(text))
 
 from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.channels.feishu.media import save_bytes
@@ -948,33 +942,26 @@ class WeComCoreWSClient:
 
         logger.info(f"[WeComCore] send_message to core: req.id={req.id}, message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, content={inbound.content[:50] if inbound.content else 'None'}")
 
-        # 检测 slash command：发给 core 后立即返回，结果通过 callback 处理
-        is_slash_command = _is_command(inbound.content)
-
+        # 所有消息：发给 core 后立即返回，不等执行结果
+        # - slash command：结果由 callback 处理（不流式）
+        # - 普通对话：结果由 _handle_core_message RESPONSE 事件处理（流式）
+        #   callback 只做收尾，在 msg_id in _streamed_msg_ids 时跳过（已流式发送）
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
         self._pending_message_ids[str(req.id)] = (inbound.message_id, inbound.session_key.chat_id)
         logger.info(f"[WeComCore] stored pending: req.id={req.id} -> (message_id={inbound.message_id[:20] if inbound.message_id else 'None'}, chat_id={inbound.session_key.chat_id})")
         await self._ws.send(json.dumps(req.to_dict()))
 
-        if is_slash_command:
-            # slash command：发完立即返回，不等 core 执行结果（秒回）
-            # 结果由 callback 在 future resolved 时处理
-            def handle_result(fut: asyncio.Future):
-                try:
-                    result = fut.result()
-                    self._handle_command_result(inbound, result)
-                except Exception as e:
-                    logger.error(f"[WeComCore] slash command result callback error: {e}", exc_info=True)
+        def handle_result(fut: asyncio.Future):
+            try:
+                result = fut.result()
+                self._handle_command_result(inbound, result)
+            except Exception as e:
+                logger.error(f"[WeComCore] send_message callback error: {e}", exc_info=True)
 
-            future.add_done_callback(handle_result)
-            logger.info(f"[WeComCore] slash command sent, returning immediately (result via callback)")
-            return None
-
-        result = await future
-        logger.info(f"[WeComCore] send_message result: {str(result)[:100] if result else 'None'}")
-        self._handle_command_result(inbound, result)
-        return result or {}
+        future.add_done_callback(handle_result)
+        logger.info(f"[WeComCore] sent, returning immediately (result via callback)")
+        return None
 
     def _handle_command_result(self, inbound, result):
         """处理 command 结果（供 await 和 callback 两条路径共用）。"""
