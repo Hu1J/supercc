@@ -277,7 +277,7 @@ class WeComWSClient:
 
     # ── Outbound API ─────────────────────────────────────────────────
 
-    async def _send_request(self, cmd: str, body: dict, timeout: float = 10.0) -> dict:
+    async def _send_request(self, cmd: str, body: dict, timeout: float = 20.0) -> dict:
         """Send request and wait for correlated response."""
         req_id = self._new_req_id(cmd)
         loop = asyncio.get_running_loop()
@@ -316,14 +316,32 @@ class WeComWSClient:
             return {"errcode": -1, "errmsg": str(e)}
 
     async def reply_text(self, reply_req_id: str, content: str) -> dict:
-        """Reply using stored reply_req_id."""
+        """Reply using the inbound req_id directly (Hermes pattern).
+
+        关键：必须用原始 inbound req_id，不能生成新 req_id。
+        WeCom 回复时用原始 req_id 做关联，新 req_id 永远等不到。
+        """
+        normalized_req_id = str(reply_req_id or "").strip()
+        if not normalized_req_id:
+            return {"errcode": -1, "errmsg": "reply_req_id is required"}
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending_responses[normalized_req_id] = future
+
         try:
-            ack = await self._send_request(
-                "aibot_respond_msg",
-                {"msgtype": "text", "text": {"content": content[:4000]}},
-            )
-            return {"errcode": ack.get("errcode", 0), "errmsg": ack.get("errmsg", "")}
+            await self._send_json({
+                "cmd": "aibot_respond_msg",
+                "headers": {"req_id": normalized_req_id},
+                "body": {"msgtype": "markdown", "markdown": {"content": content[:4000]}},
+            })
+            response = await asyncio.wait_for(future, timeout=20.0)
+            return {"errcode": response.get("errcode", 0), "errmsg": response.get("errmsg", "")}
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(normalized_req_id, None)
+            return {"errcode": -1, "errmsg": "WeCom aibot_respond_msg timeout (20s)"}
         except Exception as e:
+            self._pending_responses.pop(normalized_req_id, None)
             return {"errcode": -1, "errmsg": str(e)}
 
     async def reply_stream(
@@ -333,19 +351,35 @@ class WeComWSClient:
         content: str,
         finish: bool = False,
     ) -> dict:
-        """Send streaming reply (markdown)."""
+        """Send streaming reply (markdown) using inbound req_id directly."""
+        normalized_req_id = str(reply_req_id or "").strip()
+        if not normalized_req_id:
+            return {"errcode": -1, "errmsg": "reply_req_id is required"}
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending_responses[normalized_req_id] = future
+
         try:
-            body = {
-                "msgtype": "stream",
-                "stream": {
-                    "id": stream_id,
-                    "content": content[:4000],
-                    "finish": finish,
+            await self._send_json({
+                "cmd": "aibot_respond_msg",
+                "headers": {"req_id": normalized_req_id},
+                "body": {
+                    "msgtype": "stream",
+                    "stream": {
+                        "id": stream_id,
+                        "content": content[:4000],
+                        "finish": finish,
+                    },
                 },
-            }
-            ack = await self._send_request("aibot_respond_msg", body)
-            return {"errcode": ack.get("errcode", 0), "errmsg": ack.get("errmsg", "")}
+            })
+            response = await asyncio.wait_for(future, timeout=20.0)
+            return {"errcode": response.get("errcode", 0), "errmsg": response.get("errmsg", "")}
+        except asyncio.TimeoutError:
+            self._pending_responses.pop(normalized_req_id, None)
+            return {"errcode": -1, "errmsg": "WeCom aibot_respond_msg timeout (20s)"}
         except Exception as e:
+            self._pending_responses.pop(normalized_req_id, None)
             return {"errcode": -1, "errmsg": str(e)}
 
     async def send_message(

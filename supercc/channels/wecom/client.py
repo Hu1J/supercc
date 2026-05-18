@@ -58,6 +58,16 @@ class WeComClient:
             desc=reason,
         )
 
+    async def reply_text(self, reply_req_id: str, content: str) -> str:
+        """通过 APP_CMD_RESPONSE (reply) 发送文本消息。"""
+        try:
+            ack = await self._ws.reply_text(reply_req_id=reply_req_id, content=content)
+            logger.info(f"[WeComClient] reply_text ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
+            return "ok" if ack.get("errcode") == 0 else f"err: {ack.get('errmsg')}"
+        except Exception as e:
+            logger.error(f"[WeComClient] reply_text failed: {e}")
+            return f"err: {e}"
+
     async def send_typing_indicator(self, chat_id: str) -> str:
         """发送'正在思考...'提示（text_notice 模板卡片）。"""
         card = self._build_card("text_notice", "正在思考...", "", source={"desc": "SuperCC"})
