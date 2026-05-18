@@ -33,7 +33,7 @@ from supercc.core.mcps.model_tools import (
 )
 from supercc.core.mcps.feishu_file_tools import feishu_send_file, get_chat_members
 from supercc.core.mcps.feishu_history_tools import feishu_chat_history
-from supercc.core.claude.wecom_tools import wecom_send_file
+from supercc.core.mcps.wecom_tools import wecom_send_file
 
 
 def get_supercc_mcp_server(include_feishu: bool = True, include_wecom: bool = False):
