@@ -9,6 +9,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 import uuid
 from typing import Optional
@@ -17,6 +18,7 @@ import aiohttp
 
 from claude_agent_sdk import tool
 
+logger = logging.getLogger(__name__)
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
@@ -303,14 +305,15 @@ async def _send_single_file(file_path: str, chat_id: str) -> str:
     bot_id, secret = _get_wecom_credentials()
     resolved = _resolve_path(file_path)
     ext = os.path.splitext(resolved)[1].lower()
-    print(f"[WeComSendFile] bot_id={bot_id[:8]}..., chat_id={chat_id}, file={os.path.basename(resolved)}, ext={ext}")
+    logger.debug("bot_id=%s..., chat_id=%s, file=%s, ext=%s",
+                 bot_id[:8], chat_id, os.path.basename(resolved), ext)
 
     async with WeComUploader(bot_id, secret) as uploader:
         if ext in SUPPORTED_IMAGE_EXTS:
             msg_id = await uploader.send_image_file(chat_id, resolved)
         else:
             msg_id = await uploader.send_document(chat_id, resolved)
-    print(f"[WeComSendFile] sent successfully: msg_id={msg_id}, file={os.path.basename(resolved)}")
+    logger.debug("sent successfully: msg_id=%s, file=%s", msg_id, os.path.basename(resolved))
     return msg_id
 
 
