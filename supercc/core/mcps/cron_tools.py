@@ -82,7 +82,9 @@ async def cron_create(args: dict) -> dict:
 
     chat_id = _get_chat_id()
     if not chat_id:
-        return {"content": [{"type": "text", "text": "未找到活跃飞书会话，请先在飞书里发一条消息"}], "is_error": True}
+        return {"content": [{"type": "text", "text": "未找到活跃会话，请先在聊天里发一条消息"}], "is_error": True}
+
+    from supercc.core.claude.message_context import get_current_platform
 
     data_dir = _get_data_dir()
     try:
@@ -94,6 +96,7 @@ async def cron_create(args: dict) -> dict:
             repeat=repeat,
             verbose=verbose,
             data_dir=data_dir,
+            platform=get_current_platform(),
         )
     except ValueError as e:
         return {"content": [{"type": "text", "text": f"参数错误: {e}"}], "is_error": True}

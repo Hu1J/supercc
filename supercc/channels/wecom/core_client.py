@@ -484,7 +484,7 @@ class WeComCoreWSClient:
             is_group = extra.get("is_group_chat", False)
             sender_id = extra.get("user_open_id", "")
             session_info = extra.get("session_info", "")
-            logger.info(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
+            logger.debug(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
 
             # ── 群聊 mention：追加 @userid 纯文本 ──────────────────────────────
             if is_group and sender_id:

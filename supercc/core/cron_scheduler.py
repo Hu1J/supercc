@@ -841,7 +841,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
         max_turns=5,
         approved_directory=config.claude.approved_directory,
     )
-    claude._init_options()
+    claude._init_options(channel=platform)
     _log("CLAUDE_INTEGRATION_CREATED")
 
     # ── Execute ───────────────────────────────────────────────────────────────
