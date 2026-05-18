@@ -1021,7 +1021,7 @@ class WeComCoreWSClient:
             import tempfile
             import os
 
-            data, _ = await self.wecom.download_file(url, aeskey or None)
+            data = await self.wecom.download_file(url, aeskey or None)
 
             # 保存到 temp 目录
             tmp_dir = os.path.join(tempfile.gettempdir(), "supercc-wecom-media")
