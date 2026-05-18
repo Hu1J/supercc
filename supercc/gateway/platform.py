@@ -24,6 +24,26 @@ def get_platform() -> str:
     raise RuntimeError(f"Unsupported platform: {sys.platform}")
 
 
+def _ensure_user_systemd_env() -> None:
+    """确保 DBUS_SESSION_BUS_ADDRESS 和 XDG_RUNTIME_DIR 已设置。
+
+    在 SSH 无桌面 session 环境下，这些环境变量可能缺失。
+    直接调用 systemctl --user 会报错 "Failed to connect to bus"。
+    此函数检测 socket 路径并补全缺失的环境变量。
+    """
+    uid = os.getuid()
+    if "XDG_RUNTIME_DIR" not in os.environ:
+        runtime_dir = f"/run/user/{uid}"
+        if Path(runtime_dir).exists():
+            os.environ["XDG_RUNTIME_DIR"] = runtime_dir
+
+    if "DBUS_SESSION_BUS_ADDRESS" not in os.environ:
+        xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        bus_path = Path(xdg_runtime) / "bus"
+        if bus_path.exists():
+            os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+
+
 def _resolve_supercc() -> str:
     """返回当前环境 supercc console script 绝对路径。"""
     python_path = Path(sys.executable)
@@ -194,6 +214,7 @@ def stop_mac(data_dir: str, project_slug: str) -> None:
 
 def install_linux(data_dir: str, project_slug: str) -> None:
     """安装 systemd user service。"""
+    _ensure_user_systemd_env()
     slug = _slug_to_dns_safe(project_slug)
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +263,7 @@ WantedBy=default.target
 
 def uninstall_linux(data_dir: str, project_slug: str) -> None:
     """卸载 systemd user service（disable + 删除文件）。"""
+    _ensure_user_systemd_env()
     slug = _slug_to_dns_safe(project_slug)
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_name = f"supercc-main-{slug}"
@@ -258,6 +280,7 @@ def uninstall_linux(data_dir: str, project_slug: str) -> None:
 
 def stop_linux(data_dir: str, project_slug: str) -> None:
     """停止 systemd user service：先删除服务，再杀实例。"""
+    _ensure_user_systemd_env()
     slug = _slug_to_dns_safe(project_slug)
     service_name = f"supercc-main-{slug}"
     service_dir = Path.home() / ".config" / "systemd" / "user"
@@ -505,6 +528,7 @@ def kickstart_mac(data_dir: str, project_slug: str) -> None:
 
 def kickstart_linux(data_dir: str, project_slug: str) -> None:
     """通过 systemctl 启动已安装的 systemd user service。"""
+    _ensure_user_systemd_env()
     slug = _slug_to_dns_safe(project_slug)
     service_name = f"supercc-main-{slug}"
     result = subprocess.run(
