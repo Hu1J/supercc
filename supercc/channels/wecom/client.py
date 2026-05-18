@@ -131,23 +131,14 @@ class WeComClient:
     # ── 下载 ─────────────────────────────────────────────────────────────────
 
     async def download_file(self, url: str, aes_key: str = "") -> bytes:
-        """下载并解密文件。"""
+        """下载 WeCom 图片/文件。
+
+        注意：WeCom COS URL 已在签名中包含认证，图片返回时已是解密状态。
+        aes_key 参数不再用于 AES 解密（URL 签名仅用于访问控制）。
+        """
         import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 data = await resp.read()
-        logger.info(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}, aes_key_present={bool(aes_key)}")
-        if aes_key:
-            from Crypto.Cipher import AES
-            import base64
-            try:
-                key = base64.b64decode(aes_key)
-            except Exception:
-                logger.warning(f"[WeComClient] aes_key base64 decode failed, trying raw bytes: {aes_key[:20]}")
-                key = aes_key.encode()
-            cipher = AES.new(key, AES.MODE_CBC, b"\0" * 16)
-            data = cipher.decrypt(data)
-            # Remove PKCS7 padding
-            pad = data[-1]
-            data = data[:-pad]
+        logger.info(f"[WeComClient] download_file: url_len={len(url)}, data_len={len(data)}")
         return data
