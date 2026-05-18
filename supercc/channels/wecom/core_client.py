@@ -508,6 +508,7 @@ class WeComCoreWSClient:
             msg_id = params.get("message_id", "")
             content = params.get("content", "正在重启...")
             if content:
+                await self.wecom._ws.reconnect()
                 await self.wecom.send_text(chat_id, content)
         elif method == Event.PONG:
             pass  # 心跳响应
@@ -982,6 +983,7 @@ class WeComCoreWSClient:
 
         # /restart 指令：plugin 本地立即发确认，不等 core 回传
         if inbound.content.strip() == "/restart":
+            await self.wecom._ws.reconnect()
             await self.wecom.send_text(inbound.session_key.chat_id, "正在重启，请稍作等待...")
 
         req = JsonRpcRequest(
