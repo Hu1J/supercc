@@ -1081,8 +1081,11 @@ class CronScheduler:
         # Ensure skill symlinks are in sync on every tick (idempotent)
         skills_dir = Path(self.data_dir) / "skills"
         if skills_dir.exists():
-            from supercc.core.evolve.skill_nudge import _ensure_symlinks
-            _ensure_symlinks(skills_dir)
+            try:
+                from supercc.core.evolve.skill_nudge import _ensure_symlinks
+                _ensure_symlinks(skills_dir)
+            except Exception:
+                logger.warning("[cron] symlink sync failed (non-blocking)\n%s", traceback.format_exc())
         # Deliver any pending notifications that have reached their notify_at time
         # Filter by scoped chat_id if set (per-chat-id isolation)
         pending_store = _PendingStore(self.data_dir)

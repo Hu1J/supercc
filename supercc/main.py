@@ -1201,17 +1201,12 @@ def _run_config_channel_interactive(dirty: list) -> None:
                 print("✅ 飞书配置已删除")
                 return
             if sub == "reconfigure":
-                app_id = questionary.text("App ID", default=feishu.app_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-                if not app_id:
-                    print("App ID 不能为空")
-                    return
-                app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-                feishu.app_id = app_id
-                if app_secret:
-                    feishu.app_secret = app_secret
-                write_config(cfg)
-                dirty[0] = True
-                print("✅ 飞书凭证已保存（重启后生效）")
+                print("\n正在配置飞书...\n")
+                try:
+                    _run_async_cfg(cfg_path, bypass_accepted=True)
+                    print("✅ 飞书配置完成\n")
+                except Exception as e:
+                    print(f"⚠️  飞书配置出错：{e}\n")
                 return
         else:
             print("\n正在配置飞书...\n")
@@ -1250,20 +1245,15 @@ def _run_config_channel_interactive(dirty: list) -> None:
                 print("✅ 企业微信配置已删除")
                 return
             if sub == "reconfigure":
-                corp_id = questionary.text("Corp ID", default=wecom.corp_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-                if not corp_id:
-                    print("Corp ID 不能为空")
-                    return
-                agent_id = questionary.text("Agent ID", default=wecom.agent_id or "", style=questionary.Style([("input", "fg:#CCCCCC")])).ask()
-                secret = questionary.password("Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
-                wecom.corp_id = corp_id
-                if agent_id:
-                    wecom.agent_id = agent_id
-                if secret:
-                    wecom.secret = secret
-                write_config(cfg)
-                dirty[0] = True
-                print("✅ 企业微信凭证已保存（重启后生效）")
+                print("\n正在配置企业微信...\n")
+                import subprocess, sys
+                subprocess.run([sys.executable, "-m", "pip", "install", "wecom-aibot-sdk-python", "--quiet"], capture_output=True)
+                try:
+                    from supercc.install.wecom_flow import run_wecom_install_flow
+                    run_wecom_install_flow(cfg_path, bypass_accepted=True)
+                    print("✅ 企业微信配置完成\n")
+                except Exception as e:
+                    print(f"⚠️  企业微信配置出错：{e}\n")
                 return
         else:
             print("\n正在配置企业微信...\n")
