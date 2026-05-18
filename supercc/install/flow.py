@@ -90,14 +90,14 @@ async def run_install_flow(config_path: str = "config.json", bypass_accepted: bo
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if method == "manual":
         print("\n📋 手动配置飞书机器人\n")
         print("请将已有的飞书应用凭证填入以下内容：\n")
-        app_id = questionary.text("App ID", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or ""
-        app_secret = questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask() or ""
-        bot_name = questionary.text("机器人名称（如 Claude）", default="Claude", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or "Claude"
+        app_id = (await questionary.text("App ID", style=questionary.Style([("input", "fg:#CCCCCC")])).ask_async()) or ""
+        app_secret = (await questionary.password("App Secret", style=questionary.Style([("password", "fg:#CCCCCC")])).ask_async()) or ""
+        bot_name = (await questionary.text("机器人名称（如 Claude）", default="Claude", style=questionary.Style([("input", "fg:#CCCCCC")])).ask_async()) or "Claude"
 
         if not app_id or not app_secret:
             print("\n❌ App ID 和 App Secret 不能为空\n")
