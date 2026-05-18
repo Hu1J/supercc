@@ -480,12 +480,6 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
                     from supercc.channels.feishu.__main__ import run_plugin as _run
                 elif name == "wecom":
                     from supercc.channels.wecom.__main__ import run_plugin as _run
-                elif name == "telegram":
-                    from supercc.channels.telegram.__main__ import run_plugin as _run
-                elif name == "qq":
-                    from supercc.channels.qq.__main__ import run_plugin as _run
-                elif name == "whatsapp":
-                    from supercc.channels.whatsapp.__main__ import run_plugin as _run
                 elif name == "wechat":
                     from supercc.channels.wechat.__main__ import run_plugin as _run
                 await _run(config, data_dir)
@@ -518,36 +512,6 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         )
         plugin_tasks.append(task)
         logger.info("[Bridge] WeCom plugin started (async task)")
-
-    # Telegram
-    _telegram_cfg = getattr(config.channels, "telegram", None)
-    if _telegram_cfg and getattr(_telegram_cfg, "enabled", False) and getattr(_telegram_cfg, "bot_token", ""):
-        task = asyncio.create_task(
-            _run_plugin_with_restart("telegram", config, data_dir),
-            name="telegram-plugin"
-        )
-        plugin_tasks.append(task)
-        logger.info("[Bridge] Telegram plugin started (async task)")
-
-    # QQ
-    _qq_cfg = getattr(config.channels, "qq", None)
-    if _qq_cfg and getattr(_qq_cfg, "enabled", False) and getattr(_qq_cfg, "app_id", ""):
-        task = asyncio.create_task(
-            _run_plugin_with_restart("qq", config, data_dir),
-            name="qq-plugin"
-        )
-        plugin_tasks.append(task)
-        logger.info("[Bridge] QQ plugin started (async task)")
-
-    # WhatsApp
-    _whatsapp_cfg = getattr(config.channels, "whatsapp", None)
-    if _whatsapp_cfg and getattr(_whatsapp_cfg, "enabled", False) and getattr(_whatsapp_cfg, "session_dir", ""):
-        task = asyncio.create_task(
-            _run_plugin_with_restart("whatsapp", config, data_dir),
-            name="whatsapp-plugin"
-        )
-        plugin_tasks.append(task)
-        logger.info("[Bridge] WhatsApp plugin started (async task)")
 
     # 微信个人
     _wechat_cfg = getattr(config.channels, "wechat", None)
