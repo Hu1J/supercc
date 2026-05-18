@@ -888,7 +888,11 @@ class WeComCoreWSClient:
                 if url:
                     quote_resolved = await self._download_and_resolve_media(msg_id, url, aeskey, "file", sender, fname)
             if quote_resolved:
-                msg["_resolved_content"] = (existing_content + "\n" + quote_resolved).strip() if existing_content else quote_resolved
+                # quote 在前，用户消息在后
+                if existing_content:
+                    msg["_resolved_content"] = f"[引用消息]:\n{quote_resolved}\n\n{existing_content}"
+                else:
+                    msg["_resolved_content"] = f"[引用消息]:\n{quote_resolved}"
 
         # ── 群聊 @mention 前缀剥离 ─────────────────────────────────────────
         # 当机器人被 @mention 时，content 可能包含 "@_user_1 " 前缀，
