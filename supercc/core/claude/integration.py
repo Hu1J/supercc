@@ -300,6 +300,7 @@ class ClaudeIntegration:
                     result = await consume_task
                 finally:
                     listener_task.cancel()
+                    consume_task.cancel()
                     if self._codex_capture_tasks:
                         await asyncio.gather(*list(self._codex_capture_tasks), return_exceptions=True)
                         self._codex_capture_tasks.clear()
