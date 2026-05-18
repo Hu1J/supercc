@@ -331,6 +331,8 @@ class WeComCoreWSClient:
         self._sent_message_ids: set[str] = set()       # 幂等性（主动发送去重）
         # 流式消息 ID 追踪（避免 RESPONSE 重复发送）
         self._streamed_msg_ids: set[str] = set()
+        # WeComSendFile 调用标记：发文件后 WS 会被踢，下次发送前需重连
+        self._wecom_sendfile_called: bool = False
         # Stream accumulators keyed by message_id (for buffering streaming chunks)
         self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
         # 当前 chat 上下文（用于 command_progress 进度卡片）
@@ -573,6 +575,12 @@ class WeComCoreWSClient:
         """
         logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
 
+        # WeComSendFile 后重连 WS，确保用有效凭证连接
+        if self._wecom_sendfile_called:
+            self._wecom_sendfile_called = False
+            logger.info("[WeComCore] Reconnecting WS after WeComSendFile...")
+            await self.wecom._ws.reconnect()
+
         sent_ok = False
         try:
             ack = await self.wecom.send_markdown(chat_id, text)
@@ -711,6 +719,11 @@ class WeComCoreWSClient:
         tool_call_id = params.get("tool_call_id", "") or extra.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
+
+        # 检测 WeComSendFile 调用：它会导致 channel 的 WS 被踢下线
+        if tool_name and "WeComSendFile" in tool_name:
+            logger.info("[WeComCore] WeComSendFile detected, will reconnect before next send")
+            self._wecom_sendfile_called = True
 
         # Flush any pending streaming text for this message before handling tool call
         if msg_id and msg_id in self._accumulator_by_msg_id:

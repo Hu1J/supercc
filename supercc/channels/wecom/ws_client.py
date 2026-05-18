@@ -499,6 +499,16 @@ class WeComWSClient:
     def is_connected(self) -> bool:
         return self._connected and self._ws is not None
 
+    async def reconnect(self) -> None:
+        """主动断开并重连 WeCom WS。"""
+        logger.info("[WeComWS] Manual reconnect triggered")
+        self._reconnect_delay = 1.0
+        try:
+            await self._open_connection()
+            logger.info("[WeComWS] Manual reconnect succeeded")
+        except Exception as e:
+            logger.warning(f"[WeComWS] Manual reconnect failed: {e}")
+
     def get_reply_req_id(self, msg_id: str) -> str | None:
         with self._reply_lock:
             return self._reply_req_ids.get(str(msg_id or "").strip())
