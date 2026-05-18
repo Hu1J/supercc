@@ -272,7 +272,7 @@ class WsServer:
         key = SessionKey(
             bot_id=params.get("bot_id", ""),
             project_path=params.get("project_path", ""),
-            platform=params.get("platform", "feishu"),
+            platform=req.platform or "feishu",
             chat_id=params.get("chat_id", ""),
         )
         user_open_id = params.get("user_open_id", "") or ""
