@@ -482,7 +482,7 @@ class WeComCoreWSClient:
             is_group = extra.get("is_group_chat", False)
             sender_id = extra.get("user_open_id", "")
             session_info = extra.get("session_info", "")
-            logger.debug(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
+            logger.info(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
 
             # ── 群聊 mention：追加 @userid 纯文本 ──────────────────────────────
             if is_group and sender_id:
@@ -573,15 +573,24 @@ class WeComCoreWSClient:
         """
         logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
 
-        ack = await self.wecom.send_markdown(chat_id, text)
-        logger.debug(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
-        if ack.get("errcode") != 0:
-            # markdown 失败，尝试纯文本 fallback
-            try:
+        sent_ok = False
+        try:
+            ack = await self.wecom.send_markdown(chat_id, text)
+            logger.info(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
+            if ack.get("errcode") == 0:
+                sent_ok = True
+            else:
+                # markdown 失败，尝试纯文本 fallback
                 ack2 = await self.wecom.send_text(chat_id, text[:2000])
                 logger.info(f"[WeComCore] send_text fallback ack: errcode={ack2.get('errcode')}, errmsg={ack2.get('errmsg')}")
-            except Exception as e:
-                logger.warning(f"[WeComCore] all send methods failed: {e}")
+                if ack2.get("errcode") == 0:
+                    sent_ok = True
+        except Exception as e:
+            logger.warning(f"[WeComCore] send failed: {e}")
+
+        if not sent_ok and message_id:
+            # 流式发送失败时放行回调路径（让 callback 补发）
+            self._streamed_msg_ids.discard(message_id)
 
     async def _handle_command_progress(self, params: dict):
         """渲染 restart/update 步骤进度卡片，发到企业微信。"""
@@ -1020,14 +1029,10 @@ class WeComCoreWSClient:
                 logger.info("[command] /%s forwarding confirmation", result_event)
                 asyncio.create_task(self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}..."))
         elif result_content:
-            # slash command 结果（/status、/git 等）
-            msg_id = inbound.message_id
-            if msg_id in self._streamed_msg_ids:
-                logger.info("[command] skip %s (already streamed)", msg_id)
-            else:
-                chat_id = inbound.session_key.chat_id
-                logger.info("[command] slash command result, sending via send_markdown, content_len=%d", len(result_content))
-                asyncio.create_task(self.wecom.send_markdown(chat_id, result_content))
+            # callback 结果（包括流式已发过的文本，避免误跳过）
+            chat_id = inbound.session_key.chat_id
+            logger.info("[command] sending result via send_markdown, chat_id=%s, content_len=%d", chat_id, len(result_content))
+            asyncio.create_task(self.wecom.send_markdown(chat_id, result_content))
 
     async def _download_and_resolve_media(
         self, msg_id: str, url: str, aeskey: str, msg_type: str, sender: str, file_name: str = ""
