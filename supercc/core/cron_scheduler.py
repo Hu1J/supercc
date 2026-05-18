@@ -111,11 +111,51 @@ def _format_tool_call_markdown(tool_name: str, tool_input: str | None, memory_ma
     # Memory MCP tools → 卡片 Markdown
     if tool_name and tool_name.startswith("mcp__SuperCC__Memory"):
         try:
-            marker = MemoryCardMarker(
-                tool_name=tool_name,
-                tool_input=tool_input,
-                memory_manager=memory_manager,
-            )
+            args = json.loads(tool_input) if tool_input else {}
+        except json.JSONDecodeError:
+            args = {}
+
+        short = tool_name.replace("mcp__SuperCC__", "")
+        scope = "proj" if "Proj" in short else "user"
+        card_type = short.lower().replace("mcp__supercc__memory", "")
+        for ct in ("add", "update", "delete", "list", "search"):
+            if card_type == ct:
+                break
+
+        entries = []
+        project_path = args.get("project_path", "")
+        query = args.get("query", "")
+
+        if memory_manager is not None:
+            try:
+                if scope == "proj":
+                    if card_type == "list":
+                        mems = memory_manager.get_project_memories(project_path, platform="wecom", chat_id="")
+                        entries = [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in mems]
+                    elif card_type == "search" and query:
+                        results = memory_manager.search_project_memories(query, project_path, platform="wecom", chat_id="")
+                        entries = [{"id": r.memory.id, "title": r.memory.title, "content": r.memory.content, "keywords": r.memory.keywords} for r in results]
+                else:
+                    user_open_id = args.get("user_open_id", "")
+                    bot_id = args.get("bot_id", "")
+                    if user_open_id:
+                        if card_type == "list":
+                            prefs = memory_manager.get_preferences_by_user(user_open_id, platform="wecom", bot_id=bot_id)
+                            entries = [{"id": p.id, "title": p.title, "content": p.content, "keywords": p.keywords} for p in prefs]
+                        elif card_type == "search" and query:
+                            prefs = memory_manager.search_preferences(query, user_open_id=user_open_id, platform="wecom", bot_id=bot_id)
+                            entries = [{"id": p.id, "title": p.title, "content": p.content, "keywords": p.keywords} for p in prefs]
+            except Exception:
+                pass
+
+        # add/update/delete 的 fallback：直接从入参构造条目
+        if not entries and card_type in ("add", "update"):
+            entries = [{"title": args.get("title", ""), "content": args.get("content", ""), "keywords": args.get("keywords", ""), "id": args.get("id", "") or "(新增)"}]
+        elif not entries and card_type == "delete":
+            entries = [{"id": args.get("id", "") or ""}]
+
+        try:
+            marker = MemoryCardMarker(tool_name, card_type, entries, tool_input)
             return marker.render()
         except Exception:
             pass
