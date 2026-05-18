@@ -458,7 +458,8 @@ class WeComCoreWSClient:
         if "id" in data:
             req_id = str(data.get("id"))
             stored = self._pending_message_ids.pop(req_id, None)
-            logger.info(f"[WeComCore] response for req.id={req_id}, stored={stored}")
+            if stored is not None:
+                logger.info(f"[WeComCore] response for req.id={req_id}, stored={stored}")
             if stored:
                 msg_id, chat_id = stored
                 # Flush and clean up the stream accumulator for this message
@@ -563,41 +564,37 @@ class WeComCoreWSClient:
             await self.wecom.send_markdown(chat_id, content)
 
     async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
-        """Send text to WeCom with reply_req_id based three-level fallback."""
+        """Send text to WeCom via proactive send (no response_url timeout).
+
+        使用 send_markdown/send_text 主动发送，不依赖 response_url 的 30 秒有效期。
+        缺点是消息不在原消息线程下方，但对于长任务更可靠。
+        """
         is_card_content = "<at user_id=" in text or "```" in text or "## " in text
 
         logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
 
-        # Try reply via APP_CMD_RESPONSE using stored reply_req_id
-        if message_id:
-            reply_req_id = self.ws_client.pop_reply_req_id(message_id)
-            logger.info(f"[WeComCore] pop_reply_req_id({message_id[:20]}) = {reply_req_id[:20] if reply_req_id else 'None'}")
-            if reply_req_id:
-                try:
-                    await self.ws_client.reply_text(reply_req_id=reply_req_id, content=text)
-                    return
-                except Exception as e:
-                    logger.warning(f"[WeComCore] reply_text failed: {e}")
-
-        # Fallback 1: markdown proactive send
+        # 卡片内容用 template card
         if is_card_content:
             try:
-                await self.wecom.send_template_card(
+                ack = await self.wecom.send_template_card(
                     chat_id=chat_id,
                     card_type="text_notice",
                     title="消息",
                     desc=text[:500],
                 )
+                logger.info(f"[WeComCore] send_template_card ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[WeComCore] send_template_card failed: {e}")
 
-        # Fallback 2: markdown proactive send
-        try:
-            await self.wecom.send_markdown(chat_id, text)
-        except Exception:
+        # 普通文本用 markdown 或纯文本主动发送
+        ack = await self.wecom.send_markdown(chat_id, text)
+        logger.info(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
+        if ack.get("errcode") != 0:
+            # markdown 失败，尝试纯文本 fallback
             try:
-                await self.wecom.send_text(chat_id, text[:2000])
+                ack2 = await self.wecom.send_text(chat_id, text[:2000])
+                logger.info(f"[WeComCore] send_text fallback ack: errcode={ack2.get('errcode')}, errmsg={ack2.get('errmsg')}")
             except Exception as e:
                 logger.warning(f"[WeComCore] all send methods failed: {e}")
 
@@ -762,13 +759,7 @@ class WeComCoreWSClient:
 
         if is_group:
             entry = self._groups.get(inbound.session_key.chat_id)
-            if entry is None:
-                reason = "该群未配置使用权限，请联系管理员。"
-                try:
-                    await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
-                except Exception as e:
-                    logger.error(f"[WeComCore] group auth card failed (no entry): {e}")
-                return False
+            # 未知群（entry is None）：使用默认行为，等同于飞书——无须注册，拉进群就能用（但仍需要 @CC）
 
             if not getattr(entry, "enabled", True):
                 reason = "该群已被禁用。"
@@ -885,7 +876,7 @@ class WeComCoreWSClient:
         try:
             import json as _json
             raw_body = _json.dumps(msg, ensure_ascii=False, indent=None)
-            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body[:300]}")
+            logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}, body={raw_body}")
         except Exception:
             logger.info(f"[WeComCore] ★ raw inbound: msgtype={msg.get('msgtype')}, msgid={str(msg.get('msgid', ''))[:20]}, from={msg.get('from', {}).get('userid', '?')}")
 

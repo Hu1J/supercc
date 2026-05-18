@@ -24,19 +24,17 @@ class WeComClient:
 
     # ── 主动发送 ────────────────────────────────────────────────────────────────
 
-    async def send_text(self, chat_id: str, text: str) -> str:
+    async def send_text(self, chat_id: str, text: str) -> dict:
         """发送文本消息（主动发送，fire-and-forget）。"""
-        ack = await self._ws.send_text(chat_id, text)
-        return "ok" if ack.get("errcode") == 0 else f"err: {ack.get('errmsg')}"
+        return await self._ws.send_text(chat_id, text)
 
-    async def send_markdown(self, chat_id: str, content: str) -> str:
+    async def send_markdown(self, chat_id: str, content: str) -> dict:
         """发送 Markdown 消息（主动发送，fire-and-forget）。"""
-        ack = await self._ws.send_markdown(chat_id, content)
-        return "ok" if ack.get("errcode") == 0 else f"err: {ack.get('errmsg')}"
+        return await self._ws.send_markdown(chat_id, content)
 
     async def send_template_card(
         self, chat_id: str, card_type: str, title: str, desc: str = "", buttons: list | None = None
-    ) -> str:
+    ) -> dict:
         """发送模板卡片（主动发送）。"""
         card = self._build_card(card_type, title, desc, buttons)
         return await self._send_card(chat_id, card)
@@ -90,7 +88,7 @@ class WeComClient:
             ]
         return card
 
-    async def _send_card(self, chat_id: str, card: dict) -> str:
+    async def _send_card(self, chat_id: str, card: dict) -> dict:
         """Send a template card message via aibot_send_msg."""
         logger.info(f"[WeComClient] _send_card: chat_id={chat_id}, card_type={card.get('card_type')}, title={card.get('main_title', {}).get('title', '')}")
         ack = await self._ws.send_message(
@@ -98,10 +96,7 @@ class WeComClient:
             msgtype="template_card",
             template_card=card,
         )
-        errcode = ack.get("errcode", -1) if ack else -1
-        errmsg = ack.get("errmsg", "no ack") if ack else "no ack"
-        logger.info(f"[WeComClient] _send_card ack: errcode={errcode}, errmsg={errmsg}")
-        return ack.get("body", {}).get("msgid", "") if ack else ""
+        return ack if ack else {}
 
     # ── 媒体 ─────────────────────────────────────────────────────────────────
 

@@ -543,8 +543,9 @@ class WsServer:
                 )
                 break
             except OSError as e:
-                if e.errno == 98 and attempt < 49:  # Address already in use
-                    logger.warning(f"[WsServer] Port {bound_port} is already in use, trying {bound_port + 1}...")
+                # errno 98 = Linux EADDRINUSE, errno 48 = macOS EADDRINUSE, errno 10048 = Windows WSAEADDRINUSE
+                if e.errno in (48, 98, 10048) and attempt < 49:
+                    logger.warning(f"[WsServer] Port {bound_port} is already in use (errno={e.errno}), trying {bound_port + 1}...")
                     bound_port += 1
                     continue
                 raise

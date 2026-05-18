@@ -215,7 +215,9 @@ class WeComWSClient:
 
                 # Dispatch to message handler
                 if cmd in (APP_CMD_CALLBACK, APP_CMD_LEGACY_CALLBACK, APP_CMD_EVENT_CALLBACK):
-                    await self._dispatch_payload(payload)
+                    # 不 await：消息处理是独立任务，不阻塞 listener 循环
+                    # 这样私聊和群聊的消息可以并发处理，不串行等待
+                    asyncio.create_task(self._dispatch_payload(payload))
 
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 logger.warning("[WeComWS] WebSocket error")

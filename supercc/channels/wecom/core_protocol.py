@@ -14,10 +14,21 @@ if TYPE_CHECKING:
 
 
 def _check_mention_bot(msg: dict) -> bool:
-    """检测消息是否 @ 了机器人。"""
+    """检测消息是否 @ 了机器人。
+
+    WeCom WS 可能通过两种方式传递 @mention：
+    1. mentioned_list 字段（结构化）
+    2. 文本内容直接以 @机器人名 开头（部分场景）
+    """
     mentioned_list = msg.get("mentioned_list", [])
     bot_id = msg.get("aibotid", "")
-    return bot_id in mentioned_list
+    if mentioned_list and bot_id:
+        return bot_id in mentioned_list
+    # Fallback: 检查文本内容是否以 @机器人名 开头
+    text = msg.get("text", msg.get("content", ""))
+    if isinstance(text, str) and text.startswith("@"):
+        return True
+    return False
 
 
 def incoming_to_inbound(
@@ -90,6 +101,10 @@ def incoming_to_inbound(
         "voice": MessageType.FILE,
     }
 
+    is_group_chat = msg.get("chattype") == "group"
+    # WeCom 群聊：WeCom 服务器只转发已 @机器人的消息，无需检测 mention_bot
+    mention_bot = True if is_group_chat else _check_mention_bot(msg)
+
     return InboundMessage(
         event="message",
         session_key=key,
@@ -103,8 +118,8 @@ def incoming_to_inbound(
         timestamp=_cst_now(),
         extra={
             "raw": str(msg),
-            "is_group_chat": msg.get("chattype") == "group",
-            "mention_bot": _check_mention_bot(msg),
+            "is_group_chat": is_group_chat,
+            "mention_bot": mention_bot,
             "mention_ids": msg.get("mentioned_list", []),
             "group_name": "",
             "chat_type": msg.get("chattype", "single"),
