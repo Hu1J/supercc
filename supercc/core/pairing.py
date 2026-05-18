@@ -174,7 +174,7 @@ class PairingStore:
         """
         Generate a pairing code for a new user.
 
-        Returns the code string. If the user already has a pending code, reuse it.
+        Each call generates a fresh code, replacing any existing pending code for this user.
         """
         with self._lock:
             self._cleanup_expired(platform)
@@ -182,18 +182,15 @@ class PairingStore:
             # Load pending requests
             pending = self._load_json(self._pending_path(platform))
 
-            # Reuse existing pending code for this user
-            logger.debug(f"[Pairing] generate_code platform={platform} user_id={user_id!r} pending_keys={list(pending.keys())} pending={pending}")
-            for code, info in pending.items():
-                stored_uid = info.get("user_id", "")
-                logger.debug(f"[Pairing] comparing user_id={user_id!r} with stored={stored_uid!r} match={stored_uid == user_id}")
-                if stored_uid == user_id:
-                    logger.info(f"[Pairing] reuse existing code {code} for user_id={user_id!r}")
-                    return code
+            # Remove any existing pending code for this user (refresh on every message)
+            old_codes = [code for code, info in pending.items() if info.get("user_id") == user_id]
+            for code in old_codes:
+                del pending[code]
+                logger.info(f"[Pairing] removed old pending code {code} for user_id={user_id!r}")
 
             # Generate cryptographically random code
             code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
-            logger.info(f"[Pairing] generated NEW code {code} for user_id={user_id!r} (pending had {len(pending)} entries, no match found)")
+            logger.info(f"[Pairing] generated NEW code {code} for user_id={user_id!r} (replaced {len(old_codes)} old codes)")
 
             # Store pending request
             pending[code] = {
