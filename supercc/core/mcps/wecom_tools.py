@@ -170,7 +170,7 @@ class WeComUploader:
         self._ws = None
         self._session = None
 
-    async def _send_request(self, cmd: str, body: dict, timeout: float = 20.0) -> dict:
+    async def _send_request(self, cmd: str, body: dict, timeout: float = 8.0) -> dict:
         """发送请求并等待关联响应。"""
         req_id = uuid.uuid4().hex
         future = asyncio.get_event_loop().create_future()
@@ -226,7 +226,7 @@ class WeComUploader:
                 "total_chunks": total_chunks,
                 "md5": hashlib.md5(data).hexdigest(),
             },
-            timeout=30.0,
+            timeout=10.0,
         )
         if init_resp.get("errcode", -1) != 0:
             raise RuntimeError(f"upload_media_init failed: {init_resp.get('errmsg')}")
@@ -246,7 +246,7 @@ class WeComUploader:
                     "total_chunks": total_chunks,
                     "base64_data": base64.b64encode(chunk).decode("ascii"),
                 },
-                timeout=30.0,
+                timeout=10.0,
             )
             if chunk_resp.get("errcode", -1) != 0:
                 raise RuntimeError(f"upload_media_chunk {idx} failed: {chunk_resp.get('errmsg')}")
@@ -255,7 +255,7 @@ class WeComUploader:
         finish_resp = await self._send_request(
             "aibot_upload_media_finish",
             {"upload_id": upload_id},
-            timeout=30.0,
+            timeout=10.0,
         )
         if finish_resp.get("errcode", -1) != 0:
             raise RuntimeError(f"upload_media_finish failed: {finish_resp.get('errmsg')}")
@@ -274,7 +274,7 @@ class WeComUploader:
                 "msgtype": media_type,
                 media_type: {"media_id": media_id},
             },
-            timeout=30.0,
+            timeout=8.0,
         )
         if resp.get("errcode", -1) != 0:
             raise RuntimeError(f"send_msg failed: errcode={resp.get('errcode')}, errmsg={resp.get('errmsg')}")
