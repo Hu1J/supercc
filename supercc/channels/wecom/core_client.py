@@ -961,6 +961,19 @@ class WeComCoreWSClient:
                 else:
                     logger.info("[command] /%s forwarding confirmation", result_event)
                     await self.wecom.send_text(chat_id, result_content or f"正在处理 {result_event}...")
+            elif result_content:
+                # slash command 结果（/status、/git 等）：
+                # -  slash commands don't stream → msg_id NOT in _streamed_msg_ids
+                # -  streaming AI responses DO stream → msg_id already IS in _streamed_msg_ids (sent via accumulator)
+                # Feishu uses the same pattern to distinguish.
+                msg_id = inbound.message_id
+                if msg_id in self._streamed_msg_ids:
+                    logger.info("[command] skip %s (already streamed)", msg_id)
+                else:
+                    chat_id = inbound.session_key.chat_id
+                    logger.info("[command] slash command result, sending via send_markdown, content_len=%d", len(result_content))
+                    ack = await self.wecom.send_markdown(chat_id, result_content)
+                    logger.info("[command] send_markdown ack: errcode=%s, errmsg=%s", ack.get("errcode"), ack.get("errmsg"))
         return result or {}
 
     async def _download_and_resolve_media(
