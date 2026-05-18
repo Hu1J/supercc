@@ -1044,7 +1044,7 @@ class WeComCoreWSClient:
                 save_path = os.path.join(files_dir, f"{msg_id}{ext}")
 
             logger.info(f"[WeComCore] downloading {msg_type} to {save_path}")
-            save_bytes(save_path, data, prefix="wecom")
+            save_bytes(save_path, data)
             self._media_cache[msg_id] = save_path
 
             if msg_type == "image":
