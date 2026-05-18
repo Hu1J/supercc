@@ -183,11 +183,11 @@ class WsServer:
         params = req.params
 
         # 重建 SessionKey
-        # platform 位于 JSON-RPC 顶层（req.platform），不在 params 里
+        # platform 必须在 JSON-RPC 顶层（req.platform），不在 params 里
         key = SessionKey(
             bot_id=params.get("bot_id", ""),
             project_path=params.get("project_path", ""),
-            platform=req.platform or params.get("platform", "feishu"),
+            platform=req.platform or "feishu",
             chat_id=params.get("chat_id", ""),
         )
 
