@@ -269,7 +269,10 @@ class ClaudeIntegration:
                                 f"[query] <<< session_id={result_session_id!r}, "
                                 f"cost={result_cost!r}, elapsed={elapsed:.1f}s"
                             )
+                        # /stop 后跳过剩余 streaming 消息，避免确认打断后还有内容蹦出
                         if on_stream:
+                            if self.stop_event.is_set() and msg_type != "ResultMessage":
+                                continue
                             parsed = self._parse_message(message)
                             if parsed:
                                 await on_stream(parsed)
