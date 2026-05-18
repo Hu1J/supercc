@@ -80,7 +80,7 @@ def incoming_to_inbound(
         bot_id=bot_id,
         project_path=project_path,
         platform="wecom",
-        chat_id=msg.get("chatid", ""),
+        chat_id=msg.get("chatid", "") or msg.get("from", {}).get("userid", ""),
     )
 
     msg_type_map = {
