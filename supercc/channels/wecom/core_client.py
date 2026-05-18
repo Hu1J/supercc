@@ -569,7 +569,7 @@ class WeComCoreWSClient:
         使用 send_markdown/send_text 主动发送，不依赖 response_url 的 30 秒有效期。
         缺点是消息不在原消息线程下方，但对于长任务更可靠。
         """
-        is_card_content = "<at user_id=" in text or "```" in text or "## " in text
+        is_card_content = "<at user_id=" in text or "```" in text
 
         logger.info(f"[WeComCore] _do_send_text: chat_id={chat_id}, message_id={message_id[:20] if message_id else 'None'}, text_len={len(text)}")
 
