@@ -825,8 +825,9 @@ class WeComCoreWSClient:
                         reason = "你不在允许使用列表中。\n\n配对系统暂时不可用，请联系机器人所有者。"
 
                     try:
-                        logger.info(f"[WeComCore] sending authorization card to chat_id={inbound.session_key.chat_id}")
-                        await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason)
+                        reply_req_id = self.ws_client.get_reply_req_id(inbound.message_id) or ""
+                        logger.info(f"[WeComCore] sending authorization card to chat_id={inbound.session_key.chat_id}, reply_req_id={reply_req_id[:20] if reply_req_id else 'None'}")
+                        await self.wecom.send_authorization_card(inbound.session_key.chat_id, reason, reply_req_id=reply_req_id)
                         logger.info(f"[WeComCore] authorization card sent successfully")
                     except Exception as e:
                         logger.error(f"[WeComCore] send_authorization_card failed: {e}", exc_info=True)
