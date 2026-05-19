@@ -48,7 +48,7 @@ class MemoryHandler(CommandHandler):
         return "/memory — 查看/管理记忆"
 
     async def execute(self, args: str, context: dict) -> CommandResult:
-        from supercc.core.claude.memory_manager import get_memory_manager
+        from supercc.core.memory_manager import get_memory_manager
 
         parts = args.strip().split(maxsplit=2)
         scope = parts[0].lower() if len(parts) > 0 else ""

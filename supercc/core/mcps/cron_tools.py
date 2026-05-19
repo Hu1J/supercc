@@ -40,7 +40,7 @@ def _get_data_dir() -> str:
 
 
 def _get_chat_id() -> Optional[str]:
-    from supercc.core.claude.message_context import get_current_chat_id
+    from supercc.core.message_context import get_current_chat_id
     return get_current_chat_id()
 
 
@@ -84,7 +84,7 @@ async def cron_create(args: dict) -> dict:
     if not chat_id:
         return {"content": [{"type": "text", "text": "未找到活跃会话，请先在聊天里发一条消息"}], "is_error": True}
 
-    from supercc.core.claude.message_context import get_current_platform
+    from supercc.core.message_context import get_current_platform
 
     data_dir = _get_data_dir()
     try:

@@ -114,7 +114,7 @@ class ClaudeIntegration:
             pass
 
         from claude_agent_sdk import ClaudeAgentOptions
-        from supercc.core.claude.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
+        from supercc.core.mcps.supercc_tools import get_supercc_mcp_server, get_memory_only_mcp_server
 
         # 一次性标志消耗：/new 设置后，只对下一次 query 生效，之后清除
         if self._new_session_requested:

@@ -350,7 +350,7 @@ class WeComCoreWSClient:
         self._reconnect_lock = asyncio.Lock()
         # Memory Manager（MCP 工具执行器）
         try:
-            from supercc.core.claude.memory_manager import get_memory_manager
+            from supercc.core.memory_manager import get_memory_manager
             self._memory_manager = get_memory_manager()
         except Exception:
             self._memory_manager = None

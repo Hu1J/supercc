@@ -119,7 +119,7 @@ class CoreExecutor:
         key = inbound.session_key
 
         # ── MCP 工具上下文初始化（memory_tools 等依赖此获取用户身份）──────────
-        from supercc.core.claude.message_context import set_current_context
+        from supercc.core.message_context import set_current_context
         set_current_context(
             user_open_id=inbound.user_open_id or "",
             chat_id=key.chat_id,
@@ -387,7 +387,7 @@ class CoreExecutor:
         system_parts = []
 
         try:
-            from supercc.core.claude.memory_manager import MEMORY_SYSTEM_GUIDE
+            from supercc.core.memory_manager import MEMORY_SYSTEM_GUIDE
             system_parts.append(MEMORY_SYSTEM_GUIDE)
         except Exception:
             pass
@@ -413,7 +413,7 @@ class CoreExecutor:
 
         # Memory Context Injection
         try:
-            from supercc.core.claude.memory_manager import get_memory_manager
+            from supercc.core.memory_manager import get_memory_manager
             memory_manager = get_memory_manager()
             memory_ctx = memory_manager.inject_context(
                 user_open_id=inbound.user_open_id or "",
@@ -465,7 +465,7 @@ class CoreExecutor:
             return
 
         # ── MCP 工具上下文（background task 中 memory MCP 工具也依赖此）────────
-        from supercc.core.claude.message_context import set_current_context
+        from supercc.core.message_context import set_current_context
         set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform, bot_id=key.bot_id)
 
         # ── 记忆自进化（只推 memory MCP 工具卡片，不推文本流）───────────

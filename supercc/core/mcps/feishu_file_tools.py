@@ -65,7 +65,7 @@ def _get_feishu_client() -> "FeishuClient":
 
 def _get_chat_id() -> Optional[str]:
     """从 contextvar 获取当前 chat_id。"""
-    from supercc.core.claude.message_context import get_current_chat_id
+    from supercc.core.message_context import get_current_chat_id
     return get_current_chat_id()
 
 

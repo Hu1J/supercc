@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from claude_agent_sdk import tool
-from supercc.core.claude.memory_manager import get_memory_manager
-from supercc.core.claude.message_context import get_current_bot_id, get_current_chat_id, get_current_platform, get_current_user_open_id
+from supercc.core.memory_manager import get_memory_manager
+from supercc.core.message_context import get_current_bot_id, get_current_chat_id, get_current_platform, get_current_user_open_id
 
 
 def _fmt_pref(p) -> str:

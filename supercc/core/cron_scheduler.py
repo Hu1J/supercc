@@ -810,7 +810,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     platform = job.get("platform", "feishu")
 
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
-    from supercc.core.claude.message_context import set_current_context
+    from supercc.core.message_context import set_current_context
     # 从 sessions 表查询 user_open_id，不用硬编码的 allowed_users[0]
     if platform == "wecom":
         user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
@@ -831,7 +831,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     _log("CONTEXT_SET")
 
     # Memory manager for formatting memory tool calls
-    from supercc.core.claude.memory_manager import get_memory_manager
+    from supercc.core.memory_manager import get_memory_manager
     memory_manager = get_memory_manager()
     _log("MEMORY_MANAGER_CREATED")
 

@@ -17,7 +17,7 @@ from supercc.core.models.model_providers import PROVIDERS
 
 def _get_user_open_id() -> str | None:
     """从当前消息上下文获取 user_open_id（通过 contextvar）。"""
-    from supercc.core.claude.message_context import get_current_user_open_id
+    from supercc.core.message_context import get_current_user_open_id
     return get_current_user_open_id()
 
 

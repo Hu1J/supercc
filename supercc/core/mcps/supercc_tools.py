@@ -25,7 +25,7 @@ from supercc.core.mcps.cron_tools import (
     cron_trigger,
     cron_logs,
 )
-from supercc.core.claude.skill_search_tools import skill_search
+from supercc.core.mcps.skill_search_tools import skill_search
 from supercc.core.mcps.model_tools import (
     add_custom_provider_tool,
     list_models,
