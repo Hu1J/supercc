@@ -536,7 +536,7 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         return
 
     # ── Phase 4: Cron scheduler ────────────────────────────────────────────
-    cron_scheduler = CronScheduler(config, data_dir)
+    cron_scheduler = CronScheduler(config, data_dir, executor=executor)
     set_cron_scheduler(cron_scheduler, config)
     cron_scheduler.start()
     cron_task = asyncio.create_task(cron_scheduler._run(), name="cron-scheduler")
@@ -670,6 +670,9 @@ def start_core_only(config_path: str, data_dir: str):
             port=core_port,  # 从 config 读取
             executor=executor,
         )
+        # 给 CronScheduler 设置 executor（它在主线程）
+        if cron_scheduler:
+            cron_scheduler.set_executor(executor)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(core_server.start())

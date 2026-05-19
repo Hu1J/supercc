@@ -48,12 +48,10 @@ class Worker:
     # SDK session 续接标志：_new_session_requested=True 时强制新建 session
     _is_first_session: bool = True
     _sdk_session_id: str | None = None  # 上次 query 返回的 SDK session ID，用于 resume
-    tool_call_count: int = 0  # 累计工具调用数（触发技能自进化阈值）
 
-    # ── 三个 ClaudeIntegration（acquire 时初始化）─────────────────────────────
-    integration: Any = None           # 对话（max_turns=50）
-    integration_mem: Any = None        # 记忆自进化（max_turns=5, memory_only=True）
-    integration_skill: Any = None     # 技能自进化（max_turns=5）
+    # ── 两个 ClaudeIntegration（acquire 初始化）──────────────────────────
+    integration: Any = None           # 对话 + 定时任务（max_turns=50）
+    integration_evolve: Any = None    # 自进化（max_turns=10）
 
     def __post_init__(self):
         if self.stats.session_id == "":
@@ -63,15 +61,14 @@ class Worker:
         """重置会话标志，下次 query 强制新建 Claude SDK session。"""
         self._is_first_session = True
         self._sdk_session_id = None
-        self.tool_call_count = 0
-        for integ in (self.integration, self.integration_mem, self.integration_skill):
+        for integ in (self.integration, self.integration_evolve):
             if integ is not None:
                 integ._new_session_requested = True
         logger.info(f"[Worker] Session reset for {self.key}")
 
     def stop(self) -> None:
         """打断当前正在执行的 query。"""
-        for integ in (self.integration, self.integration_mem, self.integration_skill):
+        for integ in (self.integration, self.integration_evolve):
             if integ is not None:
                 integ.stop_event.set()
         if self._current_task is not None and not self._current_task.done():
@@ -119,19 +116,13 @@ class WorkerPool:
                     max_turns=50,
                     approved_directory=approved_dir,
                 )
-                worker.integration_mem = ClaudeIntegration(
+                worker.integration_evolve = ClaudeIntegration(
                     cli_path=cli_path,
-                    max_turns=5,
-                    approved_directory=approved_dir,
-                    memory_only=True,
-                )
-                worker.integration_skill = ClaudeIntegration(
-                    cli_path=cli_path,
-                    max_turns=5,
+                    max_turns=10,
                     approved_directory=approved_dir,
                 )
                 self._workers[key] = worker
-                logger.info(f"[WorkerPool] Created worker with 3 integrations for {key}")
+                logger.info(f"[WorkerPool] Created worker for {key}")
             else:
                 worker = self._workers[key]
             return worker

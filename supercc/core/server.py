@@ -453,14 +453,26 @@ class WsServer:
             await asyncio.sleep(10)
 
             for item in cron_delivery_queue.get_all():
-                params = {
-                    "job_id": item.job_id,
-                    "job_name": item.job_name,
-                    "content": item.content,
-                    "error": item.error,
-                    "chat_id": item.session_key.chat_id,
-                }
-                method = f"cron_{item.event}"  # "cron_progress" or "cron_result"
+                # tool data → 走 tool_call 事件，插件用 ReplyFormatter 渲染
+                if isinstance(item.content, dict) and "tool_name" in item.content:
+                    params = {
+                        "chat_id": item.session_key.chat_id,
+                        "message_id": "",
+                        "extra": {
+                            "tool_name": item.content["tool_name"],
+                            "tool_input": item.content.get("tool_input", ""),
+                        },
+                    }
+                    method = "tool_call"
+                else:
+                    params = {
+                        "job_id": item.job_id,
+                        "job_name": item.job_name,
+                        "content": item.content,
+                        "error": item.error,
+                        "chat_id": item.session_key.chat_id,
+                    }
+                    method = f"cron_{item.event}"
 
                 # 发送给所有匹配 platform 的活跃连接
                 target_platform = item.session_key.platform

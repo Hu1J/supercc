@@ -22,10 +22,6 @@ logger = logging.getLogger(__name__)
 
 _COMMAND_RE = re.compile(r"^/[a-zA-Z][a-zA-Z0-9_-]*(?:\s.*)?$")
 
-# 技能自进化触发阈值：累计 tool_call 达到此数量时触发
-SKILL_NUDGE_THRESHOLD = 10
-
-
 def _is_command(text: str) -> bool:
     return bool(_COMMAND_RE.match(text))
 
@@ -187,14 +183,12 @@ class CoreExecutor:
 
         # 流式回调包装
         accumulated = []
-        _tool_count = 0  # 本次查询的 tool call 计数
         _stream_too_long = [False]  # 上下文溢出标记
 
         # 决定用哪个回调发送 streaming 帧：优先 on_stream，否则用 push_fn
         _stream_sender = on_stream if on_stream else push_fn
 
         async def _stream_callback(msg: Any) -> None:
-            nonlocal _tool_count
             if msg.content:
                 accumulated.append(msg.content)
                 logger.info("[stream] text: %s", msg.content[:200])
@@ -211,8 +205,6 @@ class CoreExecutor:
                     )
                     await _stream_sender(chunk)
             elif msg.tool_name:
-                nonlocal _tool_count
-                _tool_count += 1
                 logger.info("[stream] tool: %s | input: %s", msg.tool_name, (msg.tool_input or "")[:300])
                 # step=OFF 时屏蔽工具调用通知，AskUserQuestion 例外始终显示
                 # 工具本身由 SDK 内部执行，此处只控制是否发 TOOL_CALL WS 事件给 plugin
@@ -277,17 +269,6 @@ class CoreExecutor:
                 session_info = f"✅ 新 Session 已建立\nSession ID: `{new_sdk_sid}`"
                 logger.info(f"[CoreExecutor] new SDK session established: {new_sdk_sid} for {key}")
 
-        # 累加工具调用计数到 Worker（供技能自进化阈值判断）
-        total_tool_count = 0
-        if _tool_count > 0:
-            try:
-                worker = await self.pool.get(key)
-                if worker:
-                    worker.tool_call_count += _tool_count
-                    total_tool_count = worker.tool_call_count
-            except Exception:
-                pass
-
         # 更新 Session 统计
         self.sessions.update_session(
             session_id=session.session_id,
@@ -348,9 +329,9 @@ class CoreExecutor:
         if push_fn:
             self._push_fn = push_fn
             await push_fn(result_msg)
-            # 触发后台任务（异步，不阻塞主响应返回）
-            # 用原始 result 作为记忆回顾的上下文
-            asyncio.create_task(self._run_background_tasks(key, prompt, total_tool_count, inbound.message_id, inbound.user_open_id or ""))
+            # 触发自进化（异步，不阻塞主响应返回）
+            sdk_sid = new_sdk_sid or ""
+            asyncio.create_task(self._run_evolve(key, sdk_sid, inbound.message_id, inbound.user_open_id or ""))
 
         # 上下文超限提示：检测到 "Prompt is too long" 后主动发消息
         if _stream_too_long[0] and push_fn:
@@ -446,14 +427,14 @@ class CoreExecutor:
             return inbound.group_context + "\n\n" + inbound.content
         return inbound.content
 
-    async def _run_background_tasks(self, key: SessionKey, prompt: str, total_tool_count: int = 0, message_id: str = "", user_open_id: str = "") -> None:
-        """触发记忆自进化（integration_mem）和技能自进化（integration_skill）。
+    async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", user_open_id: str = "") -> None:
+        """自进化：分析 session 文件，先做记忆处理，再做技能处理。
 
         由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
         结果通过 self._push_fn 推送回 plugin（WebSocket）。
         """
         push_fn = self._push_fn
-        if not push_fn:
+        if not push_fn or not sdk_session_id:
             return
 
         try:
@@ -461,132 +442,147 @@ class CoreExecutor:
         except Exception:
             return
 
-        if worker is None:
+        if worker is None or worker.integration_evolve is None:
             return
 
-        # ── MCP 工具上下文（background task 中 memory MCP 工具也依赖此）────────
+        # ── 找 session 文件 ────────────────────────────────────────────────
+        from pathlib import Path
+        evo_logger = logger
+
+        session_path = None
+        try:
+            for f in Path.home().rglob("*.jsonl"):
+                if f.name == f"{sdk_session_id}.jsonl":
+                    session_path = str(f)
+                    break
+        except Exception:
+            pass
+
+        if not session_path:
+            evo_logger.warning(f"[evolve] session file not found for {sdk_session_id}, skipping")
+            return
+
+        # ── MCP 工具上下文 ───────────────────────────────────────────────
         from supercc.core.message_context import set_current_context
         set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform, bot_id=key.bot_id)
 
-        # ── 记忆自进化（只推 memory MCP 工具卡片，不推文本流）───────────
-        mem_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "mem")
-        if worker.integration_mem:
-            try:
-                worker.integration_mem._init_options(channel=key.platform)
-                memory_prompt = (
-                    "根据之前的对话，判断是否有值得记住的信息。\n"
-                    "需要时直接调用 MCP 工具（新增/更新/删除）来管理记忆，"
-                    "不需要问我任何问题。\n"
-                    "本次对话内容参考：\n" + prompt[-1000:]
-                )
+        # ── 构造 evolve prompt ──────────────────────────────────────────
+        skills_dir = Path(self._data_dir) / "skills"
+        evolve_prompt = f"""分析 session 文件：{session_path}
 
-                async def mem_stream_callback(msg: Any) -> None:
-                    # 文本响应：始终记录到日志（不推送）
-                    if msg.content:
-                        logger.info("[Background] memory review text: %s", msg.content[:500])
-                    # mem_enabled=False 时不推送 tool call
-                    if not mem_enabled:
-                        return
-                    # 只推 memory MCP 工具调用（卡片），不推普通文本流
-                    # 白名单：只有 mcp__SuperCC__Memory* 才推送
-                    if msg.tool_name and msg.tool_name.startswith("mcp__SuperCC__Memory"):
-                        logger.info("[Background] memory review tool: %s", msg.tool_name)
-                        if push_fn:
-                            tool_msg = OutboundMessage(
-                                event=Event.TOOL_CALL,
-                                session_key=key,
-                                message_id=message_id,
-                                content=f"[{msg.tool_name}]",
-                                message_type=MessageType.TOOL_CALL,
-                                extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                            )
-                            await push_fn(tool_msg)
+这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。
 
-                await worker.integration_mem.query(
-                    prompt=memory_prompt,
-                    on_stream=mem_stream_callback,
-                )
-                logger.info(f"[Background] memory review done for {key}")
-            except Exception as e:
-                logger.warning(f"[Background] memory review failed: {e}")
+请严格按以下两阶段依次执行，不准跳过任何阶段：
 
-        # ── 技能自进化（检查 skills git 变更，有变更才通知）───────────
-        skill_enabled = self._is_verbose_enabled(key.platform, key.chat_id, "skill")
-        if worker.integration_skill and total_tool_count >= SKILL_NUDGE_THRESHOLD:
-            try:
-                from pathlib import Path
-                from supercc.core.evolve.skill_nudge import _get_skill_git_state
+===== 阶段一：记忆自进化 =====
 
-                worker.integration_skill._init_options(channel=key.platform)
+先阅读最近一次完整对话（文件末尾）：
+1. 用户最后说了什么？
+2. 用了哪些工具（Read/Write/Edit/Bash/Grep/WebSearch 等），传了什么参数？
+3. 工具返回了什么结果？
+4. Claude 最终回复了什么？
 
-                skills_dir = Path(self._data_dir) / "skills"
+如果最近一次对话信息不够判断，再往前追溯更早的消息。
 
-                # 快照当前的 skills git 状态（执行前）
-                before_state = _get_skill_git_state(skills_dir)
+判断以下事项，需要时直接调 MCP 工具执行，不要问我任何问题：
+- 用户的个人偏好（语言风格、沟通习惯、技术栈偏好等）
+  → mcp__SuperCC__MemoryAddUser / MemoryUpdateUser / MemoryDeleteUser
+- 项目相关的记忆（文件路径、代码规范、bug 修复、架构决策等）
+  → mcp__SuperCC__MemoryAddProj / MemoryUpdateProj / MemoryDeleteProj
 
-                skill_prompt = (
-                    f"你在本次对话中使用了 {total_tool_count} 个工具调用。\n"
-                    "请分析这些工具调用的模式，判断是否有可以优化或封装成技能的常见工作流。\n\n"
-                    "适合存为 Skill 的场景：\n"
-                    "- 解决了非平凡问题，且解决方法可推广\n"
-                    "- 发现了一种新的工作流程或技巧\n"
-                    "- 克服了错误并找到了正确方法\n"
-                    "- 用户要求记住某个流程\n\n"
-                    "操作步骤：\n"
-                    f"1. 先查看 {skills_dir}/ 目录下已有的 Skill\n"
-                    "2. 把完整内容直接写入 <skill-name>/SKILL.md\n"
-                    "3. 格式：YAML frontmatter (name/description/author/version) + Markdown body\n"
-                    f"4. {skills_dir}/ 是一个本地 Git 仓库（没有 remote，不支持 push）。写入后执行：\n"
-                    f"   cd {skills_dir} && git add <skill-name>/ && git commit -m \"<中文 commit message>\"\n"
-                    "   **不要执行 git push**——此仓库只有本地历史，没有远程仓库。\n\n"
-                    "注意：\n"
-                    "- 只创建真正有价值的 Skill，不要为了'有'而创建\n"
-                    "- 如果有相关 Skill 已存在，优先更新它而不是创建新的\n"
-                    "- 新建和更新不需要确认，发现就直接做\n"
-                )
+===== 阶段二：技能自进化 =====
 
-                # 文本响应：始终记录到日志（不推送）
-                async def skill_stream_callback(msg: Any) -> None:
-                    if msg.content:
-                        logger.info("[Background] skill review text: %s", msg.content[:500])
+先查看 {skills_dir}/ 目录，其中每个子目录对应一个技能（如 {skills_dir}/技能A/），
+每个技能目录内包含 SKILL.md 文件。
 
-                await worker.integration_skill.query(
-                    prompt=skill_prompt,
-                    on_stream=skill_stream_callback,
-                )
+然后分析本次对话全程，判断：
 
-                # 检查 skills git 状态是否有变更
-                from supercc.core.evolve.skill_nudge import _detect_skill_changes
+**符合构建 Skill 的条件：**
+- 流程、模式固定的重复性工作流（每次做同样步骤的那种）
+- 充当辅助工具来简化某个操作流程的工具型 Skill
+- **特别是需要写工具代码（Bash 脚本、代码片段等）来辅助的场景**
 
-                if skill_enabled:
-                    # 把 push_fn 包装为 (chat_id, text) 签名供 _detect_skill_changes 调用
-                    async def _send_skill_notify(cid: str, text: str) -> None:
-                        result_msg = OutboundMessage(
-                            event=Event.RESPONSE,
-                            session_key=key,
-                            message_id=message_id,
-                            content=text,
-                            message_type=MessageType.TEXT,
-                            extra={},
-                        )
-                        await push_fn(result_msg)
+**不符合的条件：**
+- 一次性任务，没有重复价值
+- 纯记忆类信息（应该存为记忆，不是 Skill）
 
-                    await _detect_skill_changes(
-                        before_state=before_state,
-                        skills_dir=skills_dir,
-                        chat_id=key.chat_id,
-                        send_to_feishu=_send_skill_notify,
-                        notify=True,
+同时检查已有 Skill 是否有过时或需要更新的内容，以及是否有多个 Skill 可以合并。
+
+**SKILL.md 元数据格式（YAML frontmatter）：**
+```yaml
+---
+name: skill-name
+description: 简短描述
+version: 1.0
+usage_count: 0       # 使用次数，每被成功执行一次 +1
+status: active       # active / archived
+created_at: 2026-01-01
+updated_at: 2026-01-01
+---
+```
+
+**每个新建或更新 Skill 时，必须在正文末尾追加以下使用追踪指令（固定文案）：**
+```
+> **使用追踪**：每次你读取此 SKILL.md 并成功按指示执行后，
+> 请将 frontmatter 的 `usage_count` +1、更新 `updated_at` 为当天日期。
+> 如果是更新 Skill 内容，只更新 `updated_at`，不改 `usage_count`。
+```
+
+操作规则：
+- **新建**：在 {skills_dir}/ 下创建 <技能名>/ 目录，写入 SKILL.md（完整 frontmatter + 使用追踪指令）
+- **更新**：修改已有 SKILL.md 的正文，不要动 frontmatter 的 name/description
+- **删除**：删除 {skills_dir}/<技能名>/ 整个目录（含 SKILL.md）
+- 写入或更新后，执行：
+  ```
+  cd {skills_dir} && git add <技能名>/ && git commit -m "<中文 commit message>"
+  ```
+  不要 git push（此仓库没有 remote）
+
+**删除条件：同时满足以下三条才删，满足时直接删不需要问：**
+1. usage_count 长时间为 0（超过一个月没有使用）
+2. 内容过时、有错误、或已被新 Skill 替代
+3. 评估后认为对当前项目确实已无价值
+
+不满足上述条件但认为有疑问的，用 AskUserQuestion 问用户确认。
+
+每次操作完成后，同步更新项目记忆：
+- 新建技能 → MemoryAddProj(title="skill:<技能名>", content="简短描述/用法", keywords="skill,<技能名>")
+- 更新技能 → MemoryUpdateProj(...)
+- 删除技能 → MemoryDeleteProj(...)
+
+**补全规则：** 已有 Skill 缺少 usage tracking 元数据时，自动补全 frontmatter（加 usage_count/status/created_at/updated_at）和正文末尾的使用追踪指令。
+
+注意：
+- 新建前先搜索记忆确认不重复
+- 记忆中已有相关描述时，不要再创建冗余的 Skill
+- 只创建真正有价值的 Skill，不要为"有"而创建"""
+
+        # ── 执行 evolve ─────────────────────────────────────────────────────
+        is_evo_verbose = self._is_verbose_enabled(key.platform, key.chat_id, "evolve")
+        try:
+            worker.integration_evolve._init_options(channel=key.platform, continue_conversation=False)
+
+            async def evolve_stream_callback(msg: Any) -> None:
+                if msg.content:
+                    evo_logger.info("[evolve] text: %s", msg.content[:500])
+                if not is_evo_verbose:
+                    return
+                if msg.tool_name and push_fn:
+                    tool_msg = OutboundMessage(
+                        event=Event.TOOL_CALL,
+                        session_key=key,
+                        message_id=message_id,
+                        content=f"[{msg.tool_name}]",
+                        message_type=MessageType.TOOL_CALL,
+                        extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
                     )
-                else:
-                    # skill=OFF 时只检测不推送
-                    await _detect_skill_changes(
-                        before_state=before_state,
-                        skills_dir=skills_dir,
-                        notify=False,
-                    )
+                    await push_fn(tool_msg)
 
-                logger.info(f"[Background] skill review done for {key} ({total_tool_count} tool calls)")
-            except Exception as e:
-                logger.warning(f"[Background] skill review failed: {e}")
+            await worker.integration_evolve.query(
+                prompt=evolve_prompt,
+                on_stream=evolve_stream_callback,
+            )
+            evo_logger.info(f"[evolve] done for {key}")
+        except Exception as e:
+            evo_logger.warning(f"[evolve] failed: {e}")
 

@@ -6,7 +6,7 @@ Output logs in {data_dir}/cron_logs/{job_id}/{timestamp}.md
 
 Architecture:
 - CronScheduler runs tick() every 60s from a background thread
-- Each due job runs in its own ClaudeIntegration subprocess (avoids concurrent conflicts)
+- Each due job runs via worker.integration (saved/restored sdk_session_id)
 - Job output is saved to file AND sent to Plugin via cron_delivery_queue
 - Plugin (feishu/wecom) receives cron events via WS and handles rendering
 """
@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Optional
 
 from supercc.config import Config, SESSIONS_DB_PATH
-from supercc.core.claude.integration import ClaudeIntegration
 from supercc.core.cron_delivery import cron_delivery_queue, CronDeliveryItem
 from supercc.core.protocol import SessionKey
 from supercc.channels.common.format import (
@@ -451,7 +450,7 @@ class _PendingStore:
                 pass
             raise
 
-    def add(self, job_id: str, response: str, chat_id: str, job_name: str, notify_at: str, intermediates: list | None = None, platform: str = "feishu") -> str:
+    def add(self, job_id: str, response: str, chat_id: str, job_name: str, notify_at: str, intermediates: list | None = None, platform: str = "feishu", targets: list | None = None) -> str:
         """Save a pending notification. Returns the unique key for this pending entry."""
         data = self._load()
         created_at = _utcnow().isoformat()
@@ -464,8 +463,9 @@ class _PendingStore:
             "job_name": job_name,
             "notify_at": notify_at,
             "created_at": created_at,
-            "job_id": job_id,  # store original job_id for reference
+            "job_id": job_id,
             "platform": platform,
+            "targets": targets,
         }
         self._save(data)
         return pending_key
@@ -789,8 +789,47 @@ def get_job_logs(job_id: str, data_dir: str) -> dict:
 
 # ─── Job Execution ───────────────────────────────────────────────────────────
 
-async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[str] | None = None):
-    """Execute a single cron job: run Claude, save output, deliver to Feishu."""
+def _resolve_broadcast_targets(config: Config, data_dir: str) -> list[tuple[str, str, str]]:
+    """实时读取 config，返回所有已启用 channel 的 (platform, chat_id, bot_id)。"""
+    project_path = str(Path(data_dir).resolve().parent)
+    targets: list[tuple[str, str, str]] = []
+
+    channel_configs = [
+        ("feishu", config.channels.feishu),
+        ("wecom", config.channels.wecom),
+        ("dingtalk", config.channels.dingtalk),
+        ("telegram", config.channels.telegram),
+        ("qq", config.channels.qq),
+        ("whatsapp", config.channels.whatsapp),
+        ("wechat", config.channels.wechat),
+    ]
+    for platform_name, ch in channel_configs:
+        if not getattr(ch, "enabled", False):
+            continue
+        allowed = getattr(ch, "allowed_users", [])
+        if not allowed:
+            continue
+        user_open_id = allowed[0]
+        # 查 sessions 表找到该用户的 P2P chat_id
+        try:
+            if os.path.exists(SESSIONS_DB_PATH):
+                with sqlite3.connect(SESSIONS_DB_PATH) as conn:
+                    conn.row_factory = sqlite3.Row
+                    row = conn.execute(
+                        "SELECT chat_id FROM sessions WHERE user_open_id = ? AND platform = ? AND project_path = ? ORDER BY last_used DESC LIMIT 1",
+                        (user_open_id, platform_name, project_path),
+                    ).fetchone()
+                    if row:
+                        bot_id = getattr(ch, "bot_id", "") if hasattr(ch, "bot_id") else ""
+                        targets.append((platform_name, row["chat_id"], bot_id))
+        except Exception:
+            continue
+
+    return targets
+
+
+async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, running_jobs: set[str] | None = None):
+    """Execute a single cron job via executor (reuses pool + session_manager). Supports broadcast for built-in tasks."""
     job_id = job["id"]
     if running_jobs is None:
         running_jobs = set()
@@ -806,12 +845,11 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     _log("JOB_TRIGGERED", f"name={job_name}, schedule={job.get('schedule_display')}")
 
-    # Extract platform first (used in multiple places below)
     platform = job.get("platform", "feishu")
+    is_builtin = job_name in ("做梦", "Skill 优化扫描")
 
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
     from supercc.core.message_context import set_current_context
-    # 从 sessions 表查询 user_open_id，不用硬编码的 allowed_users[0]
     if platform == "wecom":
         user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
             config.channels.wecom.allowed_users[0] if config.channels.wecom.allowed_users else ""
@@ -830,21 +868,23 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     )
     _log("CONTEXT_SET")
 
-    # Memory manager for formatting memory tool calls
     from supercc.core.memory_manager import get_memory_manager
     memory_manager = get_memory_manager()
     _log("MEMORY_MANAGER_CREATED")
 
-    # Create independent Claude instance (avoids concurrent conflicts)
-    claude = ClaudeIntegration(
-        cli_path=config.claude.cli_path,
-        max_turns=5,
-        approved_directory=config.claude.approved_directory,
-    )
-    claude._init_options(channel=platform)
-    _log("CLAUDE_INTEGRATION_CREATED")
+    # ── Resolve delivery targets ──────────────────────────────────────────────
+    if is_builtin:
+        targets = _resolve_broadcast_targets(config, data_dir)
+        if not targets:
+            logger.info(f"[cron] Job {job_id} no broadcast targets, falling back to original chat_id")
+            targets = [(platform, chat_id, bot_id)]
+        # 内置任务用第一个 target 的 platform/bot_id 执行
+        exec_platform, exec_chat_id, exec_bot_id = targets[0]
+    else:
+        targets = [(platform, chat_id, bot_id)]
+        exec_platform, exec_chat_id, exec_bot_id = platform, chat_id, bot_id
 
-    # ── Execute ───────────────────────────────────────────────────────────────
+    # ── Execute via Worker Pool ───────────────────────────────────────────────
     skills_dir = Path(data_dir) / "skills"
     is_skill_scan = job_name == "Skill 优化扫描"
 
@@ -873,37 +913,39 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
     intermediates: list[dict] = []
 
     # ── Platform-specific formatters and send helpers ──────────────────────────
-    # Build session key for delivery
-    session_key = SessionKey(
-        bot_id=bot_id,
+    exec_session_key = SessionKey(
+        bot_id=exec_bot_id,
         project_path=str(Path(data_dir).resolve().parent),
-        platform=platform,
-        chat_id=chat_id,
+        platform=exec_platform,
+        chat_id=exec_chat_id,
     )
 
     async def _on_stream(claude_msg):
         try:
             if claude_msg.tool_name:
-                # Format as Markdown (platform-independent)
-                md = _format_tool_call_markdown(
-                    claude_msg.tool_name,
-                    claude_msg.tool_input,
-                    memory_manager=memory_manager,
-                )
-
-                if stream_realtime and md:
-                    # Send progress immediately via queue
-                    cron_delivery_queue.put(CronDeliveryItem(
-                        event="progress",
-                        session_key=session_key,
-                        job_id=job_id,
-                        job_name=job_name,
-                        platform=platform,
-                        content=md,
-                    ))
-                elif md:
-                    # Collect for later delivery (keep same format for pending store)
-                    intermediates.append({"type": "markdown", "content": md})
+                # 跟主对话一样传原始 tool data，plugin 用 ReplyFormatter 渲染
+                tool_data = {
+                    "tool_name": claude_msg.tool_name,
+                    "tool_input": claude_msg.tool_input,
+                }
+                if stream_realtime:
+                    for tgt_platform, tgt_chat_id, tgt_bot_id in targets:
+                        tgt_key = SessionKey(
+                            bot_id=tgt_bot_id,
+                            project_path=str(Path(data_dir).resolve().parent),
+                            platform=tgt_platform,
+                            chat_id=tgt_chat_id,
+                        )
+                        cron_delivery_queue.put(CronDeliveryItem(
+                            event="progress",
+                            session_key=tgt_key,
+                            job_id=job_id,
+                            job_name=job_name,
+                            platform=tgt_platform,
+                            content=tool_data,
+                        ))
+                else:
+                    intermediates.append(tool_data)
 
                 await _stream_log(claude_msg)
             elif claude_msg.content:
@@ -912,25 +954,33 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
             logger.warning(f"[_on_stream] error: {e}")
 
     try:
-        _log("CLAUDE_QUERY_START")
-        response, session_id, cost = await claude.query(prompt=prompt, on_stream=_on_stream)
-        elapsed = (datetime.now(_CST) - ts_start).total_seconds()
-        _log("CLAUDE_QUERY_DONE", f"elapsed={elapsed:.1f}s, session_id={session_id!r}, cost=${cost:.4f}")
+        # 复用主对话的 pool 和 session_manager
+        pool = executor.pool
+        session = executor.sessions.get_or_create_session(exec_session_key, user_open_id)
 
-        # For skill scan jobs, detect changes via git state comparison
-        # Note: skill changes are detected but not sent via WS here;
-        # Plugin will receive the final result via cron_result event
+        _log("CRON_QUERY_START")
+        result, cost, sdk_sid = await pool.execute(
+            key=exec_session_key,
+            session_id=session.session_id,
+            prompt=prompt,
+            on_stream=_on_stream,
+            cli_path=config.claude.cli_path,
+            approved_dir=config.claude.approved_directory,
+            sdk_session_id=session.sdk_session_id,
+        )
+        elapsed = (datetime.now(_CST) - ts_start).total_seconds()
+        _log("CRON_QUERY_DONE", f"elapsed={elapsed:.1f}s, cost=${cost:.4f}")
     except Exception as e:
-        logger.warning(f"[cron] Job {job_id} Claude error: {e}")
-        _log("CLAUDE_QUERY_ERROR", str(e))
-        # Write execution trace before saving error result
+        logger.warning(f"[cron] Job {job_id} pool execute error: {e}")
+        _log("POOL_EXECUTE_ERROR", str(e))
         total_elapsed = (datetime.now(_CST) - ts_start).total_seconds()
         output_file = _save_job_output(job_id, data_dir, steps, response=None, error=str(e), total_elapsed=total_elapsed)
         mark_run(job_id, success=False, error=str(e), data_dir=data_dir)
         running_jobs.discard(job_id)
         return
 
-    if not response or not response.strip():
+    response = (result or "").strip()
+    if not response:
         logger.info(f"[cron] Job {job_id} empty response, skipping send")
         _log("CLAUDE_RESPONSE_EMPTY")
         total_elapsed = (datetime.now(_CST) - ts_start).total_seconds()
@@ -941,41 +991,47 @@ async def _run_job(job: dict, config: Config, data_dir: str, running_jobs: set[s
 
     # ── Save output with execution trace ─────────────────────────────────────
     total_elapsed = (datetime.now(_CST) - ts_start).total_seconds()
-    output_file = _save_job_output(job_id, data_dir, steps, response=response.strip(), error=None, total_elapsed=total_elapsed)
+    output_file = _save_job_output(job_id, data_dir, steps, response=response, error=None, total_elapsed=total_elapsed)
     logger.info(f"[cron] Job {job_id} output saved to {output_file}")
 
     # ── Deliver ────────────────────────────────────────────────────────────────
     notify_schedule = job.get("notify_at")
     if notify_schedule:
-        # Save to pending store, notify later at notify_at
         next_notify = compute_next_run(notify_schedule)
         pending_store = _PendingStore(data_dir)
-        pending_store.add(job_id, response.strip(), chat_id, job_name, next_notify, intermediates, platform=job.get("platform", "feishu"))
-        _log("FEISHU_NOTIFY_PENDING", f"notify_at={next_notify}")
-        logger.info(f"[cron] Job {job_id} notification pending until {next_notify}")
+        pending_store.add(
+            job_id, response, chat_id, job_name, next_notify,
+            intermediates, platform=platform, targets=targets if is_builtin else None,
+        )
+        _log("NOTIFY_PENDING", f"notify_at={next_notify}, targets={len(targets)}")
+        logger.info(f"[cron] Job {job_id} notification pending until {next_notify} (targets={len(targets)})")
         mark_run(job_id, success=True, data_dir=data_dir)
         running_jobs.discard(job_id)
         return
 
-    # Send result via queue
-    try:
-        _log("QUEUE_DELIVERY")
-        header = f"⏰ **{job_name}**"
-        content = f"{header}\n\n{response.strip()}" if response else header
-        cron_delivery_queue.put(CronDeliveryItem(
-            event="result",
-            session_key=session_key,
-            job_id=job_id,
-            job_name=job_name,
-            platform=platform,
-            content=content,
-        ))
-        logger.info(f"[cron] Job {job_id} result queued for {chat_id} via {platform}")
-    except Exception as e:
-        logger.warning(f"[cron] Job {job_id} queue failed: {e}")
-        mark_run(job_id, success=True, error=f"Queue failed: {e}", data_dir=data_dir)
-        running_jobs.discard(job_id)
-        return
+    # 立即投递
+    for tgt_platform, tgt_chat_id, tgt_bot_id in targets:
+        try:
+            _log("DELIVER", f"platform={tgt_platform}, chat_id={tgt_chat_id}")
+            header = f"⏰ **{job_name}**"
+            content = f"{header}\n\n{response}" if response else header
+            tgt_key = SessionKey(
+                bot_id=tgt_bot_id,
+                project_path=str(Path(data_dir).resolve().parent),
+                platform=tgt_platform,
+                chat_id=tgt_chat_id,
+            )
+            cron_delivery_queue.put(CronDeliveryItem(
+                event="result",
+                session_key=tgt_key,
+                job_id=job_id,
+                job_name=job_name,
+                platform=tgt_platform,
+                content=content,
+            ))
+            logger.info(f"[cron] Job {job_id} result queued for {tgt_chat_id} via {tgt_platform}")
+        except Exception as e:
+            logger.warning(f"[cron] Job {job_id} delivery to {tgt_platform}/{tgt_chat_id} failed: {e}")
 
     mark_run(job_id, success=True, data_dir=data_dir)
     running_jobs.discard(job_id)
@@ -1036,12 +1092,17 @@ class CronScheduler:
                  In group chats, skill nudge is disabled.
     """
 
-    def __init__(self, config: Config, data_dir: str, chat_id: str | None = None):
+    def __init__(self, config: Config, data_dir: str, chat_id: str | None = None, executor: Any = None):
         self.config = config
         self.data_dir = data_dir
-        self.chat_id = chat_id  # scope jobs and features to this chat_id
+        self.chat_id = chat_id
         self._stop = asyncio.Event()
-        self._running_jobs: set[str] = set()  # prevent overlap: skip jobs already running
+        self._running_jobs: set[str] = set()
+        self._executor = executor
+
+    def set_executor(self, executor: Any) -> None:
+        """设置 executor 引用（可能在初始化后才有）。"""
+        self._executor = executor
 
     def start(self):
         self._stop.clear()
@@ -1099,51 +1160,68 @@ class CronScheduler:
                 if pending_key in sent_this_tick:
                     continue
                 try:
-                    p = entry.get("platform", "feishu")
-                    chat_id = entry.get("chat_id", "")
-
-                    # Build session key for this delivery
-                    if p == "wecom":
-                        bot_id = getattr(self.config.channels.wecom, "bot_id", "")
+                    raw_targets = entry.get("targets")
+                    if raw_targets:
+                        # broadcast：用 targets 列表
+                        targets = raw_targets
                     else:
-                        bot_id = getattr(self.config.channels.feishu, "bot_id", "")
-                    session_key = SessionKey(
-                        bot_id=bot_id,
-                        project_path=str(Path(self.data_dir).resolve().parent),
-                        platform=p,
-                        chat_id=chat_id,
-                    )
+                        # 单目标：从 entry 构建
+                        p = entry.get("platform", "feishu")
+                        chat_id = entry.get("chat_id", "")
+                        if p == "wecom":
+                            bot_id = getattr(self.config.channels.wecom, "bot_id", "")
+                        else:
+                            bot_id = getattr(self.config.channels.feishu, "bot_id", "")
+                        targets = [(p, chat_id, bot_id)]
 
-                    # Send intermediate messages first (in order) via queue
-                    intermediates = entry.get("intermediates", [])
-                    for msg in intermediates:
-                        content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
-                        if content:
-                            cron_delivery_queue.put(CronDeliveryItem(
-                                event="progress",
-                                session_key=session_key,
-                                job_id=entry.get("job_id", ""),
-                                job_name=entry.get("job_name", ""),
-                                platform=p,
-                                content=content,
-                            ))
+                    for tgt_platform, tgt_chat_id, tgt_bot_id in targets:
+                        tgt_key = SessionKey(
+                            bot_id=tgt_bot_id,
+                            project_path=str(Path(self.data_dir).resolve().parent),
+                            platform=tgt_platform,
+                            chat_id=tgt_chat_id,
+                        )
 
-                    # Send final response via queue
-                    header = f"⏰ **{entry['job_name']}**"
-                    response = entry.get("response", "")
-                    content = f"{header}\n\n{response}" if response else header
-                    cron_delivery_queue.put(CronDeliveryItem(
-                        event="result",
-                        session_key=session_key,
-                        job_id=entry.get("job_id", ""),
-                        job_name=entry.get("job_name", ""),
-                        platform=p,
-                        content=content,
-                    ))
+                        # Send intermediate messages first (in order) via queue
+                        intermediates = entry.get("intermediates", [])
+                        for msg in intermediates:
+                            if isinstance(msg, dict) and ("tool_name" in msg):
+                                # 原始 tool data，跟主对话一样由 plugin 渲染
+                                cron_delivery_queue.put(CronDeliveryItem(
+                                    event="progress",
+                                    session_key=tgt_key,
+                                    job_id=entry.get("job_id", ""),
+                                    job_name=entry.get("job_name", ""),
+                                    platform=tgt_platform,
+                                    content=msg,
+                                ))
+                            elif isinstance(msg, dict) and msg.get("content"):
+                                # 向后兼容：旧格式 markdown
+                                cron_delivery_queue.put(CronDeliveryItem(
+                                    event="progress",
+                                    session_key=tgt_key,
+                                    job_id=entry.get("job_id", ""),
+                                    job_name=entry.get("job_name", ""),
+                                    platform=tgt_platform,
+                                    content=msg["content"],
+                                ))
+
+                        # Send final response via queue
+                        header = f"⏰ **{entry['job_name']}**"
+                        response = entry.get("response", "")
+                        content = f"{header}\n\n{response}" if response else header
+                        cron_delivery_queue.put(CronDeliveryItem(
+                            event="result",
+                            session_key=tgt_key,
+                            job_id=entry.get("job_id", ""),
+                            job_name=entry.get("job_name", ""),
+                            platform=tgt_platform,
+                            content=content,
+                        ))
+                        logger.info(f"[cron] Pending notification queued for {tgt_chat_id} via {tgt_platform}")
 
                     pending_store.remove(pending_key)
                     sent_this_tick.add(pending_key)
-                    logger.info(f"[cron] Pending notification queued for job {pending_key} via {p}")
                 except Exception as e:
                     logger.warning(f"[cron] Pending notification queue failed: {e}")
 
@@ -1153,11 +1231,15 @@ class CronScheduler:
         if not due:
             return
 
+        if not self._executor:
+            logger.warning("[cron] No executor available, skipping jobs")
+            return
+
         logger.info(f"[cron] {len(due)} job(s) due")
         for job in due:
             self._running_jobs.add(job["id"])
         tasks = [
-            _run_job(job, self.config, self.data_dir, self._running_jobs)
+            _run_job(job, self.config, self.data_dir, self._executor, self._running_jobs)
             for job in due
         ]
         if tasks:

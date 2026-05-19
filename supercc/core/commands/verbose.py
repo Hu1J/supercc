@@ -31,14 +31,12 @@ class VerboseHandler(CommandHandler):
         if not parts:
             status = [
                 f"**消息推送配置**（chat: `{chat_id}`）",
-                f"- 🧰 Skill 自进化：`{'开' if entry.skill else '关'}`",
-                f"- 🧠 记忆自优化：`{'开' if entry.mem else '关'}`",
+                f"- 🔄 自进化通知：`{'开' if entry.evolve else '关'}`",
                 f"- ⚙️ 过程消息：`{'开' if entry.step else '关'}`",
                 "",
                 "调整：",
                 "/verbose on|off — 全部开启/关闭",
-                "/verbose skill on|off — 🧰 Skill 自进化",
-                "/verbose mem on|off — 🧠 记忆自优化",
+                "/verbose evolve on|off — 🔄 自进化通知",
                 "/verbose step on|off — ⚙️ 过程消息",
             ]
             return CommandResult(content="\n".join(status))
@@ -47,17 +45,14 @@ class VerboseHandler(CommandHandler):
         sub = parts[1] if len(parts) > 1 else ""
 
         if cmd == "on":
-            entry.skill = entry.mem = entry.step = True
+            entry.evolve = entry.step = True
             msg = "✅ 已开启所有消息推送"
         elif cmd == "off":
-            entry.skill = entry.mem = entry.step = False
+            entry.evolve = entry.step = False
             msg = "🔇 已关闭所有消息推送"
-        elif cmd == "skill" and sub in ("on", "off"):
-            entry.skill = sub == "on"
-            msg = f"🧰 Skill 自进化已{'开启' if entry.skill else '关闭'}"
-        elif cmd == "mem" and sub in ("on", "off"):
-            entry.mem = sub == "on"
-            msg = f"🧠 记忆自优化已{'开启' if entry.mem else '关闭'}"
+        elif cmd == "evolve" and sub in ("on", "off"):
+            entry.evolve = sub == "on"
+            msg = f"🔄 自进化通知已{'开启' if entry.evolve else '关闭'}"
         elif cmd == "step" and sub in ("on", "off"):
             entry.step = sub == "on"
             msg = f"⚙️ 过程消息已{'开启' if entry.step else '关闭'}"
@@ -65,8 +60,7 @@ class VerboseHandler(CommandHandler):
             msg = ("❓ 用法不对。正确用法：\n"
                    "/verbose — 查看当前配置\n"
                    "/verbose on|off — 全部开启/关闭\n"
-                   "/verbose skill on|off — 🧰 Skill 自进化\n"
-                   "/verbose mem on|off — 🧠 记忆自优化\n"
+                   "/verbose evolve on|off — 🔄 自进化通知\n"
                    "/verbose step on|off — ⚙️ 过程消息")
 
         # 持久化到磁盘

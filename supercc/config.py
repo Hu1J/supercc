@@ -200,8 +200,7 @@ class SkillNudgeConfig:
 @dataclass
 class VerboseChannelEntry:
     """Per-chat-id verbose settings for a specific platform."""
-    skill: bool = True
-    mem: bool = True
+    evolve: bool = True
     step: bool = True
 
 
@@ -340,7 +339,7 @@ def load_config(path: str, data_dir: str = "") -> Config:
     )
 
     # Deserialize verbose: platform -> chat_id -> VerboseChannelEntry
-    _known_verbose_keys = {"skill", "mem", "step"}
+    _known_verbose_keys = {"evolve", "step"}
     verbose_raw = raw.get("verbose") or {}
     verbose: dict[str, dict[str, VerboseChannelEntry]] = {}
     for platform, chat_entries in verbose_raw.items():
@@ -515,7 +514,7 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
         },
         "verbose": {
             platform: {
-                chat_id: {"skill": e.skill, "mem": e.mem, "step": e.step}
+                chat_id: {"evolve": e.evolve, "step": e.step}
                 for chat_id, e in chat_entries.items()
             }
             for platform, chat_entries in cfg.verbose.items()
