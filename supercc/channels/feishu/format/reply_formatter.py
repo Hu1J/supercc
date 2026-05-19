@@ -126,6 +126,8 @@ class ReplyFormatter:
                 default_project_path=kwargs.get("default_project_path", ""),
                 platform=kwargs.get("platform", "feishu"),
                 chat_id=kwargs.get("chat_id", ""),
+                bot_id=kwargs.get("bot_id", ""),
+                user_open_id=kwargs.get("user_open_id", ""),
             )
 
         # Cron MCP tools → ⏰ 时钟图标
@@ -177,6 +179,7 @@ class ReplyFormatter:
         platform: str = "feishu",
         chat_id: str = "",
         bot_id: str = "",
+        user_open_id: str = "",
     ) -> MemoryCardMarker | str:
         """格式化记忆 MCP 工具调用为卡片标记。
 
@@ -215,7 +218,7 @@ class ReplyFormatter:
             # list/search — 查询实际条目（project_path 缺失时使用 default_project_path）
             query = args.get("query", "")
             project_path = args.get("project_path", "") or default_project_path
-            user_open_id = args.get("user_open_id", "") or get_current_user_open_id() or ""
+            user_open_id = user_open_id or args.get("user_open_id", "") or get_current_user_open_id() or ""
             bot_id = bot_id or args.get("bot_id", "") or get_current_bot_id() or ""
 
             if memory_manager is not None:

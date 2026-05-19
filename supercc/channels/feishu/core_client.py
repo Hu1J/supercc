@@ -128,6 +128,8 @@ class FeishuCoreWSClient:
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[IncomingMessage]] = {}
         self._MAX_GROUP_HISTORY = 10
+        # message_id → (user_open_id, bot_id) 映射，用于 _handle_tool_call 时传递用户身份
+        self._msg_ctx: dict[str, tuple[str, str]] = {}
         self._data_dir = data_dir
 
         # Feishu 格式化管线
@@ -567,11 +569,20 @@ class FeishuCoreWSClient:
 
         # 构建 format_tool_call kwargs
         kwargs: dict[str, Any] = {}
+
+        # 从 _msg_ctx 取出 user_open_id + bot_id（来自 send_message 存储的映射）
+        user_open_id_from_ctx = ""
+        bot_id_from_ctx = ""
+        if msg_id and msg_id in self._msg_ctx:
+            user_open_id_from_ctx, bot_id_from_ctx = self._msg_ctx.pop(msg_id)
+
         if tool_name.startswith("mcp__SuperCC__Memory") and self._memory_manager:
             kwargs["memory_manager"] = self._memory_manager
             kwargs["default_project_path"] = self.project_path
             kwargs["platform"] = "feishu"
             kwargs["chat_id"] = chat_id
+            kwargs["user_open_id"] = user_open_id_from_ctx
+            kwargs["bot_id"] = bot_id_from_ctx
 
         result = self.formatter.format_tool_call(tool_name, tool_input_str, **kwargs)
 
@@ -946,6 +957,9 @@ class FeishuCoreWSClient:
             group_members=getattr(incoming, "group_members", None),
             group_context=getattr(incoming, "group_context", ""),
         )
+
+        # 存储 message_id → (user_open_id, bot_id) 映射，供 _handle_tool_call 使用
+        self._msg_ctx[inbound.message_id] = (inbound.user_open_id or "", inbound.session_key.bot_id or "")
 
         # ── 群聊所有消息：记录到 _group_history ────────────────────────────
         # 无论是否 @mention，所有群聊消息都要记录到 _group_history，

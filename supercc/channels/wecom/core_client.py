@@ -54,6 +54,8 @@ class WeComReplyFormatter:
         default_project_path: str = "",
         platform: str = "wecom",
         chat_id: str = "",
+        bot_id: str = "",
+        user_open_id: str = "",
     ) -> MemoryCardMarker | None:
         """格式化记忆 MCP 工具调用为卡片标记（WeCom markdown 版本）。"""
         try:
@@ -93,8 +95,8 @@ class WeComReplyFormatter:
                                     "keywords": r.memory.keywords} for r in results]
                 else:
                     # user scope
-                    user_open_id = args.get("user_open_id", "")
-                    bot_id = args.get("bot_id", "")
+                    user_open_id = user_open_id or args.get("user_open_id", "")
+                    bot_id = bot_id or args.get("bot_id", "")
                     if user_open_id:
                         if card_type == "list":
                             prefs = memory_manager.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
@@ -127,6 +129,8 @@ class WeComReplyFormatter:
         default_project_path: str = "",
         platform: str = "wecom",
         chat_id: str = "",
+        bot_id: str = "",
+        user_open_id: str = "",
     ) -> str | MemoryCardMarker:
         """Format a tool call notification as markdown text or MemoryCardMarker."""
         if tool_input is None:
@@ -230,6 +234,8 @@ class WeComReplyFormatter:
                 default_project_path=default_project_path,
                 platform=platform,
                 chat_id=chat_id,
+                bot_id=bot_id,
+                user_open_id=user_open_id,
             )
             if marker is not None:
                 return marker
@@ -341,6 +347,8 @@ class WeComCoreWSClient:
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
+        # message_id → (user_open_id, bot_id) 映射，用于 _handle_tool_call 时传递用户身份
+        self._msg_ctx: dict[str, tuple[str, str]] = {}
         # 媒体缓存：message_id → 本地保存路径（避免重复下载）
         self._media_cache: dict[str, str] = {}
 
@@ -731,12 +739,20 @@ class WeComCoreWSClient:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
 
+        # 从 _msg_ctx 取出 user_open_id + bot_id
+        user_open_id_from_ctx = ""
+        bot_id_from_ctx = ""
+        if msg_id and msg_id in self._msg_ctx:
+            user_open_id_from_ctx, bot_id_from_ctx = self._msg_ctx.pop(msg_id)
+
         result = self.formatter.format_tool_call(
             tool_name, tool_input,
             memory_manager=self._memory_manager,
             default_project_path=self.project_path,
             platform="wecom",
             chat_id=chat_id,
+            user_open_id=user_open_id_from_ctx,
+            bot_id=bot_id_from_ctx,
         )
 
         # MemoryCardMarker → 渲染为 markdown 并发送
@@ -936,6 +952,9 @@ class WeComCoreWSClient:
             group_members=None,
             group_context="",
         )
+
+        # 存储 message_id → (user_open_id, bot_id) 映射，供 _handle_tool_call 使用
+        self._msg_ctx[inbound.message_id] = (inbound.user_open_id or "", inbound.session_key.bot_id or "")
 
         # ── 原始入站消息日志（像飞书那样）────────────────────────────────────
         try:
