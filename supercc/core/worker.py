@@ -47,11 +47,15 @@ class Worker:
     _current_task: asyncio.Task | None = None  # 当前执行中的 Task
     # SDK session 续接标志：_new_session_requested=True 时强制新建 session
     _is_first_session: bool = True
-    _sdk_session_id: str | None = None  # 上次 query 返回的 SDK session ID，用于 resume
+    _sdk_session_id: str | None = None  # 主对话上次 query 返回的 SDK session ID，用于 resume
+
+    # ── 独立的 evolve 追踪 ──────────────────────────────────────────────
+    _sdk_session_id_evolve: str | None = None  # evolve 专用 SDK session ID（与主对话完全独立）
+    _evo_conversation_count: int = 0             # 距上次完整 evolve 的对话计数
 
     # ── 两个 ClaudeIntegration（acquire 初始化）──────────────────────────
     integration: Any = None           # 对话 + 定时任务（max_turns=50）
-    integration_evolve: Any = None    # 自进化（max_turns=10）
+    integration_evolve: Any = None    # 自进化（max_turns=None）
 
     def __post_init__(self):
         if self.stats.session_id == "":
@@ -61,6 +65,7 @@ class Worker:
         """重置会话标志，下次 query 强制新建 Claude SDK session。"""
         self._is_first_session = True
         self._sdk_session_id = None
+        self._sdk_session_id_evolve = None
         for integ in (self.integration, self.integration_evolve):
             if integ is not None:
                 integ._new_session_requested = True
@@ -118,7 +123,7 @@ class WorkerPool:
                 )
                 worker.integration_evolve = ClaudeIntegration(
                     cli_path=cli_path,
-                    max_turns=10,
+                    max_turns=None,
                     approved_directory=approved_dir,
                 )
                 self._workers[key] = worker
@@ -228,6 +233,8 @@ class WorkerPool:
                 worker._sdk_session_id = sdk_sid
             if worker._is_first_session:
                 worker._is_first_session = False
+            # 主对话成功后递增 evolve 计数（用于判断是否触发完整 evolve）
+            worker._evo_conversation_count += 1
             return result, cost, sdk_sid
         finally:
             worker.state = WorkerState.IDLE

@@ -428,180 +428,23 @@ class CoreExecutor:
         return inbound.content
 
     async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", user_open_id: str = "") -> None:
-        """自进化：分析 session 文件，先做记忆处理，再做技能处理。
-
-        由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
-        结果通过 self._push_fn 推送回 plugin（WebSocket）。
-        """
-        push_fn = self._push_fn
-        if not push_fn or not sdk_session_id:
-            return
+        from supercc.core.evolve.evolve import run_evolve
 
         try:
             worker = await self.pool.get(key)
         except Exception:
             return
 
-        if worker is None or worker.integration_evolve is None:
-            return
-
-        # ── 找 session 文件 ────────────────────────────────────────────────
-        from pathlib import Path
-        evo_logger = logger
-
-        session_path = None
-        try:
-            for f in Path.home().rglob("*.jsonl"):
-                if f.name == f"{sdk_session_id}.jsonl":
-                    session_path = str(f)
-                    break
-        except Exception:
-            pass
-
-        if not session_path:
-            evo_logger.warning(f"[evolve] session file not found for {sdk_session_id}, skipping")
-            return
-
-        # ── MCP 工具上下文 ───────────────────────────────────────────────
-        from supercc.core.message_context import set_current_context
-        set_current_context(user_open_id=user_open_id, chat_id=key.chat_id, platform=key.platform, bot_id=key.bot_id)
-
-        # ── 构造 evolve prompt ──────────────────────────────────────────
-        skills_dir = Path(self._data_dir) / "skills"
-        evolve_prompt = f"""项目路径：{key.project_path}
-session 文件：{session_path}
-
-这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。
-
-请严格按以下两阶段依次执行，不准跳过任何阶段：
-
-===== 阶段一：记忆自进化 =====
-
-先阅读最近一次完整对话（文件末尾）：
-1. 用户最后说了什么？
-2. 用了哪些工具（Read/Write/Edit/Bash/Grep/WebSearch 等），传了什么参数？
-3. 工具返回了什么结果？
-4. Claude 最终回复了什么？
-
-如果最近一次对话信息不够判断，再往前追溯更早的消息。
-
-判断以下事项，需要时直接调 MCP 工具执行，不要问我任何问题：
-- 用户的个人偏好（语言风格、沟通习惯、技术栈偏好等）
-  → mcp__SuperCC__MemoryAddUser / MemoryUpdateUser / MemoryDeleteUser
-- 项目相关的记忆（文件路径、代码规范、bug 修复、架构决策等）
-  → mcp__SuperCC__MemoryAddProj / MemoryUpdateProj / MemoryDeleteProj
-
-===== 阶段二：技能自进化 =====
-
-先查看 {skills_dir}/ 目录，其中每个子目录对应一个技能（如 {skills_dir}/技能A/），
-每个技能目录内包含 SKILL.md 文件。
-
-然后分析本次对话全程，判断：
-
-**符合构建 Skill 的条件：**
-- 流程、模式固定的重复性工作流（每次做同样步骤的那种）
-- 充当辅助工具来简化某个操作流程的工具型 Skill
-- **特别是需要写工具代码（Bash 脚本、代码片段等）来辅助的场景**
-
-**不符合的条件：**
-- 一次性任务，没有重复价值
-- 规则、规范、架构设计等静态参考信息（应该存为项目记忆，不是 Skill）
-- 纯记忆类信息（应该存为用户偏好或项目记忆，不是 Skill）
-
-同时检查已有 Skill 是否有过时或需要更新的内容，以及是否有多个 Skill 可以合并。
-
-**SKILL.md 元数据格式（YAML frontmatter）：**
-```yaml
----
-name: skill-name
-description: 简短描述
-version: 1.0
-usage_count: 0       # 使用次数，每被成功执行一次 +1
-status: active       # active / archived
-created_at: 2026-01-01
-updated_at: 2026-01-01
----
-```
-
-**每个新建或更新 Skill 时，必须在正文末尾追加以下使用追踪指令（固定文案）：**
-```
-> **使用追踪**：每次你读取此 SKILL.md 并成功按指示执行后，
-> 请将 frontmatter 的 `usage_count` +1、更新 `updated_at` 为当天日期。
-> 如果是更新 Skill 内容，只更新 `updated_at`，不改 `usage_count`。
-```
-
-操作规则：
-- **新建**：在 {skills_dir}/ 下创建 <技能名>/ 目录，写入 SKILL.md（完整 frontmatter + 使用追踪指令）
-- **更新**：修改已有 SKILL.md 的正文，不要动 frontmatter 的 name/description
-- **删除**：删除 {skills_dir}/<技能名>/ 整个目录（含 SKILL.md）
-- 写入或更新后，执行：
-  ```
-  cd {skills_dir} && git add <技能名>/ && git commit -m "<中文 commit message>"
-  ```
-  不要 git push（此仓库没有 remote）
-
-**删除条件：同时满足以下三条才删，满足时直接删不需要问：**
-1. usage_count 长时间为 0（超过一个月没有使用）
-2. 内容过时、有错误、或已被新 Skill 替代
-3. 评估后认为对当前项目确实已无价值
-
-不满足上述条件但认为有疑问的，用 AskUserQuestion 问用户确认。
-
-每次操作完成后，同步更新项目记忆：
-- 新建技能 → MemoryAddProj(title="skill:<技能名>", content="简短描述/用法", keywords="skill,<技能名>")
-- 更新技能 → MemoryUpdateProj(...)
-- 删除技能 → MemoryDeleteProj(...)
-
-**补全规则：** 已有 Skill 缺少 usage tracking 元数据时，自动补全 frontmatter（加 usage_count/status/created_at/updated_at）和正文末尾的使用追踪指令。
-
-注意：
-- 新建前先搜索记忆确认不重复
-- 记忆中已有相关描述时，不要再创建冗余的 Skill
-- 只创建真正有价值的 Skill，不要为"有"而创建"""
-
-        # ── 执行 evolve ─────────────────────────────────────────────────────
-        is_evo_verbose = self._is_verbose_enabled(key.platform, key.chat_id, "evolve")
-        try:
-            # 安全限制：cwd + sandbox + dontAsk（只允许 skills_dir 的写操作）
-            worker.integration_evolve.approved_directory = str(skills_dir)
-            worker.integration_evolve._init_options(channel=key.platform, continue_conversation=False)
-            if worker.integration_evolve._options is not None:
-                import json as _json
-                opts = worker.integration_evolve._options
-                opts.permission_mode = "dontAsk"
-                opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
-                base = _json.loads(opts.settings or "{}")
-                base["permissions"] = {
-                    "allow": [
-                        {"tool": "Read", "path": "**"},
-                        {"tool": "Edit", "path": f"{skills_dir}/**"},
-                        {"tool": "Write", "path": f"{skills_dir}/**"},
-                        {"tool": "Bash", "path": f"{skills_dir}/**"},
-                    ],
-                }
-                opts.settings = _json.dumps(base)
-
-            async def evolve_stream_callback(msg: Any) -> None:
-                if msg.content:
-                    evo_logger.info("[evolve] text: %s", msg.content[:500])
-                if not is_evo_verbose:
-                    return
-                if msg.tool_name and push_fn:
-                    tool_msg = OutboundMessage(
-                        event=Event.TOOL_CALL,
-                        session_key=key,
-                        message_id=message_id,
-                        content=f"[{msg.tool_name}]",
-                        message_type=MessageType.TOOL_CALL,
-                        extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                    )
-                    await push_fn(tool_msg)
-
-            await worker.integration_evolve.query(
-                prompt=evolve_prompt,
-                on_stream=evolve_stream_callback,
-            )
-            evo_logger.info(f"[evolve] done for {key}")
-        except Exception as e:
-            evo_logger.warning(f"[evolve] failed: {e}")
+        await run_evolve(
+            worker=worker,
+            key=key,
+            sdk_session_id=sdk_session_id,
+            message_id=message_id,
+            user_open_id=user_open_id,
+            data_dir=self._data_dir,
+            push_fn=self._push_fn,
+            is_verbose_enabled_fn=self._is_verbose_enabled,
+            config=self._config,
+            _logger=logger,
+        )
 

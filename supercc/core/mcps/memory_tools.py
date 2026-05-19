@@ -1,11 +1,14 @@
 """Memory MCP tools — 10 tools, one per /memory command."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from claude_agent_sdk import tool
 from supercc.core.memory_manager import get_memory_manager
 from supercc.core.message_context import get_current_bot_id, get_current_chat_id, get_current_platform, get_current_user_open_id
+
+logger = logging.getLogger(__name__)
 
 
 def _fmt_pref(p) -> str:
@@ -107,9 +110,10 @@ async def memory_update_user(args: dict) -> dict:
 )
 async def memory_list_user(args: dict) -> dict:
     user_open_id = _get_user_open_id()
-    mm = get_memory_manager()
     platform = get_current_platform()
     bot_id = get_current_bot_id() or ""
+    logger.debug(f"[MemoryListUser] user_open_id={user_open_id}, platform={platform}, bot_id={bot_id!r}")
+    mm = get_memory_manager()
     if user_open_id:
         prefs = mm.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id)
     else:

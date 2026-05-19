@@ -103,79 +103,6 @@ from supercc.core.mcps.cron_tools import set_cron_scheduler
 logger = logging.getLogger(__name__)
 
 
-def _register_skill_optimization_job(data_dir: str, scheduler) -> None:
-    """Register a daily skill optimization scan job.
-
-    Creates a cron job that delivers results to the active user's P2P chat.
-    Only registers if active chat is P2P (not group).
-    Only recreates job if the prompt has changed from the existing one.
-    """
-    from supercc.core.cron_scheduler import list_jobs, create_job, delete_job
-
-    chat_id = _get_active_chat_id(data_dir)
-    if not chat_id:
-        logger.info("[skill_optimize] no active chat_id, skipping")
-        return
-
-    if _is_group_chat(data_dir, chat_id):
-        logger.info("[skill_optimize] active chat is a group, skipping registration")
-        return
-
-    prompt = """【Skill 优化扫描 — 直接动手，不要只给建议】
-
-你是熟练的工程师，直接动手解决问题，不要只给建议。发现确定的问题就立即修复。
-
-**操作步骤：**
-1. 先查看 {SKILLS_DIR}/ 目录下已有的 Skill
-2. 发现有以下情况就直接动手：
-   - **过时/错误内容** → 直接更新 SKILL.md（不要给建议）
-   - **多个 Skill 内容重复** → 合并到最完整的一个，删除其余
-   - **发现新的值得推广的模式** → 直接新建 Skill
-   - **Skill 内容已无价值** → **必须先问用户确认**（删除是唯一需要确认的操作）
-
-3. 删除前必须先向用户确认，格式：
-   ```
-   发现 Skill「<skill-name>」可能过时，确定要删除吗？
-   ```
-   用户确认后才能删除，用户拒绝则跳过
-
-4. 每次操作后立即 `git add` + `git commit`，不要等到最后才提交
-
-5. {SKILLS_DIR}/ 本身是一个 Git 仓库。写入 SKILL.md 后，在 {SKILLS_DIR}/ 目录下执行：
-   ```
-   cd {SKILLS_DIR} && git add <skill-name>/ && git commit -m "<中文 commit message>"
-   ```
-   commit message 必须用中文，清晰说明本次改动内容
-
-完成后输出简短报告：做了哪些新建/更新/合并/删除操作。"""
-
-    # Only recreate if prompt changed
-    existing = list_jobs(data_dir)
-    for j in existing:
-        if j.get("name") == "Skill 优化扫描":
-            if j.get("prompt") == prompt:
-                logger.info("[skill_optimize] prompt unchanged, skipping recreation")
-                return
-            delete_job(j["id"], data_dir)
-            logger.info("[skill_optimize] prompt changed, removed old job, will recreate")
-            break
-
-    try:
-        create_job(
-            prompt=prompt,
-            schedule="0 4 * * *",  # 每天凌晨4点执行
-            chat_id=chat_id,
-            name="Skill 优化扫描",
-            repeat=None,
-            data_dir=data_dir,
-            verbose=False,  # 不推送中间过程，只在 notify_at 发最终结果
-            notify_at="0 8 * * *",  # 早上8点通知结果
-        )
-        logger.info("[skill_optimize] registered daily scan at 4am, notify at 8am")
-    except Exception as e:
-        logger.warning(f"[skill_optimize] failed to register: {e}")
-
-
 class _SafeStreamHandler(logging.StreamHandler):
     """StreamHandler that silently ignores UnicodeEncodeError on Windows GBK consoles."""
 
@@ -546,12 +473,9 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
     from supercc.core.evolve.skill_nudge import _ensure_skills_git_repo
     _ensure_skills_git_repo(Path(data_dir) / "skills")
 
-    # Register daily skill optimization scan
-    _register_skill_optimization_job(data_dir, cron_scheduler)
-
-    # Register nightly dream job (memory refinement at 3am)
-    from supercc.core.evolve.dream import register_dream_job
-    register_dream_job(data_dir)
+    # 删除旧版定时任务（做梦、Skill 优化扫描），已由 evo 内部替代
+    from supercc.core.evolve.evolve import cleanup_old_cron_jobs
+    cleanup_old_cron_jobs(data_dir)
 
     # ── Graceful shutdown ──────────────────────────────────────────────────
     stop_event = asyncio.Event()
@@ -688,6 +612,10 @@ def start_core_only(config_path: str, data_dir: str):
     set_cron_scheduler(cron_scheduler, config)
     cron_scheduler.start()
     logger.info("[Phase2] CronScheduler started")
+
+    # 删除旧版定时任务（做梦、Skill 优化扫描），已由 evo 内部替代
+    from supercc.core.evolve.evolve import cleanup_old_cron_jobs
+    cleanup_old_cron_jobs(data_dir)
 
     # 7. 注册 cleanup signal handler
     def cleanup(signum, frame):
