@@ -1,6 +1,7 @@
 """Interactive onboarding flow for first-time SuperCC setup."""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ def _print_step(step: int, total: int, title: str) -> None:
     print(f"{'━' * 60}\n")
 
 
-def run_onboard_flow() -> bool:
+async def run_onboard_flow() -> bool:
     """Run the interactive onboard flow. Returns True if setup completed."""
     TOTAL_STEPS = 4
 
@@ -42,13 +43,13 @@ def run_onboard_flow() -> bool:
     print("  • 访问你的敏感信息\n")
     print("请仅在可信任的网络环境下使用本工具。\n")
 
-    accept = questionary.confirm(
+    accept = await questionary.confirm(
         "我了解风险并确认继续",
         default=False,
         style=questionary.Style([
             ("selected", "fg:#FF5555 bold"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if not accept:
         print("\n❌ 已取消安装引导")
@@ -58,10 +59,9 @@ def run_onboard_flow() -> bool:
     _print_step(1, TOTAL_STEPS, "配置模型")
     print("请选择您的模型供应商，并提供 API Key\n")
 
-    _do_model_config_step()
+    await _do_model_config_step()
 
     # ── Step 2: Platform selection ─────────────────────────────────────────────
-    import asyncio
     from supercc.config import resolve_config_path
     try:
         cfg_path, data_dir = resolve_config_path()
@@ -92,7 +92,7 @@ def run_onboard_flow() -> bool:
         questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
     ]
 
-    platform_choice = questionary.select(
+    platform_choice = await questionary.select(
         "请选择要配置的聊天平台（后续可随时通过 `supercc config` 修改）",
         choices=platform_choices,
         style=questionary.Style([
@@ -100,7 +100,7 @@ def run_onboard_flow() -> bool:
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if platform_choice == "skip":
         print("\n⏭  跳过平台配置\n")
@@ -109,7 +109,7 @@ def run_onboard_flow() -> bool:
     elif (platform_choice == "feishu" and _feishu_has_app) or (platform_choice == "wecom" and _wecom_has_corp):
         # 已配置的平台：提供管理选项
         platform_name = "飞书" if platform_choice == "feishu" else "企业微信"
-        manage_choice = questionary.select(
+        manage_choice = await questionary.select(
             f"{platform_name} 已配置，请选择操作",
             choices=[
                 questionary.Choice("🔄  重新配置", value="reconfigure"),
@@ -121,7 +121,7 @@ def run_onboard_flow() -> bool:
                 ("choice", "fg:#CCCCCC"),
                 ("pointer", "fg:#00AA00 bold"),
             ]),
-        ).ask()
+        ).ask_async()
 
         if manage_choice == "back" or manage_choice is None:
             print("\n⏭  跳过平台配置\n")
@@ -153,7 +153,7 @@ def run_onboard_flow() -> bool:
             if platform_choice == "feishu":
                 try:
                     from supercc.install.flow import run_install_flow
-                    asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
+                    await run_install_flow(cfg_path, bypass_accepted=True)
                     print("✅ 飞书配置完成\n")
                     feishu_configured = True
                 except Exception as e:
@@ -188,7 +188,7 @@ def run_onboard_flow() -> bool:
         if platform_choice == "feishu":
             try:
                 from supercc.install.flow import run_install_flow
-                asyncio.run(run_install_flow(cfg_path, bypass_accepted=True))
+                await run_install_flow(cfg_path, bypass_accepted=True)
                 print("✅ 飞书配置完成\n")
                 feishu_configured = True
             except Exception as e:
@@ -221,7 +221,7 @@ def run_onboard_flow() -> bool:
 
     import secrets
 
-    auth_choices = questionary.checkbox(
+    auth_choices = await questionary.checkbox(
         "选择 plugin 连接 core WS 时的认证方式",
         choices=[
             questionary.Choice("Token 认证（自动生成，推荐）", value="token", checked=True),
@@ -232,7 +232,7 @@ def run_onboard_flow() -> bool:
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
         ]),
-    ).ask() or []
+    ).ask_async() or []
 
     token = ""
     username = ""
@@ -244,12 +244,12 @@ def run_onboard_flow() -> bool:
 
     if "password" in auth_choices:
         while True:
-            username = questionary.text("请输入用户名", style=questionary.Style([("input", "fg:#CCCCCC")])).ask() or ""
+            username = (await questionary.text("请输入用户名", style=questionary.Style([("input", "fg:#CCCCCC")])).ask_async()) or ""
             if username:
                 break
             print("⚠️  用户名不能为空，请重新输入\n")
         while True:
-            password = questionary.password("请输入密码", style=questionary.Style([("password", "fg:#CCCCCC")])).ask() or ""
+            password = (await questionary.password("请输入密码", style=questionary.Style([("password", "fg:#CCCCCC")])).ask_async()) or ""
             if password:
                 break
             print("⚠️  密码不能为空，请重新输入\n")
@@ -257,7 +257,7 @@ def run_onboard_flow() -> bool:
     # ── Core listen address/port ───────────────────────────────────────────────
     _print_step(4, TOTAL_STEPS, "配置监听地址")
 
-    listen_choice = questionary.select(
+    listen_choice = await questionary.select(
         "选择 SuperCC Core 的监听地址（plugin 通过此地址连接）",
         choices=[
             questionary.Choice("127.0.0.1:28888（推荐，仅本机可访问）", value="1"),
@@ -268,7 +268,7 @@ def run_onboard_flow() -> bool:
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
         ]),
-    ).ask() or "1"
+    ).ask_async() or "1"
 
     if listen_choice == "2":
         core_host = "0.0.0.0"
@@ -303,13 +303,13 @@ def run_onboard_flow() -> bool:
 
     print()
 
-    confirm = questionary.confirm(
+    confirm = await questionary.confirm(
         "确认写入配置？",
         default=True,
         style=questionary.Style([
             ("selected", "fg:#00AA00 bold"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if not confirm:
         print("\n❌ 已取消安装引导")
@@ -344,10 +344,8 @@ def run_onboard_flow() -> bool:
     return True
 
 
-def _do_model_config_step() -> None:
+async def _do_model_config_step() -> None:
     """Handle the model configuration step with provider selection (TUI)."""
-    # resolve_config_path() 返回 (cfg_path, data_dir)，cfg_path = {project}/.supercc/config.json
-    # set_project_model 需要项目根路径，所以要取 cfg_path 的 parent.parent
     try:
         cfg_path, _ = resolve_config_path()
         project_path = str(Path(cfg_path).resolve().parent.parent)
@@ -391,9 +389,8 @@ def _do_model_config_step() -> None:
                 models=pdata.models or [],
             )))
 
-    # 构建选项：已配置的显示 "(已配置)"，未配置的不显示
+    # 构建选项
     provider_choices = []
-    default_index = 0
 
     for i, (pid, p) in enumerate(configured):
         provider_choices.append(questionary.Choice(
@@ -407,7 +404,6 @@ def _do_model_config_step() -> None:
             value=pid,
         ))
 
-    # 新增自定义供应商
     provider_choices.append(questionary.Choice("─" * 40, value="__separator__", disabled=True))
     provider_choices.append(questionary.Choice(
         "✨ 新增自定义供应商",
@@ -418,7 +414,7 @@ def _do_model_config_step() -> None:
         provider_choices.append(questionary.Choice("─" * 40, value="__sep2__", disabled=True))
     provider_choices.append(questionary.Choice("⏭  跳过（稍后手动配置）", value="__skip__"))
 
-    provider_id = questionary.select(
+    provider_id = await questionary.select(
         "请选择模型供应商（已配置的供应商会自动跳过 API Key 输入）",
         choices=provider_choices,
         style=questionary.Style([
@@ -427,7 +423,7 @@ def _do_model_config_step() -> None:
             ("pointer", "fg:#00AA00 bold"),
             ("separator", "fg:#555555"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if not provider_id or provider_id == "__skip__":
         print("\n⚠️  跳过模型配置（后续可使用 `supercc config` 添加）\n")
@@ -435,45 +431,43 @@ def _do_model_config_step() -> None:
 
     # ── 新增自定义供应商模式 ───────────────────────────────────────────────
     if provider_id == "__add_custom__":
-        base_url = questionary.text(
+        base_url = (await questionary.text(
             "Base URL（例如 https://api.example.com/v1）",
             style=questionary.Style([("input", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
         if not base_url:
             print("\n⚠️  未提供 Base URL，跳过模型配置\n")
             return
         base_url = base_url.strip().rstrip("/")
 
-        selected_model = questionary.text(
+        selected_model = (await questionary.text(
             "模型 ID（例如 gpt-4、my-model）",
             style=questionary.Style([("input", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
         if not selected_model:
             print("\n⚠️  未提供模型 ID，跳过\n")
             return
         selected_model = selected_model.strip()
 
-        token = questionary.password(
+        token = (await questionary.password(
             "API Key",
             style=questionary.Style([("password", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
         if not token:
             print("\n⚠️  未提供 API Key，跳过模型配置\n")
             return
 
-        provider_name_raw = questionary.text(
+        provider_name_raw = (await questionary.text(
             "供应商名称（例如 myProvider）",
             style=questionary.Style([("input", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
         provider_name = provider_name_raw.strip() if provider_name_raw else "custom"
 
-        # 验证 provider_name 只允许大小写英文+数字，防止注入
         import re
         if not re.fullmatch(r'[a-zA-Z0-9]+', provider_name):
             print("\n❌ 供应商名称只支持大小写英文字母和数字，不能包含特殊字符\n")
             return
 
-        # 验证不能与预置供应商名称冲突
         if provider_name in PROVIDERS:
             print(f"\n❌ 供应商名称 '{provider_name}' 是内置供应商名称，请使用其他名称\n")
             return
@@ -489,17 +483,16 @@ def _do_model_config_step() -> None:
             if valid:
                 break
             print(f"\n❌ API 验证失败: {err_msg}")
-            retry = questionary.confirm("是否重新输入 API Key？", default=True).ask()
+            retry = await questionary.confirm("是否重新输入 API Key？", default=True).ask_async()
             if not retry:
                 print("\n⚠️  跳过模型配置\n")
                 return
-            token = questionary.password("API Key", style=questionary.Style([("password", "fg:#CCCCCC")])).ask()
+            token = (await questionary.password("API Key", style=questionary.Style([("password", "fg:#CCCCCC")])).ask_async())
             if not token:
                 print("\n⚠️  未提供 API Key，跳过模型配置\n")
                 return
             env.ANTHROPIC_AUTH_TOKEN = token
 
-        # 自定义供应商存到 model.json
         from supercc.core.models.model_config import _load_json, _save_json
         raw = _load_json()
         providers_raw = raw.get("providers", {})
@@ -512,7 +505,6 @@ def _do_model_config_step() -> None:
         raw["providers"] = providers_raw
         _save_json(raw)
 
-        # 设置项目激活映射
         set_project_model(project_path, provider_name, selected_model)
         init_model_env(project_path)
 
@@ -522,10 +514,9 @@ def _do_model_config_step() -> None:
         print(f"   模型: `{selected_model}`\n")
         return
 
-    # 获取 provider 对象（预置供应商从 PROVIDERS，自定义供应商从 all_providers）
+    # 获取 provider 对象
     provider = PROVIDERS.get(provider_id) if provider_id in PROVIDERS else None
     if not provider:
-        # 自定义供应商（存在于 all_providers 但不在 PROVIDERS 中）
         pdata = all_providers.get(provider_id)
         if pdata:
             provider = _CustomProvider(
@@ -540,40 +531,38 @@ def _do_model_config_step() -> None:
     pdata = all_providers.get(provider_id)
     has_existing_key = pdata and pdata.api_key
 
-    # 如果该供应商已有 API Key，询问用户是否需要更新
     if has_existing_key:
-        update_key = questionary.confirm(
+        update_key = await questionary.confirm(
             f"检测到 {provider_id} 已配置 API Key，是否要更新？",
             default=False,
             style=questionary.Style([("selected", "fg:#00AA00 bold")]),
-        ).ask()
+        ).ask_async()
         if update_key:
-            token = questionary.password(
+            token = (await questionary.password(
                 f"新的 API Key（{auth_display}）",
                 style=questionary.Style([("password", "fg:#CCCCCC")]),
-            ).ask()
+            ).ask_async())
             if not token:
                 print("\n⚠️  未提供 API Key，跳过模型配置\n")
                 return
         else:
             token = pdata.api_key
     else:
-        # Step 2: 输入 API Key
-        token = questionary.password(
+        token = (await questionary.password(
             f"API Key（{auth_display}）",
             style=questionary.Style([("password", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
 
         if not token:
             print("\n⚠️  未提供 API Key，跳过模型配置\n")
             return
 
-    # Step 3: 选择模型
+    # 选择模型
     model_choices = [
         questionary.Choice(f"`{m}`", value=m)
         for m in provider.models
     ]
-    selected_model = questionary.select(
+    selected_model = await questionary.select(
         f"请选择模型（{provider.id}）",
         choices=model_choices,
         style=questionary.Style([
@@ -581,13 +570,13 @@ def _do_model_config_step() -> None:
             ("choice", "fg:#CCCCCC"),
             ("pointer", "fg:#00AA00 bold"),
         ]),
-    ).ask()
+    ).ask_async()
 
     if not selected_model:
         print("\n⚠️  未选择模型，跳过\n")
         return
 
-    # Step 4: 验证 API Key + 模型是否可用
+    # 验证 API Key + 模型是否可用
     env = ModelEnv(
         ANTHROPIC_AUTH_TOKEN=token,
         ANTHROPIC_BASE_URL=provider.base_url,
@@ -599,29 +588,28 @@ def _do_model_config_step() -> None:
         if valid:
             break
         print(f"\n❌ API 验证失败: {err_msg}")
-        retry = questionary.confirm(
+        retry = await questionary.confirm(
             "是否重新输入 API Key？",
             default=True,
-        ).ask()
+        ).ask_async()
         if not retry:
             print("\n⚠️  跳过模型配置（后续可使用 `supercc config` 添加）\n")
             return
-        token = questionary.password(
+        token = (await questionary.password(
             f"API Key（{auth_display}）",
             style=questionary.Style([("password", "fg:#CCCCCC")]),
-        ).ask()
+        ).ask_async())
         if not token:
             print("\n⚠️  未提供 API Key，跳过模型配置\n")
             return
         env.ANTHROPIC_AUTH_TOKEN = token
 
-    # 保存配置：更新供应商 API Key + 设置项目激活映射
     ok, err = update_provider_api_key(provider_id, token)
     if not ok:
         print(f"\n❌ API Key 验证失败: {err}\n")
         return
     set_project_model(project_path, provider_id, selected_model)
-    init_model_env(project_path)  # 刷新全局单例
+    init_model_env(project_path)
 
     print(f"\n✅ 模型配置已保存")
     print(f"   供应商: {provider.id}")

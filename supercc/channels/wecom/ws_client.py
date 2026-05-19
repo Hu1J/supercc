@@ -500,11 +500,15 @@ class WeComWSClient:
         return self._connected and self._ws is not None
 
     async def reconnect(self) -> None:
-        """主动断开并重连 WeCom WS。"""
+        """主动断开并重连 WeCom WS（在 daemon 线程的 loop 上执行）。"""
         logger.info("[WeComWS] Manual reconnect triggered")
         self._reconnect_delay = 1.0
+        if self._daemon_loop is None or self._daemon_loop.is_closed():
+            logger.warning("[WeComWS] Daemon loop not available, skipping reconnect")
+            return
         try:
-            await self._open_connection()
+            fut = asyncio.run_coroutine_threadsafe(self._open_connection(), self._daemon_loop)
+            await asyncio.wrap_future(fut)
             logger.info("[WeComWS] Manual reconnect succeeded")
         except Exception as e:
             logger.warning(f"[WeComWS] Manual reconnect failed: {e}")

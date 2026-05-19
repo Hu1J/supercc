@@ -484,7 +484,7 @@ class WeComCoreWSClient:
             is_group = extra.get("is_group_chat", False)
             sender_id = extra.get("user_open_id", "")
             session_info = extra.get("session_info", "")
-            logger.info(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
+            logger.debug(f"[WeComCore] RESPONSE event: message_id={str(params.get('message_id') or '')[:20]}, content_len={len(content) if content else 0}")
 
             # ── 群聊 mention：追加 @userid 纯文本 ──────────────────────────────
             if is_group and sender_id:
@@ -585,13 +585,13 @@ class WeComCoreWSClient:
         sent_ok = False
         try:
             ack = await self.wecom.send_markdown(chat_id, text)
-            logger.info(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
+            logger.debug(f"[WeComCore] send_markdown ack: errcode={ack.get('errcode')}, errmsg={ack.get('errmsg')}")
             if ack.get("errcode") == 0:
                 sent_ok = True
             else:
                 # markdown 失败，尝试纯文本 fallback
                 ack2 = await self.wecom.send_text(chat_id, text[:2000])
-                logger.info(f"[WeComCore] send_text fallback ack: errcode={ack2.get('errcode')}, errmsg={ack2.get('errmsg')}")
+                logger.debug(f"[WeComCore] send_text fallback ack: errcode={ack2.get('errcode')}, errmsg={ack2.get('errmsg')}")
                 if ack2.get("errcode") == 0:
                     sent_ok = True
         except Exception as e:

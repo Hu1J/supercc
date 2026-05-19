@@ -392,11 +392,18 @@ class CoreExecutor:
         except Exception:
             pass
 
-        try:
-            from supercc.core.mcps.feishu_file_tools import FEISHU_FILE_GUIDE
-            system_parts.append(FEISHU_FILE_GUIDE)
-        except Exception:
-            pass
+        if key.platform == "feishu":
+            try:
+                from supercc.core.mcps.feishu_file_tools import FEISHU_FILE_GUIDE
+                system_parts.append(FEISHU_FILE_GUIDE)
+            except Exception:
+                pass
+        elif key.platform == "wecom":
+            try:
+                from supercc.core.mcps.wecom_tools import WECOM_FILE_GUIDE
+                system_parts.append(WECOM_FILE_GUIDE)
+            except Exception:
+                pass
 
         try:
             from supercc.core.mcps.cron_tools import CRON_GUIDE

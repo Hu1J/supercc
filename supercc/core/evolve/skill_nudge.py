@@ -175,17 +175,39 @@ def make_nudge(config: SkillNudgeConfig) -> SkillNudge:
 SKILL_NUDGE_PROMPT = """\
 根据当前对话历史，判断是否有值得创建或更新的 Skill。
 
+**记忆 vs 技能的边界**：
+- **记忆**：记录事实、偏好、项目决策、bug 修复、用户信息。→ 用 MCP memory 工具
+- **技能**：记录可复用的工作流、多步骤操作流程、跨 session 的通用模式。→ 创建 Skill
+
 适合存为 Skill 的场景：
-- 解决了非平凡问题，且解决方法可推广
-- 发现了一种新的工作流程或技巧
-- 克服了错误并找到了正确方法
-- 用户要求记住某个流程
+- 发现了可推广的非平凡工作流程
+- 用户要求记住某个多步骤操作流程
+- 经过多次迭代验证的可靠方法
+
+**创建前必须先搜索记忆确认**：调用 mcp__SuperCC__MemorySearchUser / MemorySearchProj
+检查是否已有相同内容。已有则不再创建 Skill。
+
+**SKILL.md 元数据格式**（YAML frontmatter）：
+```yaml
+---
+name: skill-name
+description: 简短描述
+version: 1.0
+usage_count: 0        # 使用次数，每被成功执行一次 +1
+status: active        # active / archived
+created_at: 2026-01-01  # 创建日期
+updated_at: 2026-01-01  # 最近修改日期
+---
+```
+
+**每个新 Skill 创建时，必须在正文末尾追加以下使用追踪指令**（固定文案，一字不差）：
+---
+> **使用追踪**：每次你读取此 SKILL.md 并成功按指示执行后，请将 frontmatter 的 `usage_count` +1、更新 `updated_at` 为当天日期。如果是更新 Skill 内容，只更新 `updated_at`，不改 `usage_count`。
 
 操作步骤：
-1. 先查看 {SKILLS_DIR}/ 目录下已有的 Skill
-2. 把完整内容直接写入 {SKILLS_DIR}/<skill-name>/SKILL.md
-3. 格式：YAML frontmatter (name/description/author/version) + Markdown body
-4. {SKILLS_DIR}/ 是一个本地 Git 仓库（没有 remote，不支持 push）。
+1. 先搜索记忆确认不重复，再查看 {SKILLS_DIR}/ 下已有 Skill
+2. 把完整内容直接写入 {SKILLS_DIR}/<skill-name>/SKILL.md，包含完整 frontmatter + 使用追踪指令
+3. {SKILLS_DIR}/ 是一个本地 Git 仓库（没有 remote，不支持 push）。
    写入 SKILL.md 后，进入该目录执行：
    ```
    cd {SKILLS_DIR} && git add <skill-name>/ && git commit -m "<中文 commit message>"
@@ -193,11 +215,17 @@ SKILL_NUDGE_PROMPT = """\
    commit message 必须用中文，清晰说明本次改动内容。
    **不要执行 git push**——此仓库只有本地历史，没有远程仓库。
 
+**淘汰规则**（基于使用情况和当前项目现状自动处理）：
+- 一星期没有被使用的 skill → `status` 设为 `archived`
+- 一个月没有被使用 + 判断真的无用/过时（对当前项目而言）→ **直接删除**
+- 每次技能自进化扫描时，结合当前项目现状和记忆，检查所有 skill 的上述指标并执行对应操作
+
 注意：
 - 只创建真正有价值的 Skill，不要为了"有"而创建
 - 如果有相关 Skill 已存在，优先更新它而不是创建新的
+- **记忆中已有相关描述时，不要再创建冗余的 Skill**（先搜索记忆确认）
+- **已存在的 Skill 缺少 usage tracking 元数据时，自动补全**（frontmatter 加 usage_count/status/created_at/updated_at，末尾加使用追踪指令）
 - 更新 Skill 时只改正文 instructions，不要动 frontmatter 的 name/description
-- **删除**：Skill 只有在确定无价值时才删除，且**删除前必须先向用户确认**，得到肯定答复后再执行删除
 - 新建和更新不需要确认，发现就直接做
 """
 
