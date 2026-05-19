@@ -468,7 +468,8 @@ class CoreExecutor:
 
         # ── 构造 evolve prompt ──────────────────────────────────────────
         skills_dir = Path(self._data_dir) / "skills"
-        evolve_prompt = f"""分析 session 文件：{session_path}
+        evolve_prompt = f"""项目路径：{key.project_path}
+session 文件：{session_path}
 
 这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。
 
@@ -504,7 +505,8 @@ class CoreExecutor:
 
 **不符合的条件：**
 - 一次性任务，没有重复价值
-- 纯记忆类信息（应该存为记忆，不是 Skill）
+- 规则、规范、架构设计等静态参考信息（应该存为项目记忆，不是 Skill）
+- 纯记忆类信息（应该存为用户偏好或项目记忆，不是 Skill）
 
 同时检查已有 Skill 是否有过时或需要更新的内容，以及是否有多个 Skill 可以合并。
 
@@ -560,7 +562,24 @@ updated_at: 2026-01-01
         # ── 执行 evolve ─────────────────────────────────────────────────────
         is_evo_verbose = self._is_verbose_enabled(key.platform, key.chat_id, "evolve")
         try:
+            # 安全限制：cwd + sandbox + dontAsk（只允许 skills_dir 的写操作）
+            worker.integration_evolve.approved_directory = str(skills_dir)
             worker.integration_evolve._init_options(channel=key.platform, continue_conversation=False)
+            if worker.integration_evolve._options is not None:
+                import json as _json
+                opts = worker.integration_evolve._options
+                opts.permission_mode = "dontAsk"
+                opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
+                base = _json.loads(opts.settings or "{}")
+                base["permissions"] = {
+                    "allow": [
+                        {"tool": "Read", "path": "**"},
+                        {"tool": "Edit", "path": f"{skills_dir}/**"},
+                        {"tool": "Write", "path": f"{skills_dir}/**"},
+                        {"tool": "Bash", "path": f"{skills_dir}/**"},
+                    ],
+                }
+                opts.settings = _json.dumps(base)
 
             async def evolve_stream_callback(msg: Any) -> None:
                 if msg.content:
