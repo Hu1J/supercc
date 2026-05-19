@@ -131,7 +131,7 @@ class ClaudeIntegration:
             include_wecom = (channel == "wecom")
             if include_wecom:
                 include_feishu = False
-            logger.info("[MCP] channel=%s, include_feishu=%s, include_wecom=%s", channel, include_feishu, include_wecom)
+            logger.debug("[MCP] channel=%s, include_feishu=%s, include_wecom=%s", channel, include_feishu, include_wecom)
             supercc_server = get_supercc_mcp_server(include_feishu=include_feishu, include_wecom=include_wecom)
 
         mcp_servers = {

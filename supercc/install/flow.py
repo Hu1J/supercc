@@ -79,7 +79,7 @@ async def run_install_flow(config_path: str = "config.json", bypass_accepted: bo
 
     import questionary
 
-    method = questionary.select(
+    method = await questionary.select(
         "请选择飞书机器人接入方式：",
         choices=[
             questionary.Choice("🔍 扫码创建（推荐）", value="qrcode"),
