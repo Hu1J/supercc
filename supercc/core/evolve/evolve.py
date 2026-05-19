@@ -1,12 +1,17 @@
 """Evo — 自进化核心逻辑（独立于 executor）。
 
-每次对话后触发，分析 session 文件，驱动记忆和技能自进化。
-阶段一（每次）：读对话 → 判断新增记忆
-阶段二（每5次）：全面巡检记忆 + 技能自进化
+三种模式：
+- Mode 1（每次）：增量记忆（bypassPermissions + MCP-only + Read）
+- Mode 2（巡检时）：全面记忆巡检（bypassPermissions + MCP-only + Read）
+- Mode 3（巡检时）：技能巡检（dontAsk + 完整沙箱）
+
+每次对话后必做 Mode 1；满足巡检条件时顺序执行 Mode 1 → 3 → 2，
+三者在同一个 SDK session 中接续执行，上下文无缝衔接。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable
@@ -15,7 +20,7 @@ from supercc.core.protocol import SessionKey
 
 logger = logging.getLogger(__name__)
 
-# ── Sandbox 白名单 ────────────────────────────────────────────────────────────
+# ── MCP Memory 工具白名单 ─────────────────────────────────────────────────────
 
 MCP_MEMORY_TOOLS = [
     "mcp__SuperCC__MemoryListUser",
@@ -31,31 +36,28 @@ MCP_MEMORY_TOOLS = [
 ]
 
 
-def _build_permissions_allow(skills_dir: str) -> list[dict]:
-    return [
-        {"tool": "Read", "path": "**"},
-        {"tool": "Edit", "path": f"{skills_dir}/**"},
-        {"tool": "Write", "path": f"{skills_dir}/**"},
-        {"tool": "Bash", "path": f"{skills_dir}/**"},
-        *({"tool": t} for t in MCP_MEMORY_TOOLS),
-    ]
-
-
 # ── Prompt 构造 ──────────────────────────────────────────────────────────────
 
 def build_evolve_prompt(
     session_path: str,
     project_path: str,
     skills_dir: str,
-    do_full: bool,
+    mode: str,
 ) -> str:
-    """构造完整 evolve prompt。do_full=True 时包含阶段二（全面巡检+技能自进化）。"""
-    phase1 = f"""项目路径：{project_path}
+    """三种模式的 prompt：
+    incremental_memory：增量记忆（从本次对话提取新增/变更/删除）
+    memory_inspection：全面记忆巡检（遍历全部记忆，纠正/合并/精简/删除）
+    skill_audit：技能自进化（巡检 skills_dir，创建/更新/删除技能）
+    """
+    common = f"""项目路径：{project_path}
 session 文件：{session_path}
 
-这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。
+这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。"""
 
-===== 阶段一：记忆自进化 =====
+    if mode == "incremental_memory":
+        return common + f"""
+
+===== Mode 1：记忆自进化 =====
 
 先阅读最近一次完整对话（文件末尾）：
 1. 用户最后说了什么？
@@ -69,11 +71,21 @@ session 文件：{session_path}
 - 用户偏好类（语言风格、沟通习惯、技术栈偏好）→ mcp__SuperCC__MemoryAddUser / MemoryUpdateUser / MemoryDeleteUser
 - 项目记忆类（文件路径、代码规范、bug、架构决策）→ mcp__SuperCC__MemoryAddProj / MemoryUpdateProj / MemoryDeleteProj
 
-如有新增，直接调用 MCP 工具执行，完成后输出简短报告。"""
+如有新增，直接调用 MCP 工具执行，完成后输出简短报告。
 
-    phase2 = f"""
+**输出模板（必须严格按此格式输出，不要有多余内容）：**
+```
+## 记忆增量报告
+- 新增用户偏好：X 条
+- 新增项目记忆：X 条
+- 更新记忆：X 条
+- 删除记忆：X 条
+```"""
 
-===== 阶段二：记忆全面巡检 =====
+    if mode == "memory_inspection":
+        return common + f"""
+
+===== Mode 2：记忆全面巡检 =====
 
 先对记忆库做全面巡检：
 1. 调用 `mcp__SuperCC__MemoryListUser` 获取所有用户偏好
@@ -85,7 +97,20 @@ session 文件：{session_path}
 - **精简冗长**：啰嗦的记忆内容去掉重复表述，保留关键信息
 - **删除过时**：已无价值或严重过时的记忆，用 MemoryDelete 删除
 
-===== 阶段三：技能自进化 =====
+**输出模板（必须严格按此格式输出，不要有多余内容）：**
+```
+## 记忆巡检报告
+- 新增记忆：X 条
+- 纠正位置：X 条
+- 合并：X 条
+- 精简：X 条
+- 删除：X 条
+```"""
+
+    # skill_audit
+    return common + f"""
+
+===== Mode 3：技能自进化 =====
 
 先查看 {skills_dir}/ 目录，其中每个子目录对应一个技能（如 {skills_dir}/技能A/），
 每个技能目录内包含 SKILL.md 文件。
@@ -151,9 +176,15 @@ updated_at: 2026-01-01
 注意：
 - 新建前先搜索记忆确认不重复
 - 记忆中已有相关描述时，不要再创建冗余的 Skill
-- 只创建真正有价值的 Skill，不要为"有"而创建"""
+- 只创建真正有价值的 Skill，不要为"有"而创建
 
-    return phase1 + (phase2 if do_full else "")
+**输出模板（必须严格按此格式输出，不要有多余内容）：**
+```
+## 技能巡检报告
+- 新增技能：X 个
+- 更新技能：X 个
+- 删除技能：X 个
+```"""
 
 
 # ── 找 session 文件 ───────────────────────────────────────────────────────────
@@ -167,6 +198,85 @@ def find_session_path(sdk_session_id: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+# ── 通用 stream callback ─────────────────────────────────────────────────────
+
+def _make_stream_callback(
+    push_fn: Callable[[Any], Any] | None,
+    key: SessionKey,
+    message_id: str,
+    logger: logging.Logger,
+) -> Callable[[Any], None]:
+    """构建通用的流式回调。"""
+    async def callback(msg: Any) -> None:
+        if msg.content:
+            logger.info("[evolve] text: %s", msg.content[:500])
+            if push_fn:
+                from supercc.core.protocol import Event, MessageType, OutboundMessage
+                chunk = OutboundMessage(
+                    event=Event.STREAM_CHUNK,
+                    session_key=key,
+                    message_id=message_id,
+                    content=msg.content,
+                    message_type=MessageType.TEXT,
+                )
+                await push_fn(chunk)
+        elif msg.tool_name:
+            logger.info("[evolve] tool: %s | input: %s", msg.tool_name, (msg.tool_input or "")[:300])
+            if push_fn:
+                from supercc.core.protocol import Event, MessageType, OutboundMessage
+                tool_msg = OutboundMessage(
+                    event=Event.TOOL_CALL,
+                    session_key=key,
+                    message_id=message_id,
+                    content=f"[{msg.tool_name}]",
+                    message_type=MessageType.TOOL_CALL,
+                    extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
+                )
+                await push_fn(tool_msg)
+    return callback
+
+
+# ── 权限配置工厂 ─────────────────────────────────────────────────────────────
+
+def _build_perms_bypass(session_path: str, skills_dir: str) -> str:
+    """Mode 1/2 的权限配置：bypassPermissions + memory_only=True，禁用内置工具。"""
+    perms = {
+        "permissions": {
+            "allow": [
+                {"tool": "Read", "path": str(Path.home() / ".claude/projects/**")},
+                {"tool": "Read", "path": session_path},
+                {"tool": "Read", "path": f"{skills_dir}/**"},
+            ],
+            "deny": [
+                {"tool": "Edit", "path": "**"},
+                {"tool": "Write", "path": "**"},
+                {"tool": "Bash", "path": "**"},
+            ]
+        }
+    }
+    return json.dumps(perms)
+
+
+def _build_perms_dontask(skills_dir: str, project_path: str) -> str:
+    """Mode 3 的权限配置：dontAsk，Edit/Write/Bash 只在 skills_dir，deny project_path。"""
+    perms = {
+        "permissions": {
+            "allow": [
+                {"tool": "Read", "path": "**"},
+                {"tool": "Edit", "path": f"{skills_dir}/**"},
+                {"tool": "Write", "path": f"{skills_dir}/**"},
+                {"tool": "Bash", "path": f"{skills_dir}/**"},
+                *({"tool": t} for t in MCP_MEMORY_TOOLS),
+            ],
+            "deny": [
+                {"tool": "Edit", "path": f"{project_path}/**"},
+                {"tool": "Write", "path": f"{project_path}/**"},
+            ]
+        }
+    }
+    return json.dumps(perms)
 
 
 # ── 主逻辑 ───────────────────────────────────────────────────────────────────
@@ -185,8 +295,8 @@ async def run_evolve(
 ) -> None:
     """自进化主逻辑。
 
-    - 每次对话后：只执行阶段一（记忆自进化）
-    - 每 5 次对话后：执行完整两阶段
+    - 每次对话后：执行 Mode 1（增量记忆）
+    - 每 5 次对话后：顺序执行 Mode 1 → 3 → 2（三者接续同一 session）
 
     evolve 使用独立的 SDK session（与主对话完全隔离），支持 resume 续接。
     由 executor.execute() 在主响应发送后异步调用，不阻塞主响应返回。
@@ -199,7 +309,7 @@ async def run_evolve(
     if worker is None or worker.integration_evolve is None:
         return
 
-    # ── 决定执行哪个阶段 ─────────────────────────────────────────────
+    # ── 决定执行哪个模式 ─────────────────────────────────────────────
     evo_count = worker._evo_conversation_count
     do_full = evo_count >= 5
     evo_logger.info(f"[evolve] count={evo_count}, full={'yes' if do_full else 'no'}")
@@ -218,29 +328,14 @@ async def run_evolve(
         platform=key.platform,
         bot_id=key.bot_id,
     )
-    evo_logger.debug(f"[evolve] context set: bot_id={key.bot_id}, user_open_id={user_open_id}, chat_id={key.chat_id}, platform={key.platform}, actual_bot_id={get_current_bot_id()}, actual_user={get_current_user_open_id()}")
+    evo_logger.debug(f"[evolve] context set: bot_id={key.bot_id}, user_open_id={user_open_id}")
 
     skills_dir = str(Path(data_dir) / "skills")
-
-    # ── 构造 prompt ──────────────────────────────────────────────────
-    full_prompt = build_evolve_prompt(
-        session_path=session_path,
-        project_path=key.project_path,
-        skills_dir=skills_dir,
-        do_full=do_full,
-    )
-
-    # ── 执行 evolve ───────────────────────────────────────────────────────
     is_evo_verbose = is_verbose_enabled_fn(key.platform, key.chat_id, "evolve")
 
-    # 技能变更通知：full evo 前后对比 git state
     from supercc.core.evolve.skill_nudge import _detect_skill_changes, _get_skill_git_state
-    before_skill_state: dict[str, str | None] = {}
-    if do_full:
-        before_skill_state = _get_skill_git_state(Path(skills_dir))
 
     async def _skill_notify_wrapper(chat_id: str, text: str) -> None:
-        """将 push_fn 包装为 send_to_feishu(chat_id, text) 签名。"""
         if not push_fn:
             return
         from supercc.core.protocol import Event, MessageType, OutboundMessage
@@ -254,10 +349,14 @@ async def run_evolve(
         )
         await push_fn(notify_msg)
 
+    stream_cb = _make_stream_callback(push_fn, key, message_id, evo_logger)
+
     try:
         worker.integration_evolve.approved_directory = skills_dir
-
         evo_resume = worker._sdk_session_id_evolve
+
+        # ── Mode 1（每次必跑）：bypassPermissions + MCP-only + Read ─────────
+        # 不管 do_full 如何，Mode 1 都要跑
         worker.integration_evolve._init_options(
             channel=key.platform,
             continue_conversation=False,
@@ -268,48 +367,72 @@ async def run_evolve(
             opts = worker.integration_evolve._options
             opts.permission_mode = "bypassPermissions"
             opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
+            opts.settings = _build_perms_bypass(session_path, skills_dir)
 
-        async def evolve_stream_callback(msg: Any) -> None:
-            if msg.content:
-                evo_logger.info("[evolve] text: %s", msg.content[:500])
-            if not is_evo_verbose:
-                return
-            if msg.tool_name and msg.tool_name.startswith("mcp__SuperCC__Memory") and push_fn:
-                from supercc.core.protocol import Event, MessageType, OutboundMessage
-                tool_msg = OutboundMessage(
-                    event=Event.TOOL_CALL,
-                    session_key=key,
-                    message_id=message_id,
-                    content=f"[{msg.tool_name}]",
-                    message_type=MessageType.TOOL_CALL,
-                    extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                )
-                await push_fn(tool_msg)
-
-        _, evo_sid, _ = await worker.integration_evolve.query(
-            prompt=full_prompt,
-            on_stream=evolve_stream_callback,
-        )
+        prompt_m1 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="incremental_memory")
+        _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=stream_cb)
         if evo_sid:
             worker._sdk_session_id_evolve = evo_sid
-            evo_logger.info(f"[evolve] SDK session: {evo_sid}, full={do_full}")
+        evo_logger.info(f"[evolve] Mode 1 done, session={evo_sid}")
 
-        # 技能变更通知（full evo 结束后检测并推送，受 /verbose evolve on|off 控制）
-        if do_full and is_evo_verbose:
-            await _detect_skill_changes(
-                before_state=before_skill_state,
-                skills_dir=Path(skills_dir),
-                chat_id=key.chat_id,
-                send_to_feishu=_skill_notify_wrapper,
-                notify=True,
-            )
-
+        # ── Mode 3（巡检时才跑）：dontAsk + 完整沙箱 ─────────────────────
         if do_full:
+            before_skill_state = _get_skill_git_state(Path(skills_dir))
+
+            worker.integration_evolve._init_options(
+                channel=key.platform,
+                continue_conversation=False,
+                session_id=None,
+                resume=evo_sid,
+            )
+            if worker.integration_evolve._options is not None:
+                opts = worker.integration_evolve._options
+                opts.permission_mode = "dontAsk"
+                opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
+                opts.settings = _build_perms_dontask(skills_dir, key.project_path)
+
+            prompt_m3 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="skill_audit")
+            _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=stream_cb)
+            if evo_sid:
+                worker._sdk_session_id_evolve = evo_sid
+            evo_logger.info(f"[evolve] Mode 3 done, session={evo_sid}")
+
+            # 技能变更通知（受 /verbose evolve on|off 控制）
+            if is_evo_verbose:
+                await _detect_skill_changes(
+                    before_state=before_skill_state,
+                    skills_dir=Path(skills_dir),
+                    chat_id=key.chat_id,
+                    send_to_feishu=_skill_notify_wrapper,
+                    notify=True,
+                )
+
+            # ── Mode 2（巡检时才跑）：bypassPermissions + MCP-only + Read ───
+            # Mode 2 接续 Mode 3 的上下文，承接 Mode 3 发现的待记事项
+            worker.integration_evolve._init_options(
+                channel=key.platform,
+                continue_conversation=False,
+                session_id=None,
+                resume=evo_sid,
+            )
+            if worker.integration_evolve._options is not None:
+                opts = worker.integration_evolve._options
+                opts.permission_mode = "bypassPermissions"
+                opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
+                opts.settings = _build_perms_bypass(session_path, skills_dir)
+
+            prompt_m2 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="memory_inspection")
+            _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=stream_cb)
+            if evo_sid:
+                worker._sdk_session_id_evolve = evo_sid
+            evo_logger.info(f"[evolve] Mode 2 done, session={evo_sid}")
+
             worker._evo_conversation_count = 0
 
         evo_logger.info(f"[evolve] done for {key} (full={do_full})")
     except Exception as e:
-        evo_logger.warning(f"[evolve] failed: {e}")
+        import traceback
+        evo_logger.warning(f"[evolve] failed: {e}\n{traceback.format_exc()}")
 
 
 def cleanup_old_cron_jobs(data_dir: str) -> None:

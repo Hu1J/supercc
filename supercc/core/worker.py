@@ -125,6 +125,7 @@ class WorkerPool:
                     cli_path=cli_path,
                     max_turns=None,
                     approved_directory=approved_dir,
+                    memory_only=True,
                 )
                 self._workers[key] = worker
                 logger.info(f"[WorkerPool] Created worker for {key}")

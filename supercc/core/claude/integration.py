@@ -152,14 +152,8 @@ class ClaudeIntegration:
         except Exception:
             logger.debug("Codex MCP server was not added to Claude options", exc_info=True)
 
-        # memory_only 模式：禁用所有内置工具，仅允许 MCP 工具（记忆相关）
-        # Agent（sub-agent）也禁用，防止绕过限制启动独立执行环境
-        _DISABLED_BUILTIN_TOOLS = [
-            "Read", "Write", "Edit", "Bash", "Grep",
-            "NotRecommend", "WebSearch", "WebFetch",
-            "NotebookEdit", "TaskStart", "TaskComplete",
-            "Agent",
-        ]
+        # memory_only 模式的工具禁用已移至 evolve.py 统一管理
+        # integration 层不再设置 disallowed_tools
 
         # 从全局 model.json 获取当前项目的激活模型 env
         # 通过 settings JSON 传递给 CLI（匹配 ~/.claude/settings.json 的结构）
@@ -196,7 +190,7 @@ class ClaudeIntegration:
             permission_mode="bypassPermissions",
             continue_conversation=self._continue_conversation,
             mcp_servers=mcp_servers,
-            disallowed_tools=_DISABLED_BUILTIN_TOOLS if self.memory_only else [],
+            disallowed_tools=[],  # 工具限制统一在 evolve.py 的 sandbox permissions 中管理
             settings=model_settings_json,
             session_id=session_id,
             resume=resume,
