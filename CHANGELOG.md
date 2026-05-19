@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.2] - 2026-05-19
+
+### Fixed
+- **onboard/config 嵌套 asyncio.run 崩溃**：全链路改用 async + questionary ask_async()，消除嵌套事件循环冲突
+- **WeCom 发送文件后重连跨循环崩溃**：reconnect 用 run_coroutine_threadsafe 调度到 daemon 线程 loop，修复 aiohttp Future attached to different loop
+- **cron 调度器被 symlink 报错阻塞**：_ensure_symlinks 用 try/except 包住，不影响 get_due_jobs 和任务调度
+- **企业微信看到飞书 MCP 工具**：MCP 注册按 channel 过滤 + FEISHU_FILE_GUIDE 按平台注入 + 删除 feishu-file-send skill
+
+### Changed
+- **渠道配置菜单**：移除 qq/telegram/whatsapp 选项和对应处理代码
+- **技能自进化机制**：SKILL_NUDGE_PROMPT 新增记忆/技能边界、usage_count/status/created_at/updated_at 元数据、7天归档/30天淘汰规则
+- **日志级别**：WeCom send_markdown ack / MCP 注册日志降为 DEBUG
+- **Skills 清理**：从 120+ 精简到 66 个（删除过期/重复/无关 skill）
+
+### Added
+- **WeCom 使用追踪**：所有 SKILL.md 嵌入使用追踪指令，AI 执行后自动更新 usage_count
+
 ## [0.3.1] - 2026-05-18
 
 ### Added
