@@ -19,7 +19,7 @@ class UpdateHandler(CommandHandler):
         if packaging.version.parse(latest_ver) <= packaging.version.parse(current_ver):
             return CommandResult(content=f"✅ 当前版本 {current_ver} 已是最新")
 
-        content = f"✅ 已更新 {current_ver} → {latest_ver}"
+        content = f"✅ 已更新 {current_ver} → {latest_ver}，请发 /restart 指令重启生效"
 
         # 先返回消息，再在后台 pip install
         async def _background_update():

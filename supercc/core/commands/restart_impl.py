@@ -398,63 +398,6 @@ def _pip_install(package: str) -> None:
         raise RestartError(f"pip install 失败: {e}")
 
 
-async def run_update(feishu: "FeishuClient",
-                     chat_id: str, reply_to_message_id: str) -> bool:
-    """Run the update with detailed step-by-step Feishu notifications.
-
-    Sends a rich progress card to Feishu, updating it as each step completes.
-    When status == "skip" (already latest), sends an "already latest" card and returns.
-
-    Returns:
-        True if an actual update (pip install) was performed, False if already latest (skipped).
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    current_path = os.getcwd()
-    total = 8
-
-    for step_obj in _do_update():
-        if step_obj.status == "skip":
-            card = (
-                f"## ✅ 已是最新版本\n\n"
-                f"**当前版本**: `{step_obj.detail}`\n\n"
-                f"无需更新，继续使用吧 🎉"
-            )
-            await feishu.send_interactive_reply(chat_id, card, reply_to_message_id)
-            return False
-
-        bar = "▓" * step_obj.step + "░" * (total - step_obj.step)
-        label = (_UPDATE_FEISHU_STEP_LABELS[step_obj.step - 1]
-                 if step_obj.step <= len(_UPDATE_FEISHU_STEP_LABELS)
-                 else f"步骤 {step_obj.step}")
-
-        if step_obj.status == "final":
-            final_card = (
-                f"## ✅ 更新完成\n\n"
-                f"**当前目录**: `{current_path}`\n"
-                f"**新进程 PID**: `{step_obj.new_pid}`\n\n"
-                f"🎉 SuperCC 已更新，可以在飞书中继续对话了。"
-            )
-            await feishu.send_interactive_reply(chat_id, final_card, reply_to_message_id)
-        else:
-            detail_line = (
-                f"**版本**: `{step_obj.detail}`\n\n"
-                if step_obj.detail else ""
-            )
-            progress_card = (
-                f"## 🔄 正在更新\n\n"
-                f"**当前目录**: `{current_path}`\n\n"
-                f"{detail_line}"
-                f"{bar} `{step_obj.step}/{total}` {label}\n\n"
-                f"⏳ 正在更新，请稍候..."
-            )
-            await feishu.send_interactive_reply(chat_id, progress_card, reply_to_message_id)
-    return True
-
-
-
-
 def _cleanup_and_replace(event: str, project_path: str = "") -> None:
     """清理 PID 文件，然后替换当前进程。
 

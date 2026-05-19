@@ -1788,7 +1788,7 @@ def main(args=None):
             if latest is None:
                 print(f"✅ 当前版本 {cur} 已是最新")
             else:
-                print(f"✅ 已更新 {cur} → {latest}")
+                print(f"✅ 已更新 {cur} → {latest}，请发 supercc gateway run 重启生效")
         except UpdateErr as e:
             print(f"\n❌ 更新失败: {e}")
             sys.exit(1)

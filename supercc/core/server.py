@@ -387,13 +387,13 @@ class WsServer:
             except Exception:
                 logger.warning("[WsServer] failed to send response, connection may be dead")
 
-            # 检查是否需要 restart/update/switch（resp 可能是 dict 或 JsonRpcResponse）
+            # 检查是否需要 restart（resp 可能是 dict 或 JsonRpcResponse）
             resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
             event = ""
             if isinstance(resp_dict, dict):
                 # commands 返回 dict，直接从顶层取 event；JsonRpcResponse 有 result 包装
                 event = resp_dict.get("event", "") or (resp_dict.get("result", {}) or {}).get("event", "")
-            if event in ("restart", "update"):
+            if event == "restart":
                 # 防止并发
                 if not self._restart_lock.acquire(blocking=False):
                     logger.warning("[WsServer] restart already in progress, skipping")
@@ -419,7 +419,7 @@ class WsServer:
                 except Exception:
                     pass
 
-                # restart/update 用 os.execvp 原地替换进程
+                # restart 用 os.execvp 原地替换进程
                 from supercc.core.commands.restart_impl import _cleanup_and_replace
                 _cleanup_and_replace(event, target_path)
                 # 以下代码永不执行
