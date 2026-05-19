@@ -1782,19 +1782,13 @@ def main(args=None):
     command = args.command
 
     if command == "update":
-        from supercc.core.commands.restart_impl import _do_update, RestartError as UpdateErr
+        from supercc.core.commands.restart_impl import do_update, RestartError as UpdateErr
         try:
-            steps = list(_do_update())
-            if steps and steps[-1].status == "skip":
-                print(f"✅ 当前版本 {steps[-1].detail} 已是最新")
-                return
-            for step in steps:
-                if step.status == "done":
-                    detail_str = f"  {step.detail}" if step.detail else ""
-                    print(f"  {step.label}...{detail_str}")
-            print("✅ 更新完成")
-            import os as _os
-            _os._exit(0)
+            cur, latest = do_update()
+            if latest is None:
+                print(f"✅ 当前版本 {cur} 已是最新")
+            else:
+                print(f"✅ 已更新 {cur} → {latest}")
         except UpdateErr as e:
             print(f"\n❌ 更新失败: {e}")
             sys.exit(1)

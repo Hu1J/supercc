@@ -369,39 +369,17 @@ def check_version() -> tuple[str, str]:
         raise RestartError(f"检查版本失败: {e}")
 
 
-@dataclass
-class UpdateStep:
-    """A single step in the update process, yielded as it happens."""
-    step: int
-    total: int
-    label: str
-    status: str        # "done" | "skip"
-    detail: str = ""
-    success: bool = False
-
-
-def _do_update():
-    """检查版本，有更新则 pip install，然后 gateway restart。"""
+def do_update() -> tuple[str, str | None]:
+    """检查版本，有更新则 pip install。返回 (current_ver, latest_ver or None)。"""
     import packaging.version
 
     current_ver, latest_ver = check_version()
-
     has_update = packaging.version.parse(latest_ver) > packaging.version.parse(current_ver)
     if not has_update:
-        yield UpdateStep(step=1, total=3, label="已是最新", status="skip",
-                        detail=current_ver, success=True)
-        return
-
-    yield UpdateStep(step=1, total=3, label="检查更新", status="done",
-                    detail=f"{current_ver} → {latest_ver}")
+        return current_ver, None
 
     _pip_install("pysupercc")
-    yield UpdateStep(step=2, total=3, label="下载安装", status="done")
-
-    from supercc.gateway.cli import run_gateway_restart
-    run_gateway_restart()
-    yield UpdateStep(step=3, total=3, label="重启完成", status="done",
-                    success=True)
+    return current_ver, latest_ver
 
 
 def _pip_install(package: str) -> None:
