@@ -189,7 +189,7 @@ def _snapshot_memory(project_path: str, user_open_id: str, platform: str, bot_id
     mm = MemoryManager()  # 使用默认 ~/.supercc/memories.db
     user_items = mm.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id) if user_open_id else []
     proj_items = mm.get_project_memories(project_path, platform=platform, chat_id=chat_id) or []
-    _log.info(f"snapshot — user_open_id={user_open_id!r}, platform={platform}, bot_id={bot_id!r}, chat_id={chat_id!r}, proj_path={project_path}, user_count={len(user_items)}, proj_count={len(proj_items)}")
+    _log.debug(f"snapshot — user_open_id={user_open_id!r}, platform={platform}, bot_id={bot_id!r}, chat_id={chat_id!r}, proj_path={project_path}, user_count={len(user_items)}, proj_count={len(proj_items)}")
     return {
         "user": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (user_items or [])],
         "proj": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (proj_items or [])],
@@ -407,9 +407,10 @@ async def run_evolve(
         res_m1, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1)
         if evo_sid:
             worker._sdk_session_id_evolve = evo_sid
-        evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}")
         if res_m1:
-            evo_logger.info(f"[evolve] 印象快照结果: {res_m1[:500]}")
+            evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}, result={res_m1[:500]}")
+        else:
+            evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}")
 
         # ── Mode 3（巡检时才跑）：dontAsk + 完整沙箱 ─────────────────────
         if do_full:
@@ -430,9 +431,10 @@ async def run_evolve(
             res_m3, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
-            evo_logger.info(f"[evolve] 技能巡检 done, session={evo_sid}")
             if res_m3:
-                evo_logger.info(f"[evolve] 技能巡检结果: {res_m3[:500]}")
+                evo_logger.info(f"[evolve] 技能巡检 done, session={evo_sid}, result={res_m3[:500]}")
+            else:
+                evo_logger.info(f"[evolve] 技能巡检 done, session={evo_sid}")
 
             # ── Mode 2（巡检时才跑）：bypassPermissions + MCP-only + Read ───
             # Mode 2 接续 Mode 3 的上下文，承接 Mode 3 发现的待记事项
@@ -457,9 +459,10 @@ async def run_evolve(
             res_m2, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
-            evo_logger.info(f"[evolve] 记忆精炼 done, session={evo_sid}")
             if res_m2:
-                evo_logger.info(f"[evolve] 记忆精炼结果: {res_m2[:500]}")
+                evo_logger.info(f"[evolve] 记忆精炼 done, session={evo_sid}, result={res_m2[:500]}")
+            else:
+                evo_logger.info(f"[evolve] 记忆精炼 done, session={evo_sid}")
 
             worker._evo_conversation_count = 0
 
