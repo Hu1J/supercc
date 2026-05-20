@@ -3,7 +3,7 @@
 三种模式：
 - 印象快照（incremental_memory）：每次对话后增量记忆（bypassPermissions + MCP-only）
 - 记忆精炼（memory_inspection）：巡检时全面记忆巡检（bypassPermissions + MCP-only）
-- 技能巡检（skill_audit）：巡检时技能自进化（dontAsk + 完整沙箱）
+- 技能巡检（skill_audit）：巡检时技能自进化（auto + can_use_tool 路径限制）
 
 每次对话后必做印象快照；满足巡检条件时顺序执行印象快照 → 技能巡检 → 记忆精炼，
 三者在同一个 SDK session 中接续执行，上下文无缝衔接。
@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -284,29 +285,11 @@ async def _cb_mode3(
 
 # ── 权限配置工厂 ─────────────────────────────────────────────────────────────
 
-def _build_perms_dontask(skills_dir: str, project_path: str) -> str:
-    """技能巡检的权限配置：dontAsk，Edit/Write/Bash 只在 skills_dir，deny project_path。"""
-    perms = {
-        "permissions": {
-            "allow": [
-                {"tool": "Read", "path": "**"},
-                {"tool": "Edit", "path": f"{skills_dir}/**"},
-                {"tool": "Write", "path": f"{skills_dir}/**"},
-                {"tool": "Bash", "path": f"{skills_dir}/**"},
-            ],
-            "deny": [
-                {"tool": "Edit", "path": f"{project_path}/**"},
-                {"tool": "Write", "path": f"{project_path}/**"},
-            ]
-        }
-    }
-    return json.dumps(perms)
-
-
 # ── 主逻辑 ───────────────────────────────────────────────────────────────────
 
 async def run_evolve(
     worker: Any,
+    pool: Any,
     key: SessionKey,
     sdk_session_id: str,
     message_id: str,
@@ -359,6 +342,7 @@ async def run_evolve(
     evo_logger.debug(f"[evolve] context set from snapshot: {ctx}")
 
     skills_dir = str(Path(data_dir) / "skills")
+    evo_logger.info(f"[evolve] DEBUG: data_dir={data_dir}, skills_dir={skills_dir}")
     is_evo_verbose = is_verbose_enabled_fn(key.platform, key.chat_id, "evolve")
 
     from supercc.core.evolve.skill_nudge import _get_skill_git_state, _get_skill_commit_message
@@ -404,7 +388,12 @@ async def run_evolve(
 
         prompt_m1 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="incremental_memory")
         cb1 = lambda msg: _cb_mode1(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
-        res_m1, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1)
+        task = asyncio.create_task(worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1))
+        worker._current_task_evolve = task
+        try:
+            res_m1, evo_sid, _ = await task
+        finally:
+            worker._current_task_evolve = None
         if evo_sid:
             worker._sdk_session_id_evolve = evo_sid
         if res_m1:
@@ -412,8 +401,108 @@ async def run_evolve(
         else:
             evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}")
 
-        # ── Mode 3（巡检时才跑）：dontAsk + 完整沙箱 ─────────────────────
+        # ── Mode 3（巡检时才跑）：auto + can_use_tool 路径限制 ─────────────
         if do_full:
+            # can_use_tool 回调：auto 模式下 CLI 调用回调获取 allow/deny 决策，
+            # 返回 PermissionResultDeny 拦截项目路径写入，不弹 prompt。
+            def _extract_paths(command: str, cwd: str) -> tuple[list[Path], bool]:
+                """
+                从 Bash 命令中提取所有路径并 resolve。
+                返回 (paths, has_cd_to_proj) — paths 是 resolve 后的路径列表，
+                has_cd_to_proj 表示是否有 cd 到 project_path 的子命令。
+                """
+                # 检查 cd/pushd 是否指向 project_path
+                proj_re = re.escape(str(Path(key.project_path).resolve()))
+                cd_match = re.search(
+                    rf'(?:^|\s)(?:cd|pushd)\s+["\']?({proj_re})["\']?',
+                    command
+                )
+                has_cd_proj = bool(cd_match)
+
+                # 1. 相对路径检测：任何不以 / 开头的 token（排除 flag 和已知子命令）
+                tokens = command.strip().split()
+                rel_paths = []
+                for tok in tokens:
+                    if tok.startswith('-'):
+                        continue  # flag
+                    if tok in ('git', 'rm', 'ls', 'tail', 'head'):
+                        continue  # 命令本身
+                    if tok.startswith('/'):
+                        continue  # 绝对路径
+                    # 过滤：纯数字或不包含路径特征的 token 不是路径
+                    if '/' not in tok and '.' not in tok and not tok.startswith('~'):
+                        continue
+                    rel_paths.append(tok)
+
+                # 2. 绝对路径提取
+                abs_tokens = re.findall(r'(?:^|\s)(/[\w./\U00000800-\U0010FFFF-]+)', command)
+
+                paths = []
+                for token in rel_paths:
+                    p = Path(token)
+                    if not p.is_absolute():
+                        p = (Path(cwd) / p).resolve()
+                    paths.append(p)
+                for token in abs_tokens:
+                    paths.append(Path(token))
+                return paths, has_cd_proj
+
+            async def skill_audit_can_use_tool(
+                tool_name: str, tool_input: dict[str, Any], ctx: Any
+            ) -> Any:
+                from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
+                skills_path = Path(skills_dir).resolve()
+                proj_path = Path(key.project_path).resolve()
+
+                # Bash: 解析命令中的路径；其他工具: 取 path/file_path
+                if tool_name == "Bash":
+                    command = tool_input.get("command") or ""
+                    # 1. 命令白名单：只允许 git, rm, ls, tail, head
+                    cmd_parts = command.strip().split()
+                    cmd = cmd_parts[0] if cmd_parts else ""
+                    if cmd not in ("git", "rm", "ls", "tail", "head"):
+                        evo_logger.warning(f"[evolve] can_use_tool denied: command '{cmd}' not in whitelist")
+                        return PermissionResultDeny(message="安全限制：仅支持 git/rm/ls/tail/head 五条指令")
+                    # 2. 路径白名单：只允许绝对路径，相对路径全部拒绝
+                    paths, has_cd_proj = _extract_paths(command, str(skills_path))
+                    # cd 到 project_path 是安全红线
+                    if has_cd_proj:
+                        evo_logger.warning(
+                            f"[evolve] can_use_tool denied: cd to project path in command"
+                        )
+                        return PermissionResultDeny(
+                            message=f"安全限制：禁止 cd 到项目目录 {proj_path}"
+                        )
+                else:
+                    path_str = tool_input.get("path") or tool_input.get("file_path") or ""
+                    # 非 Bash 工具也必须用绝对路径，相对路径拒绝
+                    if path_str and not Path(path_str).is_absolute():
+                        evo_logger.warning(f"[evolve] can_use_tool denied: relative path in {tool_name}: {path_str}")
+                        return PermissionResultDeny(message="安全限制：仅支持绝对路径")
+                    paths = [Path(path_str).resolve()] if path_str else []
+                    has_cd_proj = False
+
+                for file_path in paths:
+                    try:
+                        is_proj = str(file_path).startswith(str(proj_path))
+                        is_skill = str(file_path).startswith(str(skills_path))
+                        # project_path 上只有 Read/Grep 允许，其他全部拒绝
+                        if is_proj:
+                            if tool_name in ("Read", "Grep"):
+                                return PermissionResultAllow(behavior="allow")
+                            evo_logger.warning(
+                                f"[evolve] can_use_tool denied {tool_name} on project path: {file_path}"
+                            )
+                            return PermissionResultDeny(
+                                message=f"安全限制：禁止对项目目录使用 {tool_name}"
+                            )
+                        # 技能目录内 — 全部放行
+                        if is_skill:
+                            return PermissionResultAllow(behavior="allow")
+                    except Exception:
+                        pass
+                return PermissionResultAllow(behavior="allow")
+
             worker.integration_evolve._init_options(
                 channel=key.platform,
                 continue_conversation=False,
@@ -422,13 +511,20 @@ async def run_evolve(
             )
             if worker.integration_evolve._options is not None:
                 opts = worker.integration_evolve._options
-                opts.permission_mode = "dontAsk"
+                # auto 模式：CLI 会发权限查询给 can_use_tool 回调，
+                # 回调返回 allow/deny 控制路径访问，不弹 prompt。
+                opts.permission_mode = "auto"
                 opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
-                opts.settings = _build_perms_dontask(skills_dir, key.project_path)
+                opts.can_use_tool = skill_audit_can_use_tool
 
             prompt_m3 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="skill_audit")
             cb3 = lambda msg: _cb_mode3(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
-            res_m3, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3)
+            task = asyncio.create_task(worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3))
+            worker._current_task_evolve = task
+            try:
+                res_m3, evo_sid, _ = await task
+            finally:
+                worker._current_task_evolve = None
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
             if res_m3:
@@ -456,7 +552,12 @@ async def run_evolve(
                 ]
 
             prompt_m2 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="memory_inspection")
-            res_m2, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
+            task = asyncio.create_task(worker.integration_evolve.query(prompt=prompt_m2, on_stream=None))
+            worker._current_task_evolve = task
+            try:
+                res_m2, evo_sid, _ = await task
+            finally:
+                worker._current_task_evolve = None
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
             if res_m2:

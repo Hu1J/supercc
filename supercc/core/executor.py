@@ -459,6 +459,7 @@ class CoreExecutor:
 
         await run_evolve(
             worker=worker,
+            pool=self.pool,
             key=key,
             sdk_session_id=sdk_session_id,
             message_id=message_id,
