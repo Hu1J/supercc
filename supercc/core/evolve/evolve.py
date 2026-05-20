@@ -20,22 +20,6 @@ from supercc.core.protocol import SessionKey
 
 logger = logging.getLogger(__name__)
 
-# ── MCP Memory 工具白名单 ─────────────────────────────────────────────────────
-
-MCP_MEMORY_TOOLS = [
-    "mcp__SuperCC__MemoryListUser",
-    "mcp__SuperCC__MemoryListProj",
-    "mcp__SuperCC__MemorySearchUser",
-    "mcp__SuperCC__MemorySearchProj",
-    "mcp__SuperCC__MemoryAddUser",
-    "mcp__SuperCC__MemoryUpdateUser",
-    "mcp__SuperCC__MemoryDeleteUser",
-    "mcp__SuperCC__MemoryAddProj",
-    "mcp__SuperCC__MemoryUpdateProj",
-    "mcp__SuperCC__MemoryDeleteProj",
-]
-
-
 # ── Prompt 构造 ──────────────────────────────────────────────────────────────
 
 def build_evolve_prompt(
@@ -309,7 +293,6 @@ def _build_perms_dontask(skills_dir: str, project_path: str) -> str:
                 {"tool": "Edit", "path": f"{skills_dir}/**"},
                 {"tool": "Write", "path": f"{skills_dir}/**"},
                 {"tool": "Bash", "path": f"{skills_dir}/**"},
-                *({"tool": t} for t in MCP_MEMORY_TOOLS),
             ],
             "deny": [
                 {"tool": "Edit", "path": f"{project_path}/**"},
@@ -378,7 +361,7 @@ async def run_evolve(
     skills_dir = str(Path(data_dir) / "skills")
     is_evo_verbose = is_verbose_enabled_fn(key.platform, key.chat_id, "evolve")
 
-    from supercc.core.evolve.skill_nudge import _detect_skill_changes, _get_skill_git_state, _get_skill_commit_message
+    from supercc.core.evolve.skill_nudge import _get_skill_git_state, _get_skill_commit_message
 
     async def _skill_notify_wrapper(chat_id: str, text: str) -> None:
         if not push_fn:
