@@ -52,20 +52,23 @@ def build_evolve_prompt(
     common = f"""项目路径：{project_path}
 session 文件：{session_path}
 
-这是一个 JSONL 格式的对话记录，每行一条 JSON。文件末尾就是最近一次完整对话。"""
+这是一个 JSONL 格式的对话记录，每行一条 JSON。
+
+**重要：直接读取文件末尾（tail），定位最近一次完整对话。文件很大时不要从头读，只取末尾足够覆盖最近一次对话的行数即可。**"""
 
     if mode == "incremental_memory":
         return common + f"""
 
 ===== 印象快照 =====
 
-先阅读最近一次完整对话（文件末尾）：
-1. 用户最后说了什么？
-2. 用了哪些工具（Read/Write/Edit/Bash/Grep/WebSearch 等），传了什么参数？
-3. 工具返回了什么结果？
-4. Claude 最终回复了什么？
+**操作步骤：**
+1. 直接 tail session.jsonl，取足够覆盖最近一次完整对话的行数（文件大时不要全读）
+2. 用户最后说了什么？
+3. 用了哪些工具（Read/Write/Edit/Bash/Grep/WebSearch 等），传了什么参数？
+4. 工具返回了什么结果？
+5. Claude 最终回复了什么？
 
-如果最近一次对话信息不够判断，再往前追溯更早的消息。
+如果最近一次对话信息不够判断，再往前多读几行追溯。
 
 **根据最新对话判断是否有新增记忆：**
 - 用户偏好类（语言风格、沟通习惯、技术栈偏好）→ mcp__SuperCC__MemoryAddUser / MemoryUpdateUser / MemoryDeleteUser
@@ -193,6 +196,58 @@ updated_at: 2026-01-01
 ```"""
 
 
+# ── 记忆快照工具 ─────────────────────────────────────────────────────────────
+
+def _snapshot_memory(project_path: str, user_open_id: str, platform: str) -> dict:
+    """返回当前记忆库快照：{"user": [...], "proj": [...]}"""
+    from supercc.core.memory_manager import MemoryManager
+    mm = MemoryManager()  # 使用默认 ~/.supercc/memories.db
+    user_items = mm.get_preferences_by_user(user_open_id, platform=platform) if user_open_id else []
+    proj_items = mm.get_project_memories(project_path) or []
+    return {
+        "user": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (user_items or [])],
+        "proj": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (proj_items or [])],
+    }
+
+
+def _diff_memory(before: dict, after: dict) -> str:
+    """对比前后记忆快照，返回变更描述（含更新检测）。"""
+    # ── 逐条建 dict ──────────────────────────────────────────────
+    def _index(items):
+        return {m.get("id", ""): m for m in items}
+
+    bu, au = _index(before["user"]), _index(after["user"])
+    bp, ap = _index(before["proj"]), _index(after["proj"])
+
+    added_user = set(au) - set(bu)
+    del_user = set(bu) - set(au)
+    added_proj = set(ap) - set(bp)
+    del_proj = set(bp) - set(ap)
+
+    # ── 检测更新 ──────────────────────────────────────────────────
+    upd_user = []
+    for iid in set(bu) & set(au):
+        if bu[iid] != au[iid]:
+            upd_user.append(iid)
+
+    upd_proj = []
+    for iid in set(bp) & set(ap):
+        if bp[iid] != ap[iid]:
+            upd_proj.append(iid)
+
+    if not (added_user or del_user or added_proj or del_proj or upd_user or upd_proj):
+        return "无变更"
+
+    parts = []
+    if added_user: parts.append(f"+用户 {len(added_user)}")
+    if del_user: parts.append(f"-用户 {len(del_user)}")
+    if upd_user: parts.append(f"~用户 {len(upd_user)}")
+    if added_proj: parts.append(f"+项目 {len(added_proj)}")
+    if del_proj: parts.append(f"-项目 {len(del_proj)}")
+    if upd_proj: parts.append(f"~项目 {len(upd_proj)}")
+    return ", ".join(parts)
+
+
 # ── 找 session 文件 ───────────────────────────────────────────────────────────
 
 def find_session_path(sdk_session_id: str) -> str | None:
@@ -206,66 +261,33 @@ def find_session_path(sdk_session_id: str) -> str | None:
     return None
 
 
-# ── Stream callbacks（三种模式各自独立）──────────────────────────────────────
+# ── Stream callbacks（仅记录日志，不推送）─────────────────────────────────────
 
 async def _cb_mode1(
     msg: Any, push_fn: Callable, key: SessionKey, message_id: str, logger: logging.Logger, is_verbose: bool
 ) -> None:
-    """印象快照 (incremental_memory)：verbose on 时只推记忆 MCP 工具调用，off 时无推送。"""
+    """印象快照：只记录日志，不推送任何消息。"""
     if msg.tool_name:
-        logger.info("[evolve] tool: %s", msg.tool_name)
-        # 仅推送记忆 MCP 工具调用
-        if is_verbose and msg.tool_name.startswith("mcp__SuperCC__Memory"):
-            if push_fn:
-                from supercc.core.protocol import Event, MessageType, OutboundMessage
-                await push_fn(OutboundMessage(
-                    event=Event.TOOL_CALL, session_key=key, message_id=message_id,
-                    content=f"[{msg.tool_name}]", message_type=MessageType.TOOL_CALL,
-                    extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                ))
+        tool_input = getattr(msg, 'tool_input', None)
+        logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
 
 
 async def _cb_mode2(
     msg: Any, push_fn: Callable, key: SessionKey, message_id: str, logger: logging.Logger, is_verbose: bool
 ) -> None:
-    """记忆精炼 (memory_inspection)：query 结束后才推送最终结果。"""
-    # 不在流式过程中推送，等 query 返回后一次性推送（verbose on 时）
+    """记忆精炼：纯 no-op，不推送任何消息。"""
+    pass
 
 
 async def _cb_mode3(
     msg: Any, push_fn: Callable, key: SessionKey, message_id: str, logger: logging.Logger, is_verbose: bool
 ) -> None:
-    """技能巡检 (skill_audit)：暂时全量推送（用于观察行为），后续改为仅推送 git 变更。"""
-    if is_verbose:
-        if msg.content:
-            logger.info("[evolve] text: %s", msg.content[:500])
-            if push_fn:
-                from supercc.core.protocol import Event, MessageType, OutboundMessage
-                await push_fn(OutboundMessage(
-                    event=Event.STREAM_CHUNK, session_key=key, message_id=message_id,
-                    content=msg.content, message_type=MessageType.TEXT,
-                ))
-        elif msg.tool_name:
-            logger.info("[evolve] tool: %s", msg.tool_name)
-            if push_fn:
-                from supercc.core.protocol import Event, MessageType, OutboundMessage
-                await push_fn(OutboundMessage(
-                    event=Event.TOOL_CALL, session_key=key, message_id=message_id,
-                    content=f"[{msg.tool_name}]", message_type=MessageType.TOOL_CALL,
-                    extra={"tool_name": msg.tool_name, "tool_input": msg.tool_input},
-                ))
-
-
-def _make_stream_callback(
-    push_fn: Callable[[Any], Any] | None,
-    key: SessionKey,
-    message_id: str,
-    logger: logging.Logger,
-) -> Callable[[Any], None]:
-    """仅为技能巡检保留存根（实际不推送），印象快照/记忆精炼用独立函数。"""
-    async def callback(msg: Any) -> None:
-        pass
-    return callback
+    """技能巡检：只记录日志，不推送任何消息。"""
+    if msg.content:
+        logger.info("[evolve] text: %s", msg.content[:500])
+    elif msg.tool_name:
+        tool_input = getattr(msg, 'tool_input', None)
+        logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
 
 
 # ── 权限配置工厂 ─────────────────────────────────────────────────────────────
@@ -297,7 +319,7 @@ async def run_evolve(
     key: SessionKey,
     sdk_session_id: str,
     message_id: str,
-    user_open_id: str,
+    evo_context: dict | None,
     data_dir: str,
     push_fn: Callable[[Any], Any] | None,
     is_verbose_enabled_fn: Callable[[str, str, str], bool],
@@ -320,6 +342,8 @@ async def run_evolve(
     if worker is None or worker.integration_evolve is None:
         return
 
+    evo_logger.info(f"[evolve] start — sdk_session_id={sdk_session_id}, resume={worker._sdk_session_id_evolve}")
+
     # ── 决定执行哪个模式 ─────────────────────────────────────────────
     evo_count = worker._evo_conversation_count
     do_full = evo_count >= 5
@@ -331,20 +355,21 @@ async def run_evolve(
         evo_logger.warning(f"[evolve] session file not found for {sdk_session_id}, skipping")
         return
 
-    # ── MCP 工具上下文 ───────────────────────────────────────────────
-    from supercc.core.message_context import set_current_context, get_current_bot_id, get_current_user_open_id
+    # ── MCP 工具上下文（使用 executor snapshot 的值，避免时序问题）──────────
+    from supercc.core.message_context import set_current_context
+    ctx = evo_context or {}
     set_current_context(
-        user_open_id=user_open_id,
-        chat_id=key.chat_id,
-        platform=key.platform,
-        bot_id=key.bot_id,
+        user_open_id=ctx.get("user_open_id", ""),
+        chat_id=ctx.get("chat_id", key.chat_id),
+        platform=ctx.get("platform", key.platform),
+        bot_id=ctx.get("bot_id", key.bot_id),
     )
-    evo_logger.debug(f"[evolve] context set: bot_id={key.bot_id}, user_open_id={user_open_id}")
+    evo_logger.debug(f"[evolve] context set from snapshot: {ctx}")
 
     skills_dir = str(Path(data_dir) / "skills")
     is_evo_verbose = is_verbose_enabled_fn(key.platform, key.chat_id, "evolve")
 
-    from supercc.core.evolve.skill_nudge import _detect_skill_changes, _get_skill_git_state
+    from supercc.core.evolve.skill_nudge import _detect_skill_changes, _get_skill_git_state, _get_skill_commit_message
 
     async def _skill_notify_wrapper(chat_id: str, text: str) -> None:
         if not push_fn:
@@ -384,17 +409,19 @@ async def run_evolve(
                 "Agent",
             ]
 
+        # ── 全流程入口快照 ─────────────────────────────────────────────
+        before_skill_state = _get_skill_git_state(Path(skills_dir))
+        before_memory_state = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"))
+
         prompt_m1 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="incremental_memory")
         cb1 = lambda msg: _cb_mode1(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
         _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1)
         if evo_sid:
             worker._sdk_session_id_evolve = evo_sid
-        evo_logger.info(f"[evolve] Mode 1 done, session={evo_sid}")
+        evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}")
 
         # ── Mode 3（巡检时才跑）：dontAsk + 完整沙箱 ─────────────────────
         if do_full:
-            before_skill_state = _get_skill_git_state(Path(skills_dir))
-
             worker.integration_evolve._init_options(
                 channel=key.platform,
                 continue_conversation=False,
@@ -412,17 +439,7 @@ async def run_evolve(
             _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
-            evo_logger.info(f"[evolve] Mode 3 done, session={evo_sid}")
-
-            # 技能变更通知（受 /verbose evolve on|off 控制）
-            if is_evo_verbose:
-                await _detect_skill_changes(
-                    before_state=before_skill_state,
-                    skills_dir=Path(skills_dir),
-                    chat_id=key.chat_id,
-                    send_to_feishu=_skill_notify_wrapper,
-                    notify=True,
-                )
+            evo_logger.info(f"[evolve] 技能巡检 done, session={evo_sid}")
 
             # ── Mode 2（巡检时才跑）：bypassPermissions + MCP-only + Read ───
             # Mode 2 接续 Mode 3 的上下文，承接 Mode 3 发现的待记事项
@@ -444,19 +461,45 @@ async def run_evolve(
                 ]
 
             prompt_m2 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="memory_inspection")
-            result_m2, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
+            _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
-            evo_logger.info(f"[evolve] Mode 2 done, session={evo_sid}")
-            # verbose on 时推送最终报告文本，off 时不推送
-            if is_evo_verbose and result_m2 and push_fn:
-                from supercc.core.protocol import Event, MessageType, OutboundMessage
-                await push_fn(OutboundMessage(
-                    event=Event.STREAM_CHUNK, session_key=key, message_id=message_id,
-                    content=result_m2, message_type=MessageType.TEXT,
-                ))
+            evo_logger.info(f"[evolve] 记忆精炼 done, session={evo_sid}")
 
             worker._evo_conversation_count = 0
+
+        # ── 全流程完成：统一检测变更，verbose 时推送汇总通知 ───────────
+        if is_evo_verbose and push_fn:
+            after_memory = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"))
+            mem_diff = _diff_memory(before_memory_state, after_memory)
+            after_skill = _get_skill_git_state(Path(skills_dir))
+            skill_changes = []
+            for skill_name, sha in after_skill.items():
+                before_sha = before_skill_state.get(skill_name)
+                if before_sha is None and sha is not None:
+                    msg = _get_skill_commit_message(skills_dir, skill_name, sha)
+                    skill_changes.append(f"🆕 新建 {skill_name}（{msg}）")
+                elif sha != before_sha and sha is not None:
+                    msg = _get_skill_commit_message(skills_dir, skill_name, sha)
+                    skill_changes.append(f"🔄 更新 {skill_name}（{msg}）")
+            for skill_name, before_sha in before_skill_state.items():
+                if skill_name not in after_skill and before_sha is not None:
+                    skill_changes.append(f"🗑️ 删除 {skill_name}")
+
+            has_mem = mem_diff != "无变更"
+            has_skill = bool(skill_changes)
+
+            if has_mem or has_skill:
+                lines = ["🔄自进化提醒："]
+                if has_mem:
+                    lines.append(f"  🧠记忆更新：{mem_diff}")
+                if has_skill:
+                    lines.append(f"  🧰技能更新：{'，'.join(skill_changes)}")
+                text = "\n".join(lines)
+                evo_logger.info(f"[evolve] 推送自进化提醒: {text}")
+                await _skill_notify_wrapper(key.chat_id, text)
+            else:
+                evo_logger.info("[evolve] 无任何技能/记忆变更")
 
         evo_logger.info(f"[evolve] done for {key} (full={do_full})")
     except Exception as e:

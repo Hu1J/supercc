@@ -334,7 +334,14 @@ class CoreExecutor:
             await push_fn(result_msg)
             # 触发自进化（异步，不阻塞主响应返回）
             sdk_sid = new_sdk_sid or ""
-            asyncio.create_task(self._run_evolve(key, sdk_sid, inbound.message_id, inbound.user_open_id or ""))
+            from supercc.core.message_context import get_current_user_open_id, get_current_chat_id, get_current_platform, get_current_bot_id
+            evo_ctx = {
+                "user_open_id": get_current_user_open_id() or "",
+                "chat_id": get_current_chat_id() or "",
+                "platform": get_current_platform(),
+                "bot_id": get_current_bot_id() or "",
+            }
+            asyncio.create_task(self._run_evolve(key, sdk_sid, inbound.message_id, evo_ctx))
 
         # 上下文超限提示：检测到 "Prompt is too long" 后主动发消息
         if _stream_too_long[0] and push_fn:
@@ -430,7 +437,7 @@ class CoreExecutor:
             return inbound.group_context + "\n\n" + inbound.content
         return inbound.content
 
-    async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", user_open_id: str = "") -> None:
+    async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", evo_ctx: dict | None = None) -> None:
         from supercc.core.evolve.evolve import run_evolve
 
         try:
@@ -443,7 +450,7 @@ class CoreExecutor:
             key=key,
             sdk_session_id=sdk_session_id,
             message_id=message_id,
-            user_open_id=user_open_id,
+            evo_context=evo_ctx,
             data_dir=self._data_dir,
             push_fn=self._push_fn,
             is_verbose_enabled_fn=self._is_verbose_enabled,
