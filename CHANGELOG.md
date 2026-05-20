@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.5] - 2026-05-21
+
+### Fixed
+- **`/update` 指令 fire-and-forget 导致"已更新"消息在安装前发出**：先 await `do_update()` 完成 pip install 再返回结果，安装失败时返回错误信息，不再静默吞掉异常
+
 ## [0.3.4] - 2026-05-21
 
 ### Fixed
