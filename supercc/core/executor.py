@@ -76,6 +76,9 @@ class CoreExecutor:
         entry = platform_verbose.get(chat_id)
         if not entry:
             return True
+        # 支持 dict 或 VerboseChannelEntry
+        if isinstance(entry, dict):
+            return entry.get(msg_type, True)
         return getattr(entry, msg_type, True)
 
     def _get_authenticator_for_platform(self, platform: str):

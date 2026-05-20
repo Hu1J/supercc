@@ -526,13 +526,22 @@ class FeishuCoreWSClient:
         try:
             if should_use_card(text):
                 try:
-                    await self.feishu.send_interactive_reply(chat_id, text, reply_to_message_id)
+                    if reply_to_message_id:
+                        await self.feishu.send_interactive_reply(chat_id, text, reply_to_message_id)
+                    else:
+                        await self.feishu.send_interactive_card(chat_id, text)
                 except Exception as card_error:
                     # 卡片失败，降级到 post
                     logger.warning(f"Card failed ({card_error}), falling back to post")
-                    await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+                    if reply_to_message_id:
+                        await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+                    else:
+                        await self.feishu.send_post(chat_id, text)
             else:
-                await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+                if reply_to_message_id:
+                    await self.feishu.send_post_reply(chat_id, text, reply_to_message_id)
+                else:
+                    await self.feishu.send_post(chat_id, text)
         except Exception as e:
             logger.warning(f"Failed to send message: {e}")
 

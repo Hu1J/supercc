@@ -903,11 +903,10 @@ async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, runn
             _log("TEXT", claude_msg.content[:100])
 
     is_verbose = job.get("verbose", False)
-    has_notify_at = bool(job.get("notify_at"))
 
-    # When notify_at is set, all output (including intermediate) should be sent at notify_at time.
-    # Disable real-time streaming in this case regardless of verbose setting.
-    stream_realtime = is_verbose and not has_notify_at
+    # notify_at 控制最终通知延迟发送，但不影响实时流式推送
+    # verbose=True 时，工具调用实时推送；verbose=False 时完全无推送
+    stream_realtime = is_verbose
 
     # Collect intermediate messages for pending delivery
     intermediates: list[dict] = []
