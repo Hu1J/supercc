@@ -424,27 +424,6 @@ def uninstall_windows(data_dir: str, project_slug: str) -> None:
         print("✅ Gateway 已从 Windows Task Scheduler 卸载")
 
 
-def uninstall_windows(data_dir: str, project_slug: str) -> None:
-    """卸载 Windows Task Scheduler 任务。"""
-    slug = _slug_to_dns_safe(project_slug)
-    task_name = f"SuperCC Main ({slug})"
-    failed = []
-    for variant in [task_name, f"{task_name} (Startup)"]:
-        r = subprocess.run(
-            ["schtasks", "/delete", "/tn", variant, "/f"],
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            failed.append(variant)
-    script_path = Path.home() / ".supercc" / f"supercc-main-{slug}.bat"
-    script_path.unlink(missing_ok=True)
-    Path(data_dir).joinpath(".gateway-installed").unlink(missing_ok=True)
-    if failed:
-        print(f"⚠️  以下任务删除失败: {failed}，但脚本文件已删除")
-    else:
-        print("✅ Gateway 已从 Windows Task Scheduler 卸载")
-
-
 # ── 统一入口 ─────────────────────────────────────────────────────────────────
 
 def install_service(data_dir: str, project_slug: str) -> None:
