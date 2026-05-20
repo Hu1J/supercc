@@ -54,7 +54,7 @@ session 文件：{session_path}
 
 这是一个 JSONL 格式的对话记录，每行一条 JSON。
 
-**重要：直接读取文件末尾（tail），定位最近一次完整对话。文件很大时不要从头读，只取末尾足够覆盖最近一次对话的行数即可。**"""
+**重要：直接读取文件末尾（tail），定位最近一次完整对话。文件很大,不要从头读，只取末尾足够覆盖最近一次对话的行数即可。**"""
 
     if mode == "incremental_memory":
         return common + f"""
@@ -198,12 +198,14 @@ updated_at: 2026-01-01
 
 # ── 记忆快照工具 ─────────────────────────────────────────────────────────────
 
-def _snapshot_memory(project_path: str, user_open_id: str, platform: str) -> dict:
+def _snapshot_memory(project_path: str, user_open_id: str, platform: str, bot_id: str = "", chat_id: str = "", _log: logging.Logger | None = None) -> dict:
     """返回当前记忆库快照：{"user": [...], "proj": [...]}"""
+    _log = _log or logger
     from supercc.core.memory_manager import MemoryManager
     mm = MemoryManager()  # 使用默认 ~/.supercc/memories.db
-    user_items = mm.get_preferences_by_user(user_open_id, platform=platform) if user_open_id else []
-    proj_items = mm.get_project_memories(project_path) or []
+    user_items = mm.get_preferences_by_user(user_open_id, platform=platform, bot_id=bot_id) if user_open_id else []
+    proj_items = mm.get_project_memories(project_path, platform=platform, chat_id=chat_id) or []
+    _log.info(f"snapshot — user_open_id={user_open_id!r}, platform={platform}, bot_id={bot_id!r}, chat_id={chat_id!r}, proj_path={project_path}, user_count={len(user_items)}, proj_count={len(proj_items)}")
     return {
         "user": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (user_items or [])],
         "proj": [{"id": m.id, "title": m.title, "content": m.content, "keywords": m.keywords} for m in (proj_items or [])],
@@ -239,13 +241,13 @@ def _diff_memory(before: dict, after: dict) -> str:
         return "无变更"
 
     parts = []
-    if added_user: parts.append(f"+用户 {len(added_user)}")
-    if del_user: parts.append(f"-用户 {len(del_user)}")
-    if upd_user: parts.append(f"~用户 {len(upd_user)}")
-    if added_proj: parts.append(f"+项目 {len(added_proj)}")
-    if del_proj: parts.append(f"-项目 {len(del_proj)}")
-    if upd_proj: parts.append(f"~项目 {len(upd_proj)}")
-    return ", ".join(parts)
+    if added_user: parts.append(f"新增 {len(added_user)} 条用户记忆")
+    if del_user: parts.append(f"删除 {len(del_user)} 条用户记忆")
+    if upd_user: parts.append(f"更新 {len(upd_user)} 条用户记忆")
+    if added_proj: parts.append(f"新增 {len(added_proj)} 条项目记忆")
+    if del_proj: parts.append(f"删除 {len(del_proj)} 条项目记忆")
+    if upd_proj: parts.append(f"更新 {len(upd_proj)} 条项目记忆")
+    return "；".join(parts)
 
 
 # ── 找 session 文件 ───────────────────────────────────────────────────────────
@@ -269,7 +271,10 @@ async def _cb_mode1(
     """印象快照：只记录日志，不推送任何消息。"""
     if msg.tool_name:
         tool_input = getattr(msg, 'tool_input', None)
-        logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
+        if msg.tool_name.startswith("mcp__SuperCC__Memory"):
+            logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
+        else:
+            logger.debug("[evolve] tool: %s — %s", msg.tool_name, tool_input)
 
 
 async def _cb_mode2(
@@ -287,7 +292,10 @@ async def _cb_mode3(
         logger.info("[evolve] text: %s", msg.content[:500])
     elif msg.tool_name:
         tool_input = getattr(msg, 'tool_input', None)
-        logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
+        if msg.tool_name.startswith("mcp__SuperCC__Memory"):
+            logger.info("[evolve] tool: %s — %s", msg.tool_name, tool_input)
+        else:
+            logger.debug("[evolve] tool: %s — %s", msg.tool_name, tool_input)
 
 
 # ── 权限配置工厂 ─────────────────────────────────────────────────────────────
@@ -342,12 +350,13 @@ async def run_evolve(
     if worker is None or worker.integration_evolve is None:
         return
 
-    evo_logger.info(f"[evolve] start — sdk_session_id={sdk_session_id}, resume={worker._sdk_session_id_evolve}")
+    evo_resume = worker._sdk_session_id_evolve
+    evo_logger.info(f"[evolve] start — sdk_session_id={sdk_session_id}, resume={evo_resume}")
 
     # ── 决定执行哪个模式 ─────────────────────────────────────────────
     evo_count = worker._evo_conversation_count
     do_full = evo_count >= 5
-    evo_logger.info(f"[evolve] count={evo_count}, full={'yes' if do_full else 'no'}")
+    evo_logger.debug(f"[evolve] count={evo_count}, full={'yes' if do_full else 'no'}")
 
     # ── 找 session 文件 ────────────────────────────────────────────────
     session_path = find_session_path(sdk_session_id)
@@ -375,11 +384,10 @@ async def run_evolve(
         if not push_fn:
             return
         from supercc.core.protocol import Event, MessageType, OutboundMessage
-        import uuid
         notify_msg = OutboundMessage(
             event=Event.NOTIFICATION,
             session_key=key,
-            message_id=str(uuid.uuid4()),
+            message_id=message_id,
             content=text,
             message_type=MessageType.TEXT,
         )
@@ -387,8 +395,6 @@ async def run_evolve(
 
     try:
         worker.integration_evolve.approved_directory = skills_dir
-        evo_resume = worker._sdk_session_id_evolve
-
         # ── Mode 1（每次必跑）：bypassPermissions + MCP-only + Read ─────────
         # 不管 do_full 如何，Mode 1 都要跑
         worker.integration_evolve._init_options(
@@ -406,19 +412,21 @@ async def run_evolve(
                 "Write", "Edit", "Bash", "Grep",
                 "NotRecommend", "WebSearch", "WebFetch",
                 "NotebookEdit", "TaskStart", "TaskComplete",
-                "Agent",
+                "Agent", "Skill",
             ]
 
         # ── 全流程入口快照 ─────────────────────────────────────────────
         before_skill_state = _get_skill_git_state(Path(skills_dir))
-        before_memory_state = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"))
+        before_memory_state = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"), bot_id=ctx.get("bot_id", ""), chat_id=ctx.get("chat_id", ""), _log=evo_logger)
 
         prompt_m1 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="incremental_memory")
         cb1 = lambda msg: _cb_mode1(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
-        _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1)
+        res_m1, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m1, on_stream=cb1)
         if evo_sid:
             worker._sdk_session_id_evolve = evo_sid
         evo_logger.info(f"[evolve] 印象快照 done, session={evo_sid}")
+        if res_m1:
+            evo_logger.info(f"[evolve] 印象快照结果: {res_m1[:500]}")
 
         # ── Mode 3（巡检时才跑）：dontAsk + 完整沙箱 ─────────────────────
         if do_full:
@@ -436,10 +444,12 @@ async def run_evolve(
 
             prompt_m3 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="skill_audit")
             cb3 = lambda msg: _cb_mode3(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
-            _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3)
+            res_m3, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m3, on_stream=cb3)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
             evo_logger.info(f"[evolve] 技能巡检 done, session={evo_sid}")
+            if res_m3:
+                evo_logger.info(f"[evolve] 技能巡检结果: {res_m3[:500]}")
 
             # ── Mode 2（巡检时才跑）：bypassPermissions + MCP-only + Read ───
             # Mode 2 接续 Mode 3 的上下文，承接 Mode 3 发现的待记事项
@@ -461,16 +471,18 @@ async def run_evolve(
                 ]
 
             prompt_m2 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="memory_inspection")
-            _, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
+            res_m2, evo_sid, _ = await worker.integration_evolve.query(prompt=prompt_m2, on_stream=None)
             if evo_sid:
                 worker._sdk_session_id_evolve = evo_sid
             evo_logger.info(f"[evolve] 记忆精炼 done, session={evo_sid}")
+            if res_m2:
+                evo_logger.info(f"[evolve] 记忆精炼结果: {res_m2[:500]}")
 
             worker._evo_conversation_count = 0
 
         # ── 全流程完成：统一检测变更，verbose 时推送汇总通知 ───────────
         if is_evo_verbose and push_fn:
-            after_memory = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"))
+            after_memory = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"), bot_id=ctx.get("bot_id", ""), chat_id=ctx.get("chat_id", ""))
             mem_diff = _diff_memory(before_memory_state, after_memory)
             after_skill = _get_skill_git_state(Path(skills_dir))
             skill_changes = []
@@ -492,9 +504,9 @@ async def run_evolve(
             if has_mem or has_skill:
                 lines = ["🔄自进化提醒："]
                 if has_mem:
-                    lines.append(f"  🧠记忆更新：{mem_diff}")
+                    lines.append(f"- 🧠记忆更新：{mem_diff}")
                 if has_skill:
-                    lines.append(f"  🧰技能更新：{'，'.join(skill_changes)}")
+                    lines.append(f"- 🧰技能更新：{'，'.join(skill_changes)}")
                 text = "\n".join(lines)
                 evo_logger.info(f"[evolve] 推送自进化提醒: {text}")
                 await _skill_notify_wrapper(key.chat_id, text)
