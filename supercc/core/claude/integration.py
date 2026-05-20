@@ -297,7 +297,9 @@ class ClaudeIntegration:
                     result = await consume_task
                 finally:
                     listener_task.cancel()
-                    consume_task.cancel()
+                    # 注意：不 cancel consume_task — 让它自然结束（interrupt 后 stream 正常结束，
+                    # 或 client close 后 receive_response 正常退出）。cancel 会导致竞态：
+                    # listener 的 client.interrupt() 还没执行到就被杀死，底层 CLI 状态混乱。
                     if self._codex_capture_tasks:
                         await asyncio.gather(*list(self._codex_capture_tasks), return_exceptions=True)
                         self._codex_capture_tasks.clear()
