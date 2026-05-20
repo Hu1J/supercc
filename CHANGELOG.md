@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.3] - 2026-05-20
+
+### Changed
+- **权限系统重构**：技能巡检从 `dontAsk` + 静态 JSON 白名单改为 `auto` + `can_use_tool` 动态回调，更细粒度的路径权限控制
+- **`/verbose` 指令精简**：`skill`/`mem` 合并为 `evolve`
+- **飞书发送方法统一**：`client.py` 重构，移除 `notify_at`，SessionKey 日志格式调整
+- **目录结构更新**：MCP 工具从 `core/claude/` 迁移至 `core/mcps/`，`memory_manager.py`/`message_context.py` 上提至 `core/`
+
+### Fixed
+- **Evolve 任务可打断**：worker `stop()` 现在能正确 cancel evolve 任务
+- **Evolve 上下文时序**：executor 的 snapshot context 正确传递给 evolve
+- **记忆工具 user_open_id 链路**：飞书+企业微信的传递修复
+- **Feishu 回复 API 兼容**：记忆巡检中间消息过滤
+- **JSON 配置损坏告警**：损坏时加 warning 日志，利于排查
+- **删除重复 `uninstall_windows` 函数**
+- **snapshot 日志降为 DEBUG**，三模式 done/结果合并一行
+
+### Removed
+- **`deploy/` 目录**：不再维护 launchd/systemd/Windows 安装脚本
+- **`core/claude/session_manager.py`**：无用代码清理
+- **`core/evolve/dream.py`**：无用代码清理
+- **`MCP_MEMORY_TOOLS` 白名单和死导入**：清理
+
 ## [0.3.2] - 2026-05-19
 
 ### Fixed

@@ -140,8 +140,7 @@ supercc config
 |------|------|
 | `/verbose` | 查看当前消息推送配置 |
 | `/verbose on\|off` | 开启/关闭全部消息推送 |
-| `/verbose skill on\|off` | 🧰 Skill 自进化通知 |
-| `/verbose mem on\|off` | 🧠 记忆自优化通知 |
+| `/verbose evolve on\|off` | 🔄 自进化通知（记忆+技能） |
 | `/verbose step on\|off` | ⚙️ 过程消息（工具调用/中间步骤） |
 
 ---
@@ -197,23 +196,40 @@ supercc config
 
 ```
 supercc/
+├── __init__.py          # 版本号
+├── __main__.py          # python -m supercc
 ├── main.py              # 入口点（CLI 分派）
 ├── onboard.py           # 首次安装引导
 ├── banner.py            # ASCII logo + 版本信息
 ├── config.py            # 配置读写
+├── logs.py              # 日志配置
 ├── channels/            # 平台适配层
+│   ├── common/          # 公共媒体处理
 │   ├── feishu/          # 飞书适配器
-│   └── wecom/           # 企业微信适配器（WS 协议）
+│   ├── wecom/           # 企业微信适配器（WS 协议）
+│   └── wechat/          # 微信适配器
 ├── core/                # 核心引擎
+│   ├── claude/          # Claude Code 接口（integration）
 │   ├── commands/         # /指令实现
-│   ├── claude/          # Claude Code 接口
-│   ├── models/          # 多模型管理
-│   └── cron_scheduler/  # 定时调度
+│   ├── evolve/           # 自进化系统（记忆+技能）
+│   ├── mcps/             # MCP 工具定义
+│   ├── models/           # 多模型管理
+│   ├── security/         # 安全模块
+│   ├── skill_search/     # Skills 搜索
+│   ├── cron_scheduler.py # 定时调度
+│   ├── cron_delivery.py  # Cron 结果投递
+│   ├── executor.py       # 消息执行器
+│   ├── memory_manager.py # 记忆管理
+│   ├── message_context.py# 上下文注入
+│   ├── protocol.py       # WS 协议定义
+│   ├── server.py         # WS Server
+│   ├── session.py        # 会话管理
+│   └── worker.py         # Worker/WorkerPool
 ├── gateway/             # Gateway（服务启动器）
-│   ├── platform.py       # 跨平台服务安装（launchd/systemd/Task Scheduler）
+│   ├── platform.py       # 跨平台服务安装
 │   ├── manager.py        # GatewayManager
 │   └── cli.py           # CLI 处理器
-└── install/             # 安装流程（onboard 调用的平台安装）
+└── install/             # 安装流程
 ```
 
 ---
