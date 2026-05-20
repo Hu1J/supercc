@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.4] - 2026-05-21
+
+### Fixed
+- **`/stop` 指令竞态导致打断失灵**：`query()` finally 块中 `consume_task.cancel()` 可能比 listener 的 `client.interrupt()` 先执行，导致底层 CLI 进程未被中断，需发两次 `/stop` 才能生效
+- **Docker 容器内 `gateway start` 报错**：容器无 systemd，跳过平台服务安装，改用 subprocess 后台启动
+
 ## [0.3.3] - 2026-05-20
 
 ### Changed
