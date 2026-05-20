@@ -186,28 +186,44 @@ class FeishuClient:
             )
         return self._client
 
-    async def send_text(self, chat_id: str, text: str) -> str:
-        """Send a text message to a chat. Returns message_id."""
+    async def send_text(self, chat_id: str, text: str, reply_msg_id: str | None = None) -> str:
+        """发文本消息。reply_msg_id 非空时回复该消息，否则发新消息。"""
         import json
         import lark_oapi as lark
         client = self._get_client()
-        request = (
-            lark.im.v1.CreateMessageRequest.builder()
-            .receive_id_type("chat_id")
-            .request_body(
-                lark.im.v1.CreateMessageRequestBody.builder()
-                .receive_id(chat_id)
-                .content(json.dumps({"text": text}))
-                .msg_type("text")
+        if reply_msg_id:
+            request = (
+                lark.im.v1.ReplyMessageRequest.builder()
+                .message_id(reply_msg_id)
+                .request_body(
+                    lark.im.v1.ReplyMessageRequestBody.builder()
+                    .content(json.dumps({"text": text}))
+                    .msg_type("text")
+                    .build()
+                )
                 .build()
             )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.create, request)
-        )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+            )
+        else:
+            request = (
+                lark.im.v1.CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    lark.im.v1.CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .content(json.dumps({"text": text}))
+                    .msg_type("text")
+                    .build()
+                )
+                .build()
+            )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.create, request)
+            )
         if not response.success():
-            raise RuntimeError(f"Failed to send message: {response.msg}")
+            raise RuntimeError(f"Failed to send text: {response.msg}")
         return response.data.message_id
 
     async def get_message(self, message_id: str) -> dict | None:
@@ -434,28 +450,30 @@ class FeishuClient:
             logger.error(f"send_file error: {e}")
             raise
 
-    async def send_interactive(self, chat_id: str, card: dict, reply_to_message_id: str) -> str:
-        """Send an interactive card message, replying to a specific message."""
-        import json
-        import lark_oapi as lark
-        client = self._get_client()
-        request = (
-            lark.im.v1.ReplyMessageRequest.builder()
-            .message_id(reply_to_message_id)
-            .request_body(
-                lark.im.v1.ReplyMessageRequestBody.builder()
-                .content(json.dumps(card))
-                .msg_type("interactive")
+    async def send_interactive(self, chat_id: str, card: dict, reply_msg_id: str | None = None) -> str:
+        """发送交互卡片。reply_msg_id 非空时回复该消息，否则发新消息。"""
+        if reply_msg_id:
+            import json
+            import lark_oapi as lark
+            client = self._get_client()
+            request = (
+                lark.im.v1.ReplyMessageRequest.builder()
+                .message_id(reply_msg_id)
+                .request_body(
+                    lark.im.v1.ReplyMessageRequestBody.builder()
+                    .content(json.dumps(card))
+                    .msg_type("interactive")
+                    .build()
+                )
                 .build()
             )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
-        )
-        if not response.success():
-            raise RuntimeError(f"Failed to send card: {response.msg}")
-        return response.data.message_id
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+            )
+            if not response.success():
+                raise RuntimeError(f"Failed to send card: {response.msg}")
+            return response.data.message_id
+        return await self.send_card(chat_id, card)
 
     async def send_text_reply(
         self,
@@ -463,28 +481,8 @@ class FeishuClient:
         text: str,
         reply_to_message_id: str,
     ) -> str:
-        """Send a text message as a threaded reply to a specific message."""
-        import json
-        import lark_oapi as lark
-        client = self._get_client()
-        request = (
-            lark.im.v1.ReplyMessageRequest.builder()
-            .message_id(reply_to_message_id)
-            .request_body(
-                lark.im.v1.ReplyMessageRequestBody.builder()
-                .content(json.dumps({"text": text}))
-                .msg_type("text")
-                .build()
-            )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
-        )
-        if not response.success():
-            raise RuntimeError(f"Failed to reply: {response.msg}")
-        logger.info(f"Replied to {reply_to_message_id} in chat {chat_id}: {response.data.message_id}")
-        return response.data.message_id
+        """兼容旧调用方：委托给 send_text。"""
+        return await self.send_text(chat_id, text, reply_msg_id=reply_to_message_id)
 
     async def send_post_reply(
         self,
@@ -493,49 +491,16 @@ class FeishuClient:
         reply_to_message_id: str,
         log_reply: bool = True,
     ) -> str:
-        """Send a markdown message as a threaded reply using Feishu post format.
-
-        The text is rendered with Feishu's built-in markdown renderer (bold, code,
-        tables, links, etc.) inside a rich text bubble.
-        """
-        import json
-        import lark_oapi as lark
-        client = self._get_client()
-        content_payload = json.dumps({
-            "zh_cn": {
-                "content": [[{"tag": "md", "text": markdown_text}]]
-            }
-        })
-        request = (
-            lark.im.v1.ReplyMessageRequest.builder()
-            .message_id(reply_to_message_id)
-            .request_body(
-                lark.im.v1.ReplyMessageRequestBody.builder()
-                .content(content_payload)
-                .msg_type("post")
-                .build()
-            )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
-        )
-        if not response.success():
-            raise RuntimeError(f"Failed to reply (post): {response.msg}")
-        if log_reply:
-            logger.info(f"Replied post to {reply_to_message_id} in chat {chat_id}: {response.data.message_id}")
-        return response.data.message_id
+        """兼容旧调用方：委托给 send_post。"""
+        return await self.send_post(chat_id, markdown_text, reply_msg_id=reply_to_message_id)
 
     async def send_post(
         self,
         chat_id: str,
         markdown_text: str,
+        reply_msg_id: str | None = None,
     ) -> str:
-        """Send a markdown message as a new message using Feishu post format.
-
-        Unlike send_post_reply, this does NOT require a reply_to_message_id —
-        it creates a new standalone message in the chat.
-        """
+        """发 Markdown post。reply_msg_id 非空时回复，否则新消息。"""
         import json
         import lark_oapi as lark
         client = self._get_client()
@@ -544,21 +509,37 @@ class FeishuClient:
                 "content": [[{"tag": "md", "text": markdown_text}]]
             }
         })
-        request = (
-            lark.im.v1.CreateMessageRequest.builder()
-            .receive_id_type("chat_id")
-            .request_body(
-                lark.im.v1.CreateMessageRequestBody.builder()
-                .receive_id(chat_id)
-                .content(content_payload)
-                .msg_type("post")
+        if reply_msg_id:
+            request = (
+                lark.im.v1.ReplyMessageRequest.builder()
+                .message_id(reply_msg_id)
+                .request_body(
+                    lark.im.v1.ReplyMessageRequestBody.builder()
+                    .content(content_payload)
+                    .msg_type("post")
+                    .build()
+                )
                 .build()
             )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.create, request)
-        )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+            )
+        else:
+            request = (
+                lark.im.v1.CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    lark.im.v1.CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .content(content_payload)
+                    .msg_type("post")
+                    .build()
+                )
+                .build()
+            )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.create, request)
+            )
         if not response.success():
             raise RuntimeError(f"Failed to send post: {response.msg}")
         logger.info(f"Sent post to chat {chat_id}: {response.data.message_id}")
@@ -569,11 +550,7 @@ class FeishuClient:
         chat_id: str,
         markdown_text: str,
     ) -> str:
-        """Send a markdown message as a new Feishu Interactive Card.
-
-        Used for content with fenced code blocks or tables that benefit from
-        the wide-screen card layout. Creates a new standalone message.
-        """
+        """新消息发 Markdown 卡片。兼容旧调用方，内部委托给 send_interactive。"""
         card = {
             "schema": "2.0",
             "config": {"wide_screen_mode": True},
@@ -581,32 +558,49 @@ class FeishuClient:
                 "elements": [{"tag": "markdown", "content": markdown_text}]
             }
         }
-        return await self.send_card(chat_id, card)
+        return await self.send_interactive(chat_id, card)
 
     async def send_card(
         self,
         chat_id: str,
         card: dict,
+        reply_msg_id: str | None = None,
     ) -> str:
-        """Send an interactive card as a new standalone message (no reply_id needed)."""
+        """发卡片。reply_msg_id 非空时回复，否则新消息。"""
         import json
         import lark_oapi as lark
         client = self._get_client()
-        request = (
-            lark.im.v1.CreateMessageRequest.builder()
-            .receive_id_type("chat_id")
-            .request_body(
-                lark.im.v1.CreateMessageRequestBody.builder()
-                .receive_id(chat_id)
-                .content(json.dumps(card))
-                .msg_type("interactive")
+        if reply_msg_id:
+            request = (
+                lark.im.v1.ReplyMessageRequest.builder()
+                .message_id(reply_msg_id)
+                .request_body(
+                    lark.im.v1.ReplyMessageRequestBody.builder()
+                    .content(json.dumps(card))
+                    .msg_type("interactive")
+                    .build()
+                )
                 .build()
             )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.create, request)
-        )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.reply, request)
+            )
+        else:
+            request = (
+                lark.im.v1.CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    lark.im.v1.CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .content(json.dumps(card))
+                    .msg_type("interactive")
+                    .build()
+                )
+                .build()
+            )
+            response = await _call_with_retry(
+                lambda: asyncio.to_thread(client.im.v1.message.create, request)
+            )
         if not response.success():
             raise RuntimeError(f"Failed to send card: {response.msg}")
         logger.info(f"Sent card to chat {chat_id}: {response.data.message_id}")
@@ -652,27 +646,8 @@ class FeishuClient:
         image_key: str,
         reply_to_message_id: str,
     ) -> str:
-        """Send an image message as a threaded reply."""
-        import json
-        import lark_oapi as lark
-        client = self._get_client()
-        request = (
-            lark.im.v1.ReplyMessageRequest.builder()
-            .message_id(reply_to_message_id)
-            .request_body(
-                lark.im.v1.ReplyMessageRequestBody.builder()
-                .content(json.dumps({"image_key": image_key}))
-                .msg_type("image")
-                .build()
-            )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
-        )
-        if not response.success():
-            raise RuntimeError(f"Failed to reply image: {response.msg}")
-        return response.data.message_id
+        """兼容旧调用方：委托给 send_image。"""
+        return await self.send_image(chat_id, image_key, reply_msg_id=reply_to_message_id)
 
     async def send_file_reply(
         self,
@@ -681,27 +656,8 @@ class FeishuClient:
         file_name: str,
         reply_to_message_id: str,
     ) -> str:
-        """Send a file message as a threaded reply."""
-        import json
-        import lark_oapi as lark
-        client = self._get_client()
-        request = (
-            lark.im.v1.ReplyMessageRequest.builder()
-            .message_id(reply_to_message_id)
-            .request_body(
-                lark.im.v1.ReplyMessageRequestBody.builder()
-                .content(json.dumps({"file_key": file_key, "file_name": file_name}))
-                .msg_type("file")
-                .build()
-            )
-            .build()
-        )
-        response = await _call_with_retry(
-            lambda: asyncio.to_thread(client.im.v1.message.reply, request)
-        )
-        if not response.success():
-            raise RuntimeError(f"Failed to reply file: {response.msg}")
-        return response.data.message_id
+        """兼容旧调用方：委托给 send_file。"""
+        return await self.send_file(chat_id, file_key, file_name, reply_msg_id=reply_to_message_id)
 
     def _extract_file_info(self, content_str: str) -> tuple[str, str]:
         """Extract original filename and file_type from file message content."""

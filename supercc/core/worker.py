@@ -193,6 +193,7 @@ class WorkerPool:
         cli_path: str = "claude",
         approved_dir: str = "",
         on_stream: Callable[[Any], Awaitable[None]] | None = None,
+        on_start: Callable[[], Awaitable[None]] | None = None,
         sdk_session_id: str | None = None,
     ) -> tuple[str, float]:
         """
@@ -226,7 +227,7 @@ class WorkerPool:
             )
 
             task = asyncio.create_task(
-                worker.integration.query(prompt=prompt, on_stream=on_stream)
+                worker.integration.query(prompt=prompt, on_stream=on_stream, on_start=on_start)
             )
             worker._current_task = task
             result, sdk_sid, cost = await task

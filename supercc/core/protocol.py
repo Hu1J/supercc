@@ -39,7 +39,7 @@ class SessionKey:
     chat_id: str                   # 平台会话 ID（群 ID 或 P2P 用户 ID）
 
     def __str__(self) -> str:
-        return f"{self.bot_id}×{self.platform}×{self.chat_id}×{self.project_path}"
+        return f"{self.project_path} | {self.platform} | {self.bot_id} | {self.chat_id}"
 
 
 # ── Timezone (Beijing Time, UTC+8) ───────────────────────────────────────────
@@ -271,6 +271,7 @@ class Event:
 
     # Outbound (core -> plugin)
     RESPONSE = "response"
+    PROCESSING = "processing"  # 即将开始处理（on_start 触发时）
     TOOL_CALL = "tool_call"
     ERROR = "error"
     PONG = "pong"

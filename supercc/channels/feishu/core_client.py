@@ -311,6 +311,15 @@ class FeishuCoreWSClient:
             if session_info:
                 chat_id = params.get("chat_id", "")
                 await self._safe_send(chat_id, msg_id, session_info)
+        elif method == Event.PROCESSING:
+            # Core 即将开始处理，此时再打 typing OK
+            msg_id = params.get("message_id", "")
+            if msg_id:
+                try:
+                    await self.feishu.add_typing_reaction(msg_id, emoji_type="OK")
+                    logger.info("[typing] [ok] message_id=%s", msg_id)
+                except Exception:
+                    pass
         elif method == Event.STREAM_CHUNK:
             # 流式输出中 - use accumulator for buffering
             await self._render_and_send(params)
@@ -415,7 +424,7 @@ class FeishuCoreWSClient:
                 pass
 
     async def _handle_cron_progress(self, params: dict):
-        """处理 cron 中间过程消息。"""
+        """处理 cron 中间过程消息（tool call 走卡片渲染，文本走 Markdown）。"""
         job_id = params.get("job_id", "")
         content = params.get("content", "")
         chat_id = params.get("chat_id") or self._last_chat_id or ""
@@ -424,12 +433,19 @@ class FeishuCoreWSClient:
             logger.warning("[cron_progress] no chat_id, skipping")
             return
 
-        # content 可能为 dict（如 Memory 工具卡片数据），转为字符串
-        if not isinstance(content, str):
-            content = str(content)
+        # 工具调用 → 复用主对话的 tool call 渲染管线
+        if isinstance(content, dict) and "tool_name" in content:
+            await self._handle_tool_call({
+                "chat_id": chat_id,
+                "message_id": "",
+                "extra": {
+                    "tool_name": content["tool_name"],
+                    "tool_input": content.get("tool_input", ""),
+                },
+            })
+            return
 
         try:
-            # 实时进度直接发送 Markdown
             if self.formatter.should_use_card(content):
                 await self.feishu.send_interactive_card(chat_id, content)
             else:
@@ -552,6 +568,10 @@ class FeishuCoreWSClient:
         """
         await self._safe_send(chat_id, message_id, text)
 
+    async def _send_card(self, chat_id: str, card: dict, msg_id: str) -> None:
+        """发卡片：有 msg_id 时 reply，无 msg_id 时新消息发（如 cron 场景）。"""
+        await self.feishu.send_interactive(chat_id, card, reply_msg_id=msg_id or None)
+
     async def _handle_tool_call(self, params: dict):
         """处理核心发来的工具调用请求。
 
@@ -657,7 +677,7 @@ class FeishuCoreWSClient:
             # 记忆工具 → CardKit 格式，reply 到原始消息
             card = self._render_memory_card(result)
             try:
-                await self.feishu.send_interactive(chat_id, card, msg_id)
+                await self._send_card(chat_id, card, msg_id)
             except Exception:
                 await self._safe_send(chat_id, msg_id, str(card))
 
@@ -667,23 +687,23 @@ class FeishuCoreWSClient:
             try:
                 await self.feishu.send_edit_diff_card(chat_id, card, msg_id, log_reply=False)
             except Exception:
-                await self._safe_send(chat_id, msg_id, result.render())
+                await self._safe_send(chat_id, msg_id, str(result.render()))
 
         elif isinstance(result, FeishuAgentCardMarker):
             # Agent → 精美飞书卡片
             card = result.render()
             try:
-                await self.feishu.send_interactive(chat_id, card, msg_id)
+                await self._send_card(chat_id, card, msg_id)
             except Exception:
-                await self._safe_send(chat_id, msg_id, result.render())
+                await self._safe_send(chat_id, msg_id, str(result.render()))
 
         elif isinstance(result, FeishuCodexMarker):
             # Codex → 精美飞书卡片
             card = result.render()
             try:
-                await self.feishu.send_interactive(chat_id, card, msg_id)
+                await self._send_card(chat_id, card, msg_id)
             except Exception:
-                await self._safe_send(chat_id, msg_id, result.render())
+                await self._safe_send(chat_id, msg_id, str(result.render()))
 
         else:
             # 其他工具 → backtick 格式
@@ -989,13 +1009,7 @@ class FeishuCoreWSClient:
         # 这样 core 才能正确检测斜杠命令（_is_command 要求 content 以 / 开头）。
         full_content = inbound.content
 
-        # 添加 typing indicator: OK reaction 表示 AI 开始处理
-        try:
-            await self.feishu.add_typing_reaction(incoming.message_id, emoji_type="OK")
-            logger.info("[typing] [ok] message_id=%s", incoming.message_id)
-        except Exception:
-            pass  # 失败不影响主流程
-
+        # typing OK 由 Core 的 PROCESSING 事件触发（上一消息处理完、准备开始处理当前消息时）
         # /restart 指令：plugin 本地立即发确认，不等 core 回传
         if full_content.strip() == "/restart":
             await self.feishu.send_text(inbound.session_key.chat_id, "正在重启，请稍作等待...")

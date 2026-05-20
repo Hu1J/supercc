@@ -850,16 +850,18 @@ async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, runn
 
     # 设置 contextvar，让记忆 MCP 工具能获取正确的上下文
     from supercc.core.message_context import set_current_context
-    if platform == "wecom":
-        user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
-            config.channels.wecom.allowed_users[0] if config.channels.wecom.allowed_users else ""
-        )
-        bot_id = getattr(config.channels.wecom, "bot_id", "")
-    else:
-        user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
-            config.channels.feishu.allowed_users[0] if config.channels.feishu.allowed_users else ""
-        )
-        bot_id = getattr(config.channels.feishu, "bot_id", "")
+
+    # 根据 platform 取对应用户和 bot_id
+    ch_map = {
+        "feishu": config.channels.feishu,
+        "wecom": config.channels.wecom,
+        "wechat": config.channels.wechat,
+    }
+    ch = ch_map.get(platform, config.channels.feishu)
+    user_open_id = _get_user_open_id_by_chat_id(data_dir, chat_id) or (
+        getattr(ch, "allowed_users", [None])[0] if getattr(ch, "allowed_users", []) else ""
+    )
+    bot_id = getattr(ch, "bot_open_id", "") or getattr(ch, "bot_id", "")
     set_current_context(
         user_open_id=user_open_id,
         chat_id=chat_id,
@@ -914,7 +916,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, runn
     # ── Platform-specific formatters and send helpers ──────────────────────────
     exec_session_key = SessionKey(
         bot_id=exec_bot_id,
-        project_path=str(Path(data_dir).resolve().parent),
+        project_path=config.claude.approved_directory,
         platform=exec_platform,
         chat_id=exec_chat_id,
     )
@@ -994,21 +996,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, runn
     logger.info(f"[cron] Job {job_id} output saved to {output_file}")
 
     # ── Deliver ────────────────────────────────────────────────────────────────
-    notify_schedule = job.get("notify_at")
-    if notify_schedule:
-        next_notify = compute_next_run(notify_schedule)
-        pending_store = _PendingStore(data_dir)
-        pending_store.add(
-            job_id, response, chat_id, job_name, next_notify,
-            intermediates, platform=platform, targets=targets if is_builtin else None,
-        )
-        _log("NOTIFY_PENDING", f"notify_at={next_notify}, targets={len(targets)}")
-        logger.info(f"[cron] Job {job_id} notification pending until {next_notify} (targets={len(targets)})")
-        mark_run(job_id, success=True, data_dir=data_dir)
-        running_jobs.discard(job_id)
-        return
-
-    # 立即投递
+    # 立即投递（不再支持 notify_at）
     for tgt_platform, tgt_chat_id, tgt_bot_id in targets:
         try:
             _log("DELIVER", f"platform={tgt_platform}, chat_id={tgt_chat_id}")
@@ -1146,84 +1134,6 @@ class CronScheduler:
                 _ensure_symlinks(skills_dir)
             except Exception:
                 logger.warning("[cron] symlink sync failed (non-blocking)\n%s", traceback.format_exc())
-        # Deliver any pending notifications that have reached their notify_at time
-        # Filter by scoped chat_id if set (per-chat-id isolation)
-        pending_store = _PendingStore(self.data_dir)
-        due_pending = pending_store.get_due()
-        if self.chat_id:
-            due_pending = [e for e in due_pending if e.get("chat_id") == self.chat_id]
-        sent_this_tick: set[str] = set()  # dedup: skip entries sent successfully this tick
-        if due_pending:
-            for entry in due_pending:
-                pending_key = entry.get("pending_key", entry.get("job_id", ""))
-                if pending_key in sent_this_tick:
-                    continue
-                try:
-                    raw_targets = entry.get("targets")
-                    if raw_targets:
-                        # broadcast：用 targets 列表
-                        targets = raw_targets
-                    else:
-                        # 单目标：从 entry 构建
-                        p = entry.get("platform", "feishu")
-                        chat_id = entry.get("chat_id", "")
-                        if p == "wecom":
-                            bot_id = getattr(self.config.channels.wecom, "bot_id", "")
-                        else:
-                            bot_id = getattr(self.config.channels.feishu, "bot_id", "")
-                        targets = [(p, chat_id, bot_id)]
-
-                    for tgt_platform, tgt_chat_id, tgt_bot_id in targets:
-                        tgt_key = SessionKey(
-                            bot_id=tgt_bot_id,
-                            project_path=str(Path(self.data_dir).resolve().parent),
-                            platform=tgt_platform,
-                            chat_id=tgt_chat_id,
-                        )
-
-                        # Send intermediate messages first (in order) via queue
-                        intermediates = entry.get("intermediates", [])
-                        for msg in intermediates:
-                            if isinstance(msg, dict) and ("tool_name" in msg):
-                                # 原始 tool data，跟主对话一样由 plugin 渲染
-                                cron_delivery_queue.put(CronDeliveryItem(
-                                    event="progress",
-                                    session_key=tgt_key,
-                                    job_id=entry.get("job_id", ""),
-                                    job_name=entry.get("job_name", ""),
-                                    platform=tgt_platform,
-                                    content=msg,
-                                ))
-                            elif isinstance(msg, dict) and msg.get("content"):
-                                # 向后兼容：旧格式 markdown
-                                cron_delivery_queue.put(CronDeliveryItem(
-                                    event="progress",
-                                    session_key=tgt_key,
-                                    job_id=entry.get("job_id", ""),
-                                    job_name=entry.get("job_name", ""),
-                                    platform=tgt_platform,
-                                    content=msg["content"],
-                                ))
-
-                        # Send final response via queue
-                        header = f"⏰ **{entry['job_name']}**"
-                        response = entry.get("response", "")
-                        content = f"{header}\n\n{response}" if response else header
-                        cron_delivery_queue.put(CronDeliveryItem(
-                            event="result",
-                            session_key=tgt_key,
-                            job_id=entry.get("job_id", ""),
-                            job_name=entry.get("job_name", ""),
-                            platform=tgt_platform,
-                            content=content,
-                        ))
-                        logger.info(f"[cron] Pending notification queued for {tgt_chat_id} via {tgt_platform}")
-
-                    pending_store.remove(pending_key)
-                    sent_this_tick.add(pending_key)
-                except Exception as e:
-                    logger.warning(f"[cron] Pending notification queue failed: {e}")
-
         due = get_due_jobs(self.data_dir, chat_id=self.chat_id)
         # Filter out jobs that are already running (prevents overlap if job takes >60s)
         due = [j for j in due if j["id"] not in self._running_jobs]
@@ -1273,10 +1183,6 @@ CRON_TOOLS = [
                 "verbose": {
                     "type": "boolean",
                     "description": "If true, stream tool calls to Feishu in real-time as the job runs. Default false."
-                },
-                "notify_at": {
-                    "type": "string",
-                    "description": "Optional: separate schedule for when to send the notification to Feishu. Example: '0 8 * * *' means execute at 'schedule' but notify at 8am. If not set, notify immediately after execution."
                 }
             },
             "required": ["schedule", "prompt"]

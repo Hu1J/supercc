@@ -222,6 +222,17 @@ class CoreExecutor:
                     )
                     await _stream_sender(tool_msg)
 
+        async def _on_start() -> None:
+            """拿到锁后、开始处理前触发，通知 plugin 可以打 typing OK 了。"""
+            if push_fn:
+                await push_fn(OutboundMessage(
+                    event=Event.PROCESSING,
+                    session_key=key,
+                    message_id=inbound.message_id,
+                    content="",
+                    message_type=MessageType.TEXT,
+                ))
+
         # 执行查询（最多重试3次，SDK 空响应时重试）
         result = ""
         cost = 0.0
@@ -242,6 +253,7 @@ class CoreExecutor:
                     cli_path=cli_path,
                     approved_dir=key.project_path,
                     on_stream=_stream_callback,
+                    on_start=_on_start,
                     sdk_session_id=session.sdk_session_id,
                 )
                 new_sdk_sid = sdk_sid
