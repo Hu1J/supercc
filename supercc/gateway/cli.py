@@ -4,6 +4,12 @@ from __future__ import annotations
 from supercc.gateway.manager import GatewayManager
 
 
+def _in_container() -> bool:
+    """检测是否运行在容器中（Docker/LXC 等）。"""
+    from pathlib import Path
+    return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+
 def _gm() -> GatewayManager:
     """构造 GatewayManager，使用当前项目的 .supercc/ 目录。"""
     from supercc.config import resolve_config_path
@@ -20,6 +26,13 @@ def run_gateway_start(force: bool = False) -> None:
     """
     import sys
     gm = _gm()
+
+    # 容器环境：没有 systemd/launchd，用 subprocess 后台启动
+    if _in_container():
+        print("📦 检测到容器环境，跳过平台服务安装，直接后台启动...")
+        gm.start(background=True)
+        return
+
     status = gm.status()
     if not status["installed"] or force:
         if force:
@@ -62,6 +75,20 @@ def run_gateway_start(force: bool = False) -> None:
 def run_gateway_stop() -> None:
     """gateway stop 子命令：停止 gateway。"""
     gm = _gm()
+    if _in_container():
+        # 容器环境：没有 systemd，直接杀进程 + 清理
+        import os, signal
+        pid = gm._load_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        from pathlib import Path
+        Path(gm._pid_file).unlink(missing_ok=True)
+        Path(gm._data_dir, ".instance.lock").unlink(missing_ok=True)
+        print("✅ Gateway 已停止")
+        return
     gm.stop()
 
 
