@@ -267,7 +267,8 @@ def _load_json_config(path: str) -> dict:
             with open(path) as f:
                 return json.load(f) or {}
         except json.JSONDecodeError:
-            pass  # 损坏则当不存在处理
+            import logging
+            logging.getLogger(__name__).warning("配置文件 %s 格式损坏，已忽略", path)
 
     # 尝试从旧 YAML 迁移
     yaml_path = Path(path).with_suffix(".yaml")
