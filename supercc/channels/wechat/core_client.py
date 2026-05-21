@@ -224,6 +224,7 @@ class WeChatCoreWSClient:
         core_url: str,
         token: str,
         account_id: str,
+        bot_id: str = "",
         bot_openid: str = "",
         data_dir: str = "",
         project_path: str = "",
@@ -232,6 +233,7 @@ class WeChatCoreWSClient:
         self.core_url = core_url
         self._token = token
         self._account_id = account_id
+        self._bot_id = bot_id or account_id
         self._bot_openid = bot_openid
         self._data_dir = data_dir
         self._project_path = project_path
@@ -513,6 +515,8 @@ class WeChatCoreWSClient:
         if sender_id == self._account_id:
             return
 
+        logger.info("[WeChatCore] ← received msg: %s", json.dumps(msg, ensure_ascii=False)[:200])
+
         message_id = str(msg.get("message_id") or "").strip()
         context_token = str(msg.get("context_token") or "").strip()
         if context_token:
@@ -568,6 +572,7 @@ class WeChatCoreWSClient:
             platform="wechat",
             params={
                 "message_id": message_id,
+                "bot_id": self._bot_id,
                 "chat_id": chat_id if is_group_chat else sender_id,
                 "user_open_id": sender_id,
                 "project_path": self._project_path,
