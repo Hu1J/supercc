@@ -244,7 +244,6 @@ class WeChatCoreWSClient:
         self._bot_openid = bot_openid
         self._data_dir = data_dir
         self._project_path = project_path
-        self._allowed_users = allowed_users or []
 
         self._lp_client: Optional[WeChatLongPollingClient] = None
         self._client: Optional[WeChatClient] = None
@@ -607,12 +606,34 @@ class WeChatCoreWSClient:
             if len(hist) > self._MAX_GROUP_HISTORY:
                 hist.pop(0)
 
-        # 权限检查
-        if is_group_chat:
-            pass  # 群聊暂不检查 allowlist
-        elif not self._is_dm_allowed(sender_id):
-            logger.info("[WeChatCore] user %s not in allowlist, skipping", sender_id[:8])
-            return
+        # 权限检查（每次重新加载 config，支持 pairing approve 后实时生效）
+        if not is_group_chat:
+            from supercc.config import reload_config
+            cfg = reload_config()
+            channel_cfg = getattr(cfg.channels, "wechat", None)
+            allowed_users = list(getattr(channel_cfg, "allowed_users", [])) if channel_cfg else []
+            if sender_id not in allowed_users:
+                logger.info("[WeChatCore] user %s not in allowlist", sender_id[:8])
+                if self._client:
+                    try:
+                        from supercc.core.pairing import get_pairing_store
+                        store = get_pairing_store()
+                        code = store.generate_code("wechat", sender_id, "")
+                        if code:
+                            reason = (
+                                f"你不在允许使用列表中。\n\n"
+                                f"请联系管理员执行以下命令以获得使用权：\n\n"
+                                f"supercc pairing approve {code}"
+                            )
+                        else:
+                            reason = "你不在允许使用列表中。\n\n配对码已生成，请联系管理员执行 approve。"
+                    except Exception:
+                        reason = "你不在允许使用列表中。\n\n配对系统暂时不可用，请联系机器人所有者。"
+                    context_token = self._get_context_token(sender_id)
+                    asyncio.create_task(
+                        self._client.send_text(sender_id, reason, context_token)
+                    )
+                return
 
         # 异步获取 typing ticket
         if self._client:
@@ -650,11 +671,6 @@ class WeChatCoreWSClient:
         self._pending_message_ids[str(req.id)] = (message_id, sender_id)
         await self._ws.send(json.dumps(req.to_dict()))
 
-    def _is_dm_allowed(self, sender_id: str) -> bool:
-        """检查私聊权限。"""
-        if not self._allowed_users:
-            return True
-        return sender_id in self._allowed_users
 
     async def _maybe_fetch_typing_ticket(self, user_id: str, context_token: Optional[str]) -> None:
         """获取 typing ticket 并缓存。"""
