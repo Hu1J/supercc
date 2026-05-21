@@ -62,6 +62,9 @@ class CoreExecutor:
         # 签名: Callable[[OutboundMessage], Awaitable[None]]
         self._push_fn: Callable[[OutboundMessage], Awaitable[None]] | None = None
 
+        # 延迟的 evolve 参数：(key, sdk_session_id, message_id, evo_ctx)
+        self._pending_evolve: tuple | None = None
+
     def _is_verbose_enabled(self, platform: str, chat_id: str, msg_type: str) -> bool:
         """检查该 chat_id 是否开启了某类消息。默认全开。"""
         config = self._config
@@ -358,7 +361,7 @@ class CoreExecutor:
                 "platform": get_current_platform(),
                 "bot_id": get_current_bot_id() or "",
             }
-            asyncio.create_task(self._run_evolve(key, sdk_sid, inbound.message_id, evo_ctx))
+            self._pending_evolve = (key, sdk_sid, inbound.message_id, evo_ctx)
 
         # 上下文超限提示：检测到 "Prompt is too long" 后主动发消息
         if _stream_too_long[0] and push_fn:
@@ -453,6 +456,14 @@ class CoreExecutor:
         if inbound.group_context and not _is_command(inbound.content):
             return inbound.group_context + "\n\n" + inbound.content
         return inbound.content
+
+    def flush_evolve(self) -> None:
+        """在 WS 响应发送后触发延迟的 evolve 任务。"""
+        pending = self._pending_evolve
+        self._pending_evolve = None
+        if pending:
+            key, sdk_sid, msg_id, evo_ctx = pending
+            asyncio.create_task(self._run_evolve(key, sdk_sid, msg_id, evo_ctx))
 
     async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", evo_ctx: dict | None = None) -> None:
         from supercc.core.evolve.evolve import run_evolve

@@ -391,6 +391,9 @@ class WsServer:
             try:
                 resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
                 await conn.ws.send(json.dumps(resp_dict))
+                # WS 响应已发出，现在安全触发 evolve（不会阻塞响应送达）
+                if self._executor:
+                    self._executor.flush_evolve()
             except Exception:
                 logger.warning("[WsServer] failed to send response, connection may be dead")
 

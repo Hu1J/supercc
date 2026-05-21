@@ -14,6 +14,7 @@ Key components:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import threading
@@ -230,8 +231,13 @@ updated_at: 2026-01-01  # 最近修改日期
 """
 
 
-def _get_skill_git_state(skills_dir: Path) -> dict[str, str | None]:
+async def _get_skill_git_state(skills_dir: Path) -> dict[str, str | None]:
     """Get current git state: {skill_name: latest_commit_sha or None}."""
+    return await asyncio.to_thread(_get_skill_git_state_sync, skills_dir)
+
+
+def _get_skill_git_state_sync(skills_dir: Path) -> dict[str, str | None]:
+    """Sync implementation of _get_skill_git_state."""
     state: dict[str, str | None] = {}
     if not skills_dir.exists():
         return state
@@ -285,7 +291,7 @@ async def _detect_skill_changes(
     notify: bool = True,
 ) -> None:
     """Compare before/after git state, detect changes (new/updated/deleted), notify user."""
-    after_state = _get_skill_git_state(skills_dir)
+    after_state = await _get_skill_git_state(skills_dir)
     logger.info(f"[skill_nudge] checking skills dir: {skills_dir.resolve()}")
     logger.debug(f"[skill_nudge] before_state={before_state}")
     logger.debug(f"[skill_nudge] after_state={after_state}")
@@ -351,7 +357,7 @@ async def trigger_skill_review(
     skills_dir = skills_dir or (Path(get_config().data_dir) / "skills")
 
     # Snapshot before state
-    before_state = _get_skill_git_state(skills_dir)
+    before_state = await _get_skill_git_state(skills_dir)
 
     try:
         prompt = SKILL_NUDGE_PROMPT.format(

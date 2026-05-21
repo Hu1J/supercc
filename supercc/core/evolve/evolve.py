@@ -383,7 +383,7 @@ async def run_evolve(
             ]
 
         # ── 全流程入口快照 ─────────────────────────────────────────────
-        before_skill_state = _get_skill_git_state(Path(skills_dir))
+        before_skill_state = await _get_skill_git_state(Path(skills_dir))
         before_memory_state = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"), bot_id=ctx.get("bot_id", ""), chat_id=ctx.get("chat_id", ""), _log=evo_logger)
 
         prompt_m1 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="incremental_memory")
@@ -571,7 +571,7 @@ async def run_evolve(
         if is_evo_verbose and push_fn:
             after_memory = _snapshot_memory(key.project_path, ctx.get("user_open_id", ""), ctx.get("platform", "feishu"), bot_id=ctx.get("bot_id", ""), chat_id=ctx.get("chat_id", ""))
             mem_diff = _diff_memory(before_memory_state, after_memory)
-            after_skill = _get_skill_git_state(Path(skills_dir))
+            after_skill = await _get_skill_git_state(Path(skills_dir))
             skill_changes = []
             for skill_name, sha in after_skill.items():
                 before_sha = before_skill_state.get(skill_name)

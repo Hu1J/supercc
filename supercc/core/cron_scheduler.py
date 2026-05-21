@@ -894,7 +894,7 @@ async def _run_job(job: dict, config: Config, data_dir: str, executor: Any, runn
     before_state = None
     if is_skill_scan:
         from supercc.core.evolve.skill_nudge import _get_skill_git_state
-        before_state = _get_skill_git_state(skills_dir)
+        before_state = await _get_skill_git_state(skills_dir)
         prompt = prompt.replace("{SKILLS_DIR}", str(skills_dir))
 
     async def _stream_log(claude_msg):
