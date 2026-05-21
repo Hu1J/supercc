@@ -352,6 +352,7 @@ class WeChatCoreWSClient:
             try:
                 msg = await ws.recv()
                 data = json.loads(msg)
+                logger.debug("[WeChatCore] WS recv: method=%s id=%s", data.get("method", ""), data.get("id", ""))
                 await self._handle_core_message(data)
             except websockets.exceptions.ConnectionClosed:
                 if self._running:
@@ -404,8 +405,15 @@ class WeChatCoreWSClient:
                 self._pending_responses.pop(req_id, None)
 
     async def _handle_core_message(self, data: dict) -> None:
+        method = data.get("method", "")
+        # TOOL_CALL 是通知请求，带 id 但不走 response 路径
+        if method == Event.TOOL_CALL:
+            await self._handle_tool_call(data.get("params", {}))
+            return
+
         if "id" in data:
             req_id = str(data.get("id"))
+            logger.debug("[WeChatCore] ← WS response id=%s result=%s", req_id, str(data.get("result", ""))[:80])
             stored = self._pending_message_ids.pop(req_id, None)
             if stored:
                 msg_id, chat_id = stored
@@ -413,12 +421,18 @@ class WeChatCoreWSClient:
                 if msg_id in self._accumulator_by_msg_id:
                     acc = self._accumulator_by_msg_id.pop(msg_id)
                     await acc.flush()
+                    # streaming 会通过 accumulator flush 发送，不需要在这里发
+                elif msg_id not in self._streamed_msg_ids:
+                    # 非流式响应（命令等）：直接从 response 发送
+                    result = data.get("result") or {}
+                    content = str(result.get("content", ""))
+                    if content:
+                        await self._do_send_text(chat_id, content)
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
             return
 
-        method = data.get("method", "")
         params = data.get("params", {})
 
         if method == Event.RESPONSE:
@@ -467,13 +481,20 @@ class WeChatCoreWSClient:
                 else:
                     await acc.add_text(content)
             elif message_id:
-                self._streamed_msg_ids.add(message_id)
-                self._accumulator_by_msg_id[message_id] = StreamAccumulator(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    send_fn=lambda cid, text: self._do_send_text(cid, text),
-                )
-                await self._accumulator_by_msg_id[message_id].add_text(content)
+                if event == Event.RESPONSE:
+                    # 非流式响应：直接发送（不创建 accumulator）
+                    # 若已存在于 _streamed_msg_ids，说明已在流式 flush 中发过，跳过
+                    if message_id in self._streamed_msg_ids:
+                        return
+                    self._streamed_msg_ids.add(message_id)
+                    await self._do_send_text(chat_id, content)
+                else:
+                    self._accumulator_by_msg_id[message_id] = StreamAccumulator(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        send_fn=lambda cid, text: self._do_send_text(cid, text),
+                    )
+                    await self._accumulator_by_msg_id[message_id].add_text(content)
         else:
             await self._do_send_text(chat_id, content)
 
@@ -484,6 +505,7 @@ class WeChatCoreWSClient:
         context_token = self._get_context_token(chat_id)
         try:
             await self._client.send_text(chat_id, text, context_token)
+            logger.info("[WeChatCore] send_text OK to %s len=%d", chat_id[:12], len(text))
         except Exception as exc:
             logger.warning("[WeChatCore] send_text failed to %s: %s", chat_id[:8], exc)
 
@@ -496,16 +518,20 @@ class WeChatCoreWSClient:
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
 
+        logger.debug("[WeChatCore] tool_call: tool=%s chat_id=%s msg_id=%s", tool_name, chat_id[:8] if chat_id else "", msg_id[:8] if msg_id else "")
+
         # Flush pending streaming text
         if msg_id and msg_id in self._accumulator_by_msg_id:
             acc = self._accumulator_by_msg_id[msg_id]
             await acc.flush()
 
         result = self.formatter.format_tool_call(tool_name, tool_input)
+        logger.debug("[WeChatCore] tool_call result: len=%d client=%s", len(result) if result else 0, self._client is not None)
         if result and self._client:
             context_token = self._get_context_token(chat_id)
             try:
                 await self._client.send_text(chat_id, result, context_token)
+                logger.debug("[WeChatCore] tool_call sent OK to %s", chat_id[:12])
             except Exception as exc:
                 logger.warning("[WeChatCore] tool_call send failed: %s", exc)
 
@@ -669,6 +695,7 @@ class WeChatCoreWSClient:
         future = asyncio.Future()
         self._pending_responses[str(req.id)] = future
         self._pending_message_ids[str(req.id)] = (message_id, sender_id)
+        logger.debug("[WeChatCore] → to core: id=%s method=%s msg_id=%s", req.id, req.method, message_id)
         await self._ws.send(json.dumps(req.to_dict()))
 
 

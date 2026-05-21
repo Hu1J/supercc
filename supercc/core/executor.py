@@ -97,6 +97,11 @@ class CoreExecutor:
             if wecom_cfg:
                 allowed = list(getattr(wecom_cfg, "allowed_users", []))
                 return Authenticator(allowed) if allowed else None
+        elif platform == "wechat":
+            wechat_cfg = getattr(channels, "wechat", None)
+            if wechat_cfg:
+                allowed = list(getattr(wechat_cfg, "allowed_users", []))
+                return Authenticator(allowed) if allowed else None
         # 默认用飞书
         feishu_cfg = getattr(channels, "feishu", None)
         if feishu_cfg:

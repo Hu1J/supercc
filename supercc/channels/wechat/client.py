@@ -50,6 +50,12 @@ EP_GET_UPLOAD_URL = "ilink/bot/getuploadurl"
 API_TIMEOUT_MS = 15_000
 CONFIG_TIMEOUT_MS = 10_000
 
+# iLink 频限相关
+RATE_LIMIT_ERRCODE = -2
+SESSION_EXPIRED_ERRCODE = -14
+SEND_RETRIES = 4
+SEND_RETRY_DELAY = 1.0
+
 # 消息类型
 MSG_TYPE_USER = 1
 MSG_TYPE_BOT = 2
@@ -214,14 +220,14 @@ class WeChatClient:
 
         # 第一块带 client_id（幂等），后续块不带
         first_cid = client_id or f"wechat-{uuid.uuid4().hex}"
-        resp = await self._send_text_chunk(openid, first_chunk, first_cid, context_token)
+        resp = await self._send_text_chunk_with_retry(openid, first_chunk, first_cid, context_token)
 
         # errcode=-14 → context_token 过期，去掉重试一次
-        if resp.get("errcode") == -14 and context_token:
-            resp = await self._send_text_chunk(openid, first_chunk, first_cid, None)
+        if resp.get("errcode") == SESSION_EXPIRED_ERRCODE and context_token:
+            resp = await self._send_text_chunk_with_retry(openid, first_chunk, first_cid, None)
 
         for chunk in rest_chunks:
-            await self._send_text_chunk(openid, chunk, None, context_token)
+            await self._send_text_chunk_with_retry(openid, chunk, None, context_token)
 
         return str(client_id or resp.get("client_id", ""))
 
@@ -281,6 +287,40 @@ class WeChatClient:
             {"msg": message},
             API_TIMEOUT_MS,
         )
+
+    async def _send_text_chunk_with_retry(
+        self,
+        openid: str,
+        text: str,
+        client_id: Optional[str],
+        context_token: Optional[str],
+    ) -> dict[str, Any]:
+        """发送单个文本块，rate limit 时自动重试。"""
+        last_err: Exception | None = None
+        for attempt in range(SEND_RETRIES + 1):
+            resp = await self._send_text_chunk(openid, text, client_id, context_token)
+            errcode = resp.get("errcode")
+            if errcode == 0 or errcode is None:
+                return resp
+            if errcode == SESSION_EXPIRED_ERRCODE:
+                # session 过期，去掉 token 重试一次
+                if context_token:
+                    context_token = None
+                    continue
+                return resp
+            if errcode == RATE_LIMIT_ERRCODE:
+                # 频限，backoff 后重试
+                wait = SEND_RETRY_DELAY * (attempt + 1)
+                logger.warning("[WeChatClient] rate limited, retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, SEND_RETRIES)
+                await asyncio.sleep(wait)
+                last_err = RuntimeError(f"rate limited errcode={errcode}")
+                continue
+            # 其他错误直接返回
+            return resp
+        # 耗尽重试次数
+        if last_err:
+            raise last_err
+        return {}
 
     async def send_image(
         self,

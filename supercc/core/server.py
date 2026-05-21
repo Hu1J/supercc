@@ -246,6 +246,7 @@ class WsServer:
             if msg.extra is not None:
                 params["extra"] = msg.extra
             frame = {"jsonrpc": "2.0", "method": msg.event, "params": params}
+            logger.debug(f"[push_fn] event={msg.event} chat_id={msg.session_key.chat_id} conn.alive={conn.alive}")
             try:
                 await conn.ws.send(json.dumps(frame))
             except Exception:

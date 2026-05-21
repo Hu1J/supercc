@@ -194,6 +194,7 @@ class ColoredFormatter(_BaseLogFormatter):
         "security": "\033[38;5;208m",  # orange
         "skill_search": "\033[38;5;213m",  # pink
         "core": "\033[38;5;75m",    # light blue
+        "wechat": "\033[32m",       # green
     }
     RESET = "\033[0m"
 
