@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import traceback
 from typing import Any, Optional
@@ -553,7 +554,7 @@ class WeChatCoreWSClient:
                         try:
                             media_path = await self._client.download_media_to_file(
                                 eqp, aes_key or None, full_url or None, suffix=".jpg",
-                                save_dir=self._data_dir,
+                                save_dir=self._data_dir, sub_dir="received_images",
                             )
                             logger.info("[WeChatCore] downloaded image: %s", media_path)
                             if media_path:
@@ -562,6 +563,30 @@ class WeChatCoreWSClient:
                             logger.warning("[WeChatCore] image download failed: %s", exc)
             elif first_type in {ITEM_VIDEO, ITEM_FILE}:
                 message_type_str = "file"
+                if self._client:
+                    media = first_item.get("file_item", {}).get("media", {})
+                    eqp = media.get("encrypt_query_param", "")
+                    aes_key_b64 = media.get("aes_key", "")
+                    full_url = media.get("full_url", "")
+                    raw_name = first_item.get("file_item", {}).get("file_name", "file")
+                    # aes_key 是 base64 编码的 hex 字符串
+                    # base64.b64decode → hex 字符串的 ASCII 字节 → .decode("ascii") → hex 字符串
+                    aes_key_hex: Optional[str] = None
+                    if aes_key_b64:
+                        import base64 as _b64
+                        aes_key_hex = _b64.b64decode(aes_key_b64).decode("ascii")
+                    if eqp or full_url:
+                        try:
+                            suffix = os.path.splitext(raw_name)[1] or ".bin"
+                            media_path = await self._client.download_media_to_file(
+                                eqp, aes_key_hex, full_url or None, suffix=suffix,
+                                save_dir=self._data_dir,
+                            )
+                            logger.info("[WeChatCore] downloaded file: %s", media_path)
+                            if media_path:
+                                text = f"![file]({media_path})"
+                        except Exception as exc:
+                            logger.warning("[WeChatCore] file download failed: %s", exc)
 
         # 检测群聊
         chat_type, chat_id = _guess_chat_type(msg, self._account_id)
