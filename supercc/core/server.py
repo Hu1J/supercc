@@ -210,7 +210,7 @@ class WsServer:
             role=MessageRole.USER,
             content=params.get("content", ""),
             message_type=msg_type,
-            media_path=None,
+            media_path=params.get("media_path") or None,
             user_open_id=params.get("user_open_id") or None,
             thread_id=params.get("thread_id") or None,
             timestamp=_cst_now(),

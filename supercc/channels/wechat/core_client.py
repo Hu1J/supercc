@@ -55,6 +55,12 @@ def _extract_text(item_list: list[dict[str, Any]]) -> str:
             voice_text = str((item.get("voice_item") or {}).get("text") or "")
             if voice_text:
                 return voice_text
+    # 图片/视频/文件没有文本内容时，给个占位符（仅非图片类型）
+    # 图片消息的 content 不需要占位符，media_path 已经携带路径
+    for item in item_list:
+        t = item.get("type")
+        if t in {ITEM_VIDEO, ITEM_FILE}:
+            return "[文件]"
     return ""
 
 
@@ -515,7 +521,7 @@ class WeChatCoreWSClient:
         if sender_id == self._account_id:
             return
 
-        logger.info("[WeChatCore] ← received msg: %s", json.dumps(msg, ensure_ascii=False)[:200])
+        logger.info("[WeChatCore] ← received msg: %s", json.dumps(msg, ensure_ascii=False))
 
         message_id = str(msg.get("message_id") or "").strip()
         context_token = str(msg.get("context_token") or "").strip()
@@ -529,6 +535,33 @@ class WeChatCoreWSClient:
         # 提取文本
         item_list = msg.get("item_list") or []
         text = _extract_text(item_list)
+
+        # 检测消息类型并下载媒体
+        media_path: str | None = None
+        message_type_str = "text"
+        if item_list:
+            first_item = item_list[0]
+            first_type = first_item.get("type")
+            if first_type == ITEM_IMAGE:
+                message_type_str = "image"
+                if self._client:
+                    media = first_item.get("image_item", {}).get("media", {})
+                    eqp = media.get("encrypt_query_param", "")
+                    aes_key = first_item.get("image_item", {}).get("aeskey", "")
+                    full_url = media.get("full_url", "")
+                    if eqp or full_url:
+                        try:
+                            media_path = await self._client.download_media_to_file(
+                                eqp, aes_key or None, full_url or None, suffix=".jpg",
+                                save_dir=self._data_dir,
+                            )
+                            logger.info("[WeChatCore] downloaded image: %s", media_path)
+                            if media_path:
+                                text = f"![image]({media_path})"
+                        except Exception as exc:
+                            logger.warning("[WeChatCore] image download failed: %s", exc)
+            elif first_type in {ITEM_VIDEO, ITEM_FILE}:
+                message_type_str = "file"
 
         # 检测群聊
         chat_type, chat_id = _guess_chat_type(msg, self._account_id)
@@ -566,6 +599,8 @@ class WeChatCoreWSClient:
             group_context = self._enrich_group_context(chat_id, message_id)
 
         # 发送到核心
+        logger.debug("[WeChatCore] → sending to core: message_type=%s, media_path=%s, content=%s",
+                     message_type_str, media_path, text[:80] if text else "")
         req = JsonRpcRequest(
             id=self._next_id(),
             method="wechat.message",
@@ -577,10 +612,11 @@ class WeChatCoreWSClient:
                 "user_open_id": sender_id,
                 "project_path": self._project_path,
                 "content": text,
-                "message_type": "text",
+                "message_type": message_type_str,
                 "is_group_chat": is_group_chat,
                 "mention_bot": False,
                 "group_context": group_context,
+                "media_path": media_path,
             },
         )
 

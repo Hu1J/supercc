@@ -452,9 +452,23 @@ class WeChatClient:
         aes_key: Optional[str] = None,
         full_url: Optional[str] = None,
         suffix: str = "",
+        save_dir: str = "",
     ) -> str:
-        """下载媒体文件到临时文件，返回文件路径。"""
+        """下载媒体文件到 save_dir/received_images/，返回文件路径。
+
+        若 save_dir 为空，则回落至 tempfile.mkstemp。
+        """
         data = await self.download_media(encrypted_query_param, aes_key, full_url)
+        if save_dir:
+            import os, time
+            images_dir = os.path.join(save_dir, "received_images")
+            os.makedirs(images_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"img_{ts}{suffix}"
+            path = os.path.join(images_dir, filename)
+            with open(path, "wb") as f:
+                f.write(data)
+            return path
         fd, path = tempfile.mkstemp(suffix=suffix)
         import os
         with os.fdopen(fd, "wb") as f:
