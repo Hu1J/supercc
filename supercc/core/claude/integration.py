@@ -129,10 +129,11 @@ class ClaudeIntegration:
         else:
             include_feishu = (channel == "feishu")
             include_wecom = (channel == "wecom")
-            if include_wecom:
+            include_wechat = (channel == "wechat")
+            if include_wecom or include_wechat:
                 include_feishu = False
-            logger.debug("[MCP] channel=%s, include_feishu=%s, include_wecom=%s", channel, include_feishu, include_wecom)
-            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu, include_wecom=include_wecom)
+            logger.debug("[MCP] channel=%s, include_feishu=%s, include_wecom=%s, include_wechat=%s", channel, include_feishu, include_wecom, include_wechat)
+            supercc_server = get_supercc_mcp_server(include_feishu=include_feishu, include_wecom=include_wecom, include_wechat=include_wechat)
 
         mcp_servers = {
             "SuperCC": supercc_server,
