@@ -4,7 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.3.5] - 2026-05-21
+## [0.3.6] - 2026-05-21
+
+### Added
+- **微信个人账号接入**：完整支持微信扫码登录（iLink Bot API），消息收发、媒体下载、文件/图片发送全部支持
+- **WeChatSendFile MCP 工具**：支持从 SuperCC 向微信用户发送图片、视频、音频、文件，通过 CDN AES-128-ECB 上传协议
+- **微信安装引导**：新增 `wechat_flow.py`，支持交互式扫码配对
+
+### Fixed
+- **微信消息丢帧**：TOOL_CALL 事件被 `if "id" in data` 拦截；STREAM_CHUNK 重复发送；command 响应未送达
+- **配对流程实时生效**：allowed_users 配置修改后 reload_config() 使其立即生效，无需重启
+- **文件 AES Key 编码**：发送文件时 aes_key 使用 `base64(hex(key))` 而非直接 `base64(key)`
+- **飞书 bot_open_id 自动写入**：修复飞书配置缺失时崩溃
+- **微信 bot_id 为空/无日志**：修复微信 channel 初始化时空 bot_id 导致日志截断
+
+### Changed
+- **onboard.py 重构**：微信作为独立 platform 选项加入安装引导流程
+- **core_client.py 消息处理重构**：引入 StreamAccumulator + `_streamed_msg_ids` 去重
+- **日志颜色**：微信 channel 使用绿色 `\033[32m`，区分其他 channel
 
 ### Fixed
 - **`/update` 指令 fire-and-forget 导致"已更新"消息在安装前发出**：先 await `do_update()` 完成 pip install 再返回结果，安装失败时返回错误信息，不再静默吞掉异常
