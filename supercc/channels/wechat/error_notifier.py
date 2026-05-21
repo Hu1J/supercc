@@ -92,10 +92,6 @@ async def _send_async(text: str) -> None:
     if not _wechat_client or not _last_chat_id:
         return
     try:
-        await _wechat_client.send_post_reply(
-            chat_id=_last_chat_id,
-            content=text,
-            log_reply=False,
-        )
+        await _wechat_client.send_text(_last_chat_id, text)
     except Exception:
         pass

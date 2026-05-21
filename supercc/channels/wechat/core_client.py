@@ -8,7 +8,7 @@ import random
 import traceback
 from typing import Any, Optional
 
-from supercc.core.protocol import JsonRpcRequest, Event, IncomingMessage
+from supercc.core.protocol import JsonRpcRequest, Event
 from supercc.channels.wechat.lp_client import WeChatLongPollingClient
 from supercc.channels.wechat.client import WeChatClient
 
@@ -260,7 +260,7 @@ class WeChatCoreWSClient:
         self._typing_tickets: dict[str, tuple[str, float]] = {}
 
         # 群聊历史：chat_id → 最近10条消息（内存滚动存储）
-        self._group_history: dict[str, list[IncomingMessage]] = {}
+        self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
 
         self.formatter = WeChatReplyFormatter()

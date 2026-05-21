@@ -6,7 +6,19 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, Union
+
+from supercc.channels.wechat.format.edit_diff import (
+    build_edit_marker,
+    build_write_marker,
+    _DiffMarker,
+)
+from supercc.channels.wechat.format.questionnaire_card import _AskUserQuestionMarker
+from supercc.channels.common.format.memory import MemoryCardMarker
+from supercc.channels.wechat.format.agent_card import WeChatAgentCardMarker, WeChatCodexMarker
+
+# Type alias for all possible return values
+WeChatToolResult = Union[str, _DiffMarker, list[_DiffMarker], MemoryCardMarker, _AskUserQuestionMarker, WeChatAgentCardMarker, WeChatCodexMarker]
 
 
 def should_use_card(text: str) -> bool:
@@ -47,13 +59,27 @@ class WeChatReplyFormatter:
         "CronLogs": "⏰",
     }
 
-    def format_tool_call(self, tool_name: str, tool_input: Optional[str] = None) -> str:
-        """Format a tool call notification as WeChat-friendly text."""
+    def format_tool_call(self, tool_name: str, tool_input: Optional[str] = None) -> WeChatToolResult:
+        """Format a tool call notification as WeChat-friendly text or marker."""
         if tool_input is None:
             tool_input = ""
 
         icon = self.ICONS.get(tool_name, "🤖")
         short_name = tool_name.replace("mcp__SuperCC__", "").replace("mcp__", "")
+
+        # Edit / Write → _DiffMarker（彩色 diff 文本）
+        if tool_name == "Edit":
+            if tool_input.strip():
+                try:
+                    return build_edit_marker(tool_input)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        elif tool_name == "Write":
+            if tool_input.strip():
+                try:
+                    return build_write_marker(tool_input)
+                except (json.JSONDecodeError, KeyError):
+                    pass
 
         # Bash → code block
         if tool_name == "Bash":
@@ -129,10 +155,10 @@ class WeChatReplyFormatter:
 
         WeChat does NOT support CardKit, so this always returns False.
         """
-        return should_use_card(text)
+        return False
 
 
-def format_tool_call(tool_name: str, tool_input: Optional[str] = None) -> str:
+def format_tool_call(tool_name: str, tool_input: Optional[str] = None) -> WeChatToolResult:
     """Convenience function for formatting tool calls."""
     formatter = WeChatReplyFormatter()
     return formatter.format_tool_call(tool_name, tool_input)

@@ -70,17 +70,19 @@ async def run_onboard_flow() -> bool:
         data_dir = os.path.join(os.getcwd(), ".supercc")
 
     # 检测已配置的平台
-    _feishu_has_app = bool(os.path.exists(cfg_path))
     _feishu_has_app = False
     _wecom_has_corp = False
+    _wechat_has_account = False
     try:
         from supercc.config import init_config, get_config
         init_config(cfg_path)
         cfg = get_config()
         feishu_cfg = getattr(cfg.channels, "feishu", None)
         wecom_cfg = getattr(cfg.channels, "wecom", None)
+        wechat_cfg = getattr(cfg.channels, "wechat", None)
         _feishu_has_app = bool(feishu_cfg and getattr(feishu_cfg, "app_id", ""))
         _wecom_has_corp = bool(wecom_cfg and getattr(wecom_cfg, "corp_id", ""))
+        _wechat_has_account = bool(wechat_cfg and getattr(wechat_cfg, "account_id", ""))
     except Exception:
         pass
 
@@ -89,6 +91,7 @@ async def run_onboard_flow() -> bool:
     platform_choices = [
         questionary.Choice("飞书 (Feishu)" + ("  ✅ 已配置" if _feishu_has_app else ""), value="feishu"),
         questionary.Choice("企业微信 (WeCom)" + ("  ✅ 已配置" if _wecom_has_corp else ""), value="wecom"),
+        questionary.Choice("微信 (WeChat)" + ("  ✅ 已配置" if _wechat_has_account else ""), value="wechat"),
         questionary.Choice("⏭  跳过（稍后手动配置）", value="skip"),
     ]
 
@@ -106,9 +109,11 @@ async def run_onboard_flow() -> bool:
         print("\n⏭  跳过平台配置\n")
         feishu_configured = _feishu_has_app
         wecom_configured = _wecom_has_corp
-    elif (platform_choice == "feishu" and _feishu_has_app) or (platform_choice == "wecom" and _wecom_has_corp):
+        wechat_configured = _wechat_has_account
+    elif (platform_choice == "feishu" and _feishu_has_app) or (platform_choice == "wecom" and _wecom_has_corp) or (platform_choice == "wechat" and _wechat_has_account):
         # 已配置的平台：提供管理选项
-        platform_name = "飞书" if platform_choice == "feishu" else "企业微信"
+        platform_names = {"feishu": "飞书", "wecom": "企业微信", "wechat": "微信"}
+        platform_name = platform_names.get(platform_choice, platform_choice)
         manage_choice = await questionary.select(
             f"{platform_name} 已配置，请选择操作",
             choices=[
@@ -127,28 +132,41 @@ async def run_onboard_flow() -> bool:
             print("\n⏭  跳过平台配置\n")
             feishu_configured = _feishu_has_app
             wecom_configured = _wecom_has_corp
+            wechat_configured = _wechat_has_account
         elif manage_choice == "delete":
-            # 清除配置
             try:
                 from supercc.config import init_config, get_config, write_config
                 init_config(cfg_path)
                 cfg = get_config()
-                channel = getattr(cfg.channels, platform_choice, None)
-                if channel:
-                    channel.app_id = ""
-                    channel.app_secret = ""
-                    channel.bot_open_id = ""
-                    channel.enabled = False
+                if platform_choice == "feishu":
+                    cfg.channels.feishu.app_id = ""
+                    cfg.channels.feishu.app_secret = ""
+                    cfg.channels.feishu.bot_open_id = ""
+                    cfg.channels.feishu.enabled = False
+                elif platform_choice == "wecom":
+                    cfg.channels.wecom.corp_id = ""
+                    cfg.channels.wecom.agent_id = ""
+                    cfg.channels.wecom.corp_secret = ""
+                    cfg.channels.wecom.bot_id = ""
+                    cfg.channels.wecom.secret = ""
+                    cfg.channels.wecom.enabled = False
+                elif platform_choice == "wechat":
+                    cfg.channels.wechat.account_id = ""
+                    cfg.channels.wechat.token = ""
+                    cfg.channels.wechat.bot_open_id = ""
+                    cfg.channels.wechat.enabled = False
                 write_config(cfg)
                 print(f"✅ {platform_name} 配置已删除\n")
             except Exception as e:
                 print(f"⚠️  删除失败：{e}\n")
             feishu_configured = _feishu_has_app if platform_choice != "feishu" else False
             wecom_configured = _wecom_has_corp if platform_choice != "wecom" else False
+            wechat_configured = _wechat_has_account if platform_choice != "wechat" else False
         else:
             # reconfigure: 重新走安装流程
-            feishu_configured = False
-            wecom_configured = False
+            feishu_configured = _feishu_has_app
+            wecom_configured = _wecom_has_corp
+            wechat_configured = _wechat_has_account
             _print_step(3, TOTAL_STEPS, "配置平台")
             if platform_choice == "feishu":
                 try:
@@ -158,7 +176,7 @@ async def run_onboard_flow() -> bool:
                     feishu_configured = True
                 except Exception as e:
                     print(f"⚠️  飞书配置出错：{e}（稍后可手动配置）\n")
-            else:
+            elif platform_choice == "wecom":
                 print("\n正在安装企业微信 SDK...\n")
                 import subprocess
                 result = subprocess.run(
@@ -177,13 +195,22 @@ async def run_onboard_flow() -> bool:
                     wecom_configured = True
                 except Exception as e:
                     print(f"⚠️  企业微信配置出错：{e}（稍后可手动配置）\n")
+            elif platform_choice == "wechat":
+                try:
+                    from supercc.install.wechat_flow import run_wechat_install_flow
+                    await run_wechat_install_flow(cfg_path, bypass_accepted=True)
+                    print("✅ 微信配置完成\n")
+                    wechat_configured = True
+                except Exception as e:
+                    print(f"⚠️  微信配置出错：{e}（稍后可手动配置）\n")
     else:
         # 未配置的平台：正常流程
         _print_step(3, TOTAL_STEPS, "配置平台")
 
         Path(cfg_path).parent.mkdir(parents=True, exist_ok=True)
-        feishu_configured = False
-        wecom_configured = False
+        feishu_configured = _feishu_has_app
+        wecom_configured = _wecom_has_corp
+        wechat_configured = _wechat_has_account
 
         if platform_choice == "feishu":
             try:
@@ -215,6 +242,15 @@ async def run_onboard_flow() -> bool:
                 wecom_configured = True
             except Exception as e:
                 print(f"⚠️  企业微信配置出错：{e}（稍后可手动配置）\n")
+
+        elif platform_choice == "wechat":
+            try:
+                from supercc.install.wechat_flow import run_wechat_install_flow
+                await run_wechat_install_flow(cfg_path, bypass_accepted=True)
+                print("✅ 微信配置完成\n")
+                wechat_configured = True
+            except Exception as e:
+                print(f"⚠️  微信配置出错：{e}（稍后可手动配置）\n")
 
     # ── Auth mode selection (Plugin→Core) ────────────────────────────────────
     _print_step(3, TOTAL_STEPS, "配置认证方式")
@@ -294,6 +330,7 @@ async def run_onboard_flow() -> bool:
         print("模型: 未配置")
     print(f"飞书: {'已配置' if feishu_configured else '未配置'}")
     print(f"企业微信: {'已配置' if wecom_configured else '未配置'}")
+    print(f"微信: {'已配置' if wechat_configured else '未配置'}")
 
     if token:
         print(f"认证: Token（{token[:8]}...）")

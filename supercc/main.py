@@ -1223,10 +1223,24 @@ def _run_config_channel_interactive(dirty: list) -> None:
                 print("✅ 微信配置已删除")
                 return
             if sub == "reconfigure":
-                print("微信配置变更请参考文档重新扫码")
+                print("\n正在重新配置微信...\n")
+                import asyncio
+                from supercc.install.wechat_flow import run_wechat_install_flow
+                try:
+                    asyncio.run(run_wechat_install_flow(cfg_path, bypass_accepted=True))
+                    print("✅ 微信配置完成\n")
+                except Exception as e:
+                    print(f"⚠️  微信配置出错：{e}\n")
                 return
         else:
-            print("\n微信个人账号需要扫码登录，请参考文档配置\n")
+            print("\n正在配置微信...\n")
+            import asyncio
+            from supercc.install.wechat_flow import run_wechat_install_flow
+            try:
+                asyncio.run(run_wechat_install_flow(cfg_path, bypass_accepted=True))
+                print("✅ 微信配置完成\n")
+            except Exception as e:
+                print(f"⚠️  微信配置出错：{e}\n")
         return
 
 
@@ -1495,19 +1509,22 @@ def _run_config_command(args) -> None:
 
         feishu = cfg.channels.feishu
         wecom = cfg.channels.wecom
+        wechat = cfg.channels.wechat
 
         if channel_action is None or channel_action == "status":
             feishu_creds = "✅ 已配置" if feishu.app_id else "❌ 未配置"
             wecom_creds = "✅ 已配置" if wecom.bot_id else "❌ 未配置"
+            wechat_creds = "✅ 已配置" if wechat.token else "❌ 未配置"
             print(f"飞书:      enabled={feishu.enabled}  {feishu_creds}")
             print(f"企业微信:  enabled={wecom.enabled}  {wecom_creds}")
+            print(f"微信:      enabled={wechat.enabled}  {wechat_creds}")
             print()
             print("说明：修改 enabled 后需重启 SuperCC（supercc gateway restart）才能生效")
             if channel_action is None:
                 return
 
-        if channel_name not in ("feishu", "wecom"):
-            print(f"❌ 不支持的插件：{channel_name}（支持：feishu, wecom）")
+        if channel_name not in ("feishu", "wecom", "wechat"):
+            print(f"❌ 不支持的插件：{channel_name}（支持：feishu, wecom, wechat）")
             return
 
         channel = getattr(cfg.channels, channel_name, None)
@@ -1521,6 +1538,9 @@ def _run_config_command(args) -> None:
                 return
             if channel_name == "wecom" and not channel.bot_id:
                 print("❌ 企业微信未配置凭证（bot_id 为空），无法启用。请先运行 onboard")
+                return
+            if channel_name == "wechat" and not channel.account_id:
+                print("❌ 微信未配置凭证（account_id 为空），无法启用。请先运行 onboard")
                 return
             channel.enabled = True
             write_config(cfg)

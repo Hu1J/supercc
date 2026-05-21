@@ -147,8 +147,10 @@ class WeChatChannelConfig:
     """微信个人（iLink）插件配置。"""
     enabled: bool = False
     token: str = ""
-    account_id: str = ""
+    account_id: str = ""         # iLink ilink_bot_id
+    bot_open_id: str = ""        # iLink ilink_user_id
     allowed_users: List[str] = field(default_factory=list)
+    groups: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -489,7 +491,9 @@ def _write_config_to_path(path: str, cfg: Config) -> None:
                 "enabled": cfg.channels.wechat.enabled,
                 "token": cfg.channels.wechat.token,
                 "account_id": cfg.channels.wechat.account_id,
+                "bot_open_id": cfg.channels.wechat.bot_open_id,
                 "allowed_users": cfg.channels.wechat.allowed_users,
+                "groups": cfg.channels.wechat.groups,
             },
         },
         "claude": {

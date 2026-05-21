@@ -55,6 +55,16 @@ def _safe_id(value: Optional[str], keep: int = 8) -> str:
     return raw[:keep]
 
 
+def _make_ssl_connector():
+    try:
+        import ssl
+        import certifi
+    except ImportError:
+        return None
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    return aiohttp.TCPConnector(ssl=ssl_ctx)
+
+
 def _is_stale_session_ret(ret: Optional[int], errcode: Optional[int], errmsg: Optional[str]) -> bool:
     """True when iLink returns ret=-2 / errcode=-2 with 'unknown error'."""
     if ret != -2 and errcode != -2:
@@ -110,7 +120,8 @@ class WeChatLongPollingClient:
     async def _api_post(self, payload: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
         """POST 到 iLink API。"""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = _make_ssl_connector()
+            self._session = aiohttp.ClientSession(trust_env=True, connector=connector)
 
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         headers = _headers(self._token, body)

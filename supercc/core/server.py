@@ -128,6 +128,8 @@ class WsServer:
         self.router.add("feishu.notify", self._handle_notify)
         self.router.add("wecom.message", self._handle_wecom_message)
         self.router.add("wecom.notify", self._handle_notify)
+        self.router.add("wechat.message", self._handle_wechat_message)
+        self.router.add("wechat.notify", self._handle_notify)
 
     # ── 核心方法处理 ────────────────────────────────────────────────────────
 
@@ -259,6 +261,10 @@ class WsServer:
 
     async def _handle_wecom_message(self, req: JsonRpcRequest) -> dict:
         """处理来自企业微信插件的消息（复用 feishu.message 逻辑）。"""
+        return await self._handle_message(req)
+
+    async def _handle_wechat_message(self, req: JsonRpcRequest) -> dict:
+        """处理来自微信插件的消息（复用 feishu.message 逻辑）。"""
         return await self._handle_message(req)
 
     async def _handle_notify(self, req: JsonRpcRequest) -> dict:

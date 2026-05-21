@@ -65,9 +65,8 @@ async def run_plugin(config, data_dir: str) -> None:
         core_url=core_url,
         token=wechat_cfg.token,
         account_id=wechat_cfg.account_id,
-        bot_openid="",
+        bot_openid=wechat_cfg.bot_open_id,
         data_dir=data_dir,
-        project_path=config.claude.approved_directory,
         allowed_users=list(wechat_cfg.allowed_users) if wechat_cfg.allowed_users else [],
     )
 
