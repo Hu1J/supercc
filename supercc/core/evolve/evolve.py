@@ -342,7 +342,7 @@ async def run_evolve(
     evo_logger.debug(f"[evolve] context set from snapshot: {ctx}")
 
     skills_dir = str(Path(data_dir) / "skills")
-    evo_logger.info(f"[evolve] DEBUG: data_dir={data_dir}, skills_dir={skills_dir}")
+    evo_logger.debug(f"[evolve] data_dir={data_dir}, skills_dir={skills_dir}")
     is_evo_verbose = is_verbose_enabled_fn(key.platform, key.chat_id, "evolve")
 
     from supercc.core.evolve.skill_nudge import _get_skill_git_state, _get_skill_commit_message
