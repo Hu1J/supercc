@@ -102,6 +102,7 @@ class FeishuWSClient:
         domain: str = "feishu",
         on_message: MessageCallback | None = None,
         config_path: str = "",
+        on_bot_id_found: Callable[[str], None] | None = None,
     ):
         self.app_id = app_id
         self.app_secret = app_secret
@@ -113,6 +114,7 @@ class FeishuWSClient:
         self._handler = None
         self._probed_bot_open_id: str | None = None
         self._config_path = config_path
+        self._on_bot_id_found = on_bot_id_found
 
     @property
     def bot_open_id(self) -> str:
@@ -162,13 +164,16 @@ class FeishuWSClient:
         if not self._config_path:
             return
         try:
-            from supercc.config import get_config, write_config
+            from supercc.config import get_config, write_config, reload_config
             cfg = get_config()
             if cfg.channels.feishu.bot_open_id == bot_id:
                 return  # already set to same value
             cfg.channels.feishu.bot_open_id = bot_id
             write_config(cfg)
-            logger.info(f"Wrote bot_open_id={bot_id} back to config")
+            reload_config()  # refresh global singleton so get_config() returns fresh data
+            logger.info(f"Wrote bot_open_id={bot_id} back to config and reloaded")
+            if self._on_bot_id_found:
+                self._on_bot_id_found(bot_id)
         except Exception as e:
             logger.warning(f"Failed to write bot_open_id back to config: {e}")
 
