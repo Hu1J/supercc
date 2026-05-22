@@ -231,7 +231,7 @@ class WsServer:
         if self._executor is None:
             raise RuntimeError("No executor configured")
 
-        # push_fn：找到当前连接，发送 OutboundMessage 为 Event notification
+        # push_fn：通过 _conn_var 运行时获取连接（流式回调可能运行在新 task 中）
         async def push_fn(msg: Any) -> None:
             conn = _conn_var.get()
             if conn is None:
@@ -259,6 +259,32 @@ class WsServer:
             "content": result_outbound.content,
             "event": result_outbound.event,
         }
+
+    async def push_to_connection(self, session_key: Any, msg: Any) -> None:
+        """根据 SessionKey 查找对应连接并发送 WS 帧（供 evolve 等后台任务使用）。
+
+        遍历所有连接，找 platform + chat_id 匹配的连接发送。
+        """
+        target_platform = session_key.platform
+        target_chat_id = session_key.chat_id
+        params = {
+            "chat_id": msg.session_key.chat_id,
+            "message_id": msg.message_id,
+            "content": msg.content,
+            "event": msg.event,
+        }
+        if msg.extra is not None:
+            params["extra"] = msg.extra
+        frame = {"jsonrpc": "2.0", "method": msg.event, "params": params}
+        sent = 0
+        for conn in self._connections.values():
+            if conn.platform == target_platform and conn.alive:
+                try:
+                    await conn.ws.send(json.dumps(frame))
+                    sent += 1
+                except Exception:
+                    conn.alive = False
+        logger.debug(f"[push_to_connection] event={msg.event} platform={target_platform} chat_id={target_chat_id} sent={sent}")
 
     async def _handle_wecom_message(self, req: JsonRpcRequest) -> dict:
         """处理来自企业微信插件的消息（复用 feishu.message 逻辑）。"""

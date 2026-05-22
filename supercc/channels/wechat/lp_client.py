@@ -178,6 +178,9 @@ class WeChatLongPollingClient:
     async def run_loop(self, on_message: Callable[[dict[str, Any]], None]) -> None:
         """持续轮询消息，通过 on_message 回调处理。
 
+        每批消息通过 asyncio.create_task 并发处理，不阻塞 poll 循环，
+        确保 sync_buf 能持续推进，避免消息积压导致 iLink 窗口丢失。
+
         Args:
             on_message: 回调函数，接收原始消息字典。
         """
@@ -190,10 +193,7 @@ class WeChatLongPollingClient:
             try:
                 msgs = await self.poll()
                 for msg in msgs:
-                    try:
-                        await on_message(msg)
-                    except Exception as exc:
-                        logger.error("wechat: on_message error for msg from=%s: %s", _safe_id(msg.get("from_user_id")), exc)
+                    asyncio.create_task(on_message(msg))
 
                 consecutive_failures = 0
 

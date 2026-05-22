@@ -434,7 +434,9 @@ class WeChatCoreWSClient:
 
     async def _do_send_text(self, chat_id: str, text: str) -> None:
         """发送文本到微信。"""
+        logger.info("[WeChatCore] → send_text to %s len=%d", chat_id[:12], len(text))
         if not self._client:
+            logger.warning("[WeChatCore] send_text skipped: no client")
             return
         context_token = self._get_context_token(chat_id)
         try:
