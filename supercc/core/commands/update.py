@@ -15,15 +15,12 @@ class UpdateHandler(CommandHandler):
         return "/update — 检查并更新到最新版本"
 
     async def execute(self, args: str, context: dict) -> CommandResult:
-        import asyncio
-
         current_ver, latest_ver = check_version()
         if packaging.version.parse(latest_ver) <= packaging.version.parse(current_ver):
             return CommandResult(content=f"✅ 当前版本 {current_ver} 已是最新")
 
-        # 先执行安装，再返回结果
         try:
-            await asyncio.to_thread(do_update)
+            do_update()
         except Exception as e:
             return CommandResult(content=f"❌ 更新失败: {e}")
 
