@@ -380,6 +380,7 @@ class WeChatCoreWSClient:
                     if content:
                         self._streamed_msg_ids.add(msg_id)
                         await self._do_send_text(chat_id, content)
+                        await self._flush_accumulated(chat_id)
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
@@ -428,11 +429,15 @@ class WeChatCoreWSClient:
                 await self._client.send_text(chat_id, content)
             return
 
-        # RESPONSE 去重
+        # RESPONSE 去重（积累模式下不跳过，让限流路径 flush buf + 计数）
         if message_id:
             if event == Event.RESPONSE:
                 if message_id in self._streamed_msg_ids:
-                    return
+                    # 有积累 buf 时移除去重，让 _apply_rate_limit 处理 flush
+                    if self._rate_state.get(chat_id, {}).get("buf"):
+                        self._streamed_msg_ids.discard(message_id)
+                    else:
+                        return
                 self._streamed_msg_ids.add(message_id)
             else:
                 self._streamed_msg_ids.add(message_id)
@@ -539,6 +544,23 @@ class WeChatCoreWSClient:
             logger.debug(f"[WeChatCore] rate limit: normal send {state['count']}")
             return [content]
 
+    async def _flush_accumulated(self, chat_id: str) -> None:
+        """RESPONSE 通过 id 路径到达后，flush 积累 buf 并标记 final。
+
+        仅在 accumulate 模式有积累内容时执行。
+        """
+        state = self._rate_state.get(chat_id)
+        if not state or not state["buf"]:
+            return
+        if state.get("final_sent"):
+            return
+        flush_content = "\n".join(state["buf"])
+        state["buf"] = []
+        state["final_sent"] = True
+        state["mode"] = "normal"
+        await self._do_send_text(chat_id, flush_content)
+        logger.info(f"[WeChatCore] rate limit: flush accumulated ({len(flush_content)} chars), final_sent")
+
     async def _do_send_text(self, chat_id: str, text: str) -> None:
         """发送文本到微信。"""
         logger.info("[WeChatCore] → send_text to %s len=%d", chat_id[:12], len(text))
@@ -580,7 +602,7 @@ class WeChatCoreWSClient:
             # 积累模式：短格式加入 buf，不发送
             short = self._fmt_accumulate_item("", is_tool_call=True, tool_name=tool_name, tool_input=tool_input)
             state["buf"].append(short)
-            logger.debug(f"[WeChatCore] rate limit: tool_call accumulated, buf size={len(state['buf'])}")
+            logger.info(f"[WeChatCore] rate limit: tool_call accumulated ({tool_name}), buf size={len(state['buf'])}")
             return
 
         # normal 模式：直接发送，计入 count
@@ -594,7 +616,8 @@ class WeChatCoreWSClient:
             context_token = self._get_context_token(chat_id)
             try:
                 await self._client.send_text(chat_id, result, context_token)
-                logger.debug("[WeChatCore] tool_call sent OK to %s", chat_id[:12])
+                logger.info("[WeChatCore] tool_call sent to %s: %s — %s",
+                           chat_id[:12], tool_name, tool_input[:60])
             except Exception as exc:
                 logger.warning("[WeChatCore] tool_call send failed: %s", exc)
 
