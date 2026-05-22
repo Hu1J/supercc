@@ -390,6 +390,7 @@ async def start_bridge(config_path: str, data_dir: str, foreground: bool = False
         port=core_port,
         executor=executor,
     )
+    executor._server = core_server  # 供 _run_evolve 通过 SessionKey 查找连接发通知
     await core_server.start()
     actual_port = core_server.port
     if actual_port != core_port:
@@ -595,6 +596,7 @@ def start_core_only(config_path: str, data_dir: str):
             port=core_port,  # 从 config 读取
             executor=executor,
         )
+        executor._server = core_server  # 供 _run_evolve 通过 SessionKey 查找连接发通知
         # 给 CronScheduler 设置 executor（它在主线程）
         if cron_scheduler:
             cron_scheduler.set_executor(executor)

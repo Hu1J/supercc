@@ -97,6 +97,7 @@ async def run_plugin(config, data_dir):
         domain=config.channels.feishu.domain,
         on_message=on_message,
         config_path=getattr(config, "cfg_path", ""),
+        on_bot_id_found=lambda bid: setattr(core_client, "bot_id", bid),
     )
 
     # 启动 WS 接收飞书消息（lark-oapi 用自己的 loop 阻塞）

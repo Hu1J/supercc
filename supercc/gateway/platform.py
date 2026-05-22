@@ -54,12 +54,17 @@ def _get_start_script(data_dir: str) -> str:
     """生成 bridge 启动脚本内容。
 
     所有平台统一使用 --working-dir 参数指定项目目录，不再依赖 cd。
+    捕获当前环境的 PATH 和 VIRTUAL_ENV，确保 conda/virtualenv 下的 supercc 可执行。
     """
     project_dir = Path(data_dir).resolve().parent
     supercc_path = _resolve_supercc()
+    sane_path = os.environ.get("PATH", "")
+    venv_dir = os.environ.get("VIRTUAL_ENV", "")
     return (
         f"#!/bin/bash\n"
-        f"exec {supercc_path} gateway run --working-dir {project_dir}\n"
+        f"export PATH={sane_path}\n"
+        + (f"export VIRTUAL_ENV={venv_dir}\n" if venv_dir else "")
+        + f"exec {supercc_path} gateway run --working-dir {project_dir}\n"
     )
 
 
@@ -340,8 +345,11 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     project_dir = Path(data_dir).resolve().parent
     supercc_path = _resolve_supercc()
     # 脚本直接调用 gateway run，由 manager.py 的 _spawn_detached 处理进程创建
+    # 捕获 PATH 确保 conda/virtualenv 下的工具可用
+    sane_path = os.environ.get("PATH", "")
     script_content = (
         f'@echo off\n'
+        f'set PATH={sane_path}\n'
         f'cd /d "{project_dir}"\n'
         f'"{supercc_path}" gateway run --working-dir "{project_dir}"\n'
     )

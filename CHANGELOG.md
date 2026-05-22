@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.8] - 2026-05-22
+
+### Added
+- **微信 iLink 10 条消息限流**：同一 context_token 下机器人最多发送 10 条消息。1-7 条正常发送，第 8 条发纯文本 + 限流警告，第 9 条积累中间消息（工具调用标题 + 文本前 20 字符），第 10 条发最终回复。积累内容限制 2000 字符，超出截断以 ... 结尾
+
+### Fixed
+- **微信积累消息不会发出**：RESPONSE 被 `_streamed_msg_ids` 去重跳过时积累 buf 未 flush → 移除去重让 RESPONSE 走限流路径
+- **微信积累消息不发送**：JSON-RPC 响应（id 路径）绕过 `_render_and_send` → 发送后调用 `_flush_accumulated` 检查并 flush buf
+- **飞书 evolve 通知未送达**：evolve 运行于 WS 响应后 `_conn_var` 已为空 → `push_to_connection` 改用 SessionKey 查找连接
+- **飞书 bot_id 自动探测不同步**：`_write_back_bot_open_id` 仅写 config.json 未更新内存对象 → 加 `reload_config()` 刷新全局单例 + 回调更新 `core_client.bot_id`
+- **Gateway Linux/Windows 环境变量丢失**：启动脚本未捕获 PATH/VIRTUAL_ENV → 所有平台启动脚本统一 export PATH 和 VIRTUAL_ENV
+
 ## [0.3.6] - 2026-05-21
 
 ### Added

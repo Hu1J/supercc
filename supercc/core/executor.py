@@ -62,6 +62,10 @@ class CoreExecutor:
         # 签名: Callable[[OutboundMessage], Awaitable[None]]
         self._push_fn: Callable[[OutboundMessage], Awaitable[None]] | None = None
 
+        # _server：由 server.py 在构造后注入，供 _run_evolve 使用（evolve 运行于 WS 响应后，
+        # push_fn 已无法依赖 _conn_var，需通过 SessionKey 查找连接）
+        self._server: Any = None
+
         # 延迟的 evolve 参数：(key, sdk_session_id, message_id, evo_ctx)
         self._pending_evolve: tuple | None = None
 
@@ -472,6 +476,11 @@ class CoreExecutor:
         except Exception:
             return
 
+        # push_fn 闭包：通过 SessionKey 查找连接（evolve 运行于 WS 响应后，_conn_var 已为空）
+        async def push_to_conn(msg: Any) -> None:
+            if self._server is not None:
+                await self._server.push_to_connection(key, msg)
+
         await run_evolve(
             worker=worker,
             pool=self.pool,
@@ -480,7 +489,7 @@ class CoreExecutor:
             message_id=message_id,
             evo_context=evo_ctx,
             data_dir=self._data_dir,
-            push_fn=self._push_fn,
+            push_fn=push_to_conn,
             is_verbose_enabled_fn=self._is_verbose_enabled,
             config=self._config,
             _logger=logger,
