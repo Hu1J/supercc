@@ -222,8 +222,9 @@ class WeChatCoreWSClient:
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
 
-        # 微信消息限流状态：chat_id → {count, buf, mode}
-        # count: 已发送条数（不含跳过）；mode: "normal"|"warn"|"accumulate"
+        # 微信消息限流状态：chat_id → {count, buf: list, mode, final_sent}
+        # count: 已发送条数；buf: 积累的消息列表；mode: "normal"|"warn"|"accumulate"
+        # final_sent: accumulate 模式下，第 10 条 (RESPONSE) 是否已发出
         self._rate_state: dict[str, dict] = {}
 
         self.formatter = WeChatReplyFormatter()
@@ -408,9 +409,10 @@ class WeChatCoreWSClient:
 
         规则（按 chat_id 隔离）：
         - 1-7 条：正常发送
-        - 第 8 条：末尾追加"消息过长"提示，正常发送，切换到 accumulate 模式
-        - 第 9 条：积累内容（本次内容 + 之前各条截断内容），正常发送，退出 accumulate
-        - 第 10+ 条：静默跳过
+        - 第 8 条（count 7→8）：RESPONSE 直接发；STREAM_CHUNK 发内容+警告 → enter warn
+        - 第 9 条（count 8→9 / warn 模式）：RESPONSE 直接发；STREAM_CHUNK 启动积累 → enter accumulate
+        - 第 10 条（accumulate 模式）：RESPONSE flush buf + 单独发；STREAM_CHUNK 继续积累
+        - 第 11+ 条：静默跳过
         """
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
@@ -436,78 +438,106 @@ class WeChatCoreWSClient:
                 self._streamed_msg_ids.add(message_id)
 
         # 限流处理
-        content, skip = self._apply_rate_limit(chat_id, content, event)
-        if skip:
+        to_send = self._apply_rate_limit(chat_id, content, event)
+        if not to_send:
             return
 
-        await self._do_send_text(chat_id, content)
+        for msg in to_send:
+            await self._do_send_text(chat_id, msg)
 
-    def _apply_rate_limit(self, chat_id: str, content: str, event: str) -> tuple[str, bool]:
-        """返回 (最终发送内容, 是否跳过)。
+    def _fmt_accumulate_item(self, content: str, is_tool_call: bool = False, tool_name: str = "", tool_input: str = "") -> str:
+        """格式化积累内容条目。
 
-        返回 skip=True 时 caller 应跳过发送。
+        - 工具调用: 仅渲染标题行（icon + name — trunc(args, 50)）
+        - 文本: 前20字符 + ...
+        """
+        if is_tool_call:
+            icon = WeChatReplyFormatter.ICONS.get(tool_name, "🤖")
+            short_name = tool_name.replace("mcp__SuperCC__", "").replace("mcp__", "")
+            truncated = tool_input[:50] + "..." if len(tool_input) > 50 else tool_input
+            return f"{icon} {short_name} — {truncated}"
+        # 文本截取
+        stripped = content.strip().replace("\n", " ")
+        return stripped[:20] + "..." if len(stripped) > 20 else stripped
+
+    def _apply_rate_limit(self, chat_id: str, content: str, event: str) -> list[str]:
+        """根据限流规则返回待发送消息列表。
+
+        空列表 = 跳过本次发送。
+        1 个元素 = 单发本条。
+        2 个元素 = 先发 [0]（flush），再发 [1]（主消息）。
         """
         state = self._rate_state.get(chat_id)
         if state is None:
-            state = {"count": 0, "buf": "", "mode": "normal"}
+            state = {"count": 0, "buf": [], "mode": "normal", "final_sent": False}
             self._rate_state[chat_id] = state
+
+        # final_sent：所有消息已发完
+        if state["final_sent"]:
+            return []
 
         mode = state["mode"]
 
-        # RESPONSE：最终回复，特殊处理
+        # ── RESPONSE：永远单独发出，不参与合并 ───────────────────────────
         if event == Event.RESPONSE:
             if mode == "accumulate":
-                # 第 9 条：积累内容 + 最终回复，发送后退出 accumulate
-                buf_len = len(state["buf"])
-                final = state["buf"] + content
+                # MSG 10：先 flush buf（如有），再发 RESPONSE
+                result = []
+                if state["buf"]:
+                    result.append("\n".join(state["buf"]))
+                    state["buf"] = []
+                    state["count"] += 1
+                    logger.info(f"[WeChatCore] rate limit: flush accumulated ({len(result[0])} chars) as message {state['count']}")
                 state["count"] += 1
-                state["buf"] = ""
+                state["final_sent"] = True
                 state["mode"] = "normal"
-                logger.info(f"[WeChatCore] rate limit: flushing accumulated (buf len={buf_len}) as message {state['count']}")
-                return final, False
+                result.append(content)
+                logger.info(f"[WeChatCore] rate limit: RESPONSE as message {state['count']}, final")
+                return result
             elif mode == "warn":
-                # 之前第 8 条已发了警告，RESPONSE 正常发
+                # MSG 9 (count 8→9)：直接发，进入 accumulate
                 state["count"] += 1
-                return content, False
+                state["mode"] = "accumulate"
+                logger.info(f"[WeChatCore] rate limit: RESPONSE as message {state['count']}, entering accumulate")
+                return [content]
             else:
-                # normal 模式：检查是否触发 warn
-                # RESPONSE（count 6→7）：第 8 条发警告；STREAM_CHUNK（count 7→8）：第 8 条发警告
-                if state["count"] >= 6:
-                    warning = (
-                        "\n\n---\n⚠️ 消息较长，为避免触发微信限制，后续内容将合并后统一发送。"
-                    )
+                # normal 模式
+                if state["count"] >= 7:
+                    # MSG 8：RESPONSE 直接发不含警告，进入 warn
                     state["count"] += 1
                     state["mode"] = "warn"
-                    return content + warning, False
+                    logger.info(f"[WeChatCore] rate limit: RESPONSE as message {state['count']}, entering warn")
+                    return [content]
                 else:
+                    # MSG 1-7：直接发
                     state["count"] += 1
-                    return content, False
+                    return [content]
 
-        # STREAM_CHUNK
+        # ── STREAM_CHUNK ──────────────────────────────────────────────────
         if mode == "accumulate":
-            # 第 9 条及之后：积累到缓冲区，跳过本次发送
-            state["buf"] += content
-            logger.debug(f"[WeChatCore] rate limit: accumulate chunk len={len(content)}, buf total={len(state['buf'])}")
-            return "", True  # skip
+            # 积累到 buf，不发送
+            state["buf"].append(self._fmt_accumulate_item(content, is_tool_call=False))
+            logger.debug(f"[WeChatCore] rate limit: accumulate chunk, buf size={len(state['buf'])}")
+            return []
         elif mode == "warn":
-            # 第 9 条：积累内容 + 切换状态
-            state["buf"] += content
+            # MSG 9 是 STREAM_CHUNK：启动积累
+            state["buf"].append(self._fmt_accumulate_item(content, is_tool_call=False))
             state["mode"] = "accumulate"
-            # 不发送，等待 RESPONSE 来时 flush
-            logger.info(f"[WeChatCore] rate limit: entering accumulate mode, buf len={len(state['buf'])}")
-            return "", True  # skip
+            logger.info(f"[WeChatCore] rate limit: start accumulate, buf size=1")
+            return []
         else:
-            # normal：正常发，发完检查是否进入 warn
+            # normal 模式
             state["count"] += 1
-            if state["count"] >= 7:
+            if state["count"] >= 8:
+                # MSG 8：内容 + 警告
                 warning = (
                     "\n\n---\n⚠️ 消息较长，为避免触发微信限制，后续内容将合并后统一发送。"
                 )
                 state["mode"] = "warn"
-                logger.info(f"[WeChatCore] rate limit: send {state['count']} -> appending warning, entering warn mode")
-                return content + warning, False
+                logger.info(f"[WeChatCore] rate limit: send {state['count']} with warning, entering warn")
+                return [content + warning]
             logger.debug(f"[WeChatCore] rate limit: normal send {state['count']}")
-            return content, False
+            return [content]
 
     async def _do_send_text(self, chat_id: str, text: str) -> None:
         """发送文本到微信。"""
@@ -523,18 +553,43 @@ class WeChatCoreWSClient:
             logger.warning("[WeChatCore] send_text failed to %s: %s", chat_id[:8], exc)
 
     async def _handle_tool_call(self, params: dict) -> None:
-        """tool_call 事件：格式化工具结果并发送。"""
+        """tool_call 事件：格式化工具结果，受限流控制。
+
+        在 warn/accumulate 模式积累到 buf，在 normal 模式直接发送。
+        """
         extra = params.get("extra", {})
         tool_name = extra.get("tool_name", "")
         tool_input_raw = extra.get("tool_input", "")
         tool_input = json.dumps(tool_input_raw) if isinstance(tool_input_raw, dict) else str(tool_input_raw or "")
         chat_id = params.get("chat_id", "")
-        msg_id = params.get("message_id", "")
 
-        logger.debug("[WeChatCore] tool_call: tool=%s chat_id=%s msg_id=%s", tool_name, chat_id[:8] if chat_id else "", msg_id[:8] if msg_id else "")
+        logger.debug("[WeChatCore] tool_call: tool=%s chat_id=%s", tool_name, chat_id[:8] if chat_id else "")
+
+        # 检查限流状态
+        state = self._rate_state.get(chat_id)
+        if state is None:
+            state = {"count": 0, "buf": [], "mode": "normal", "final_sent": False}
+            self._rate_state[chat_id] = state
+
+        if state["final_sent"]:
+            logger.debug("[WeChatCore] rate limit: tool_call skipped (final_sent)")
+            return
+
+        mode = state["mode"]
+        if mode in ("warn", "accumulate"):
+            # 积累模式：短格式加入 buf，不发送
+            short = self._fmt_accumulate_item("", is_tool_call=True, tool_name=tool_name, tool_input=tool_input)
+            state["buf"].append(short)
+            logger.debug(f"[WeChatCore] rate limit: tool_call accumulated, buf size={len(state['buf'])}")
+            return
+
+        # normal 模式：直接发送，计入 count
+        state["count"] += 1
+        if state["count"] >= 8:
+            state["mode"] = "warn"
+            logger.info(f"[WeChatCore] rate limit: tool_call as message {state['count']}, entering warn")
 
         result = self.formatter.format_tool_call(tool_name, tool_input)
-        logger.debug("[WeChatCore] tool_call result: len=%d client=%s", len(result) if result else 0, self._client is not None)
         if result and self._client:
             context_token = self._get_context_token(chat_id)
             try:
