@@ -23,10 +23,11 @@ class StartupTimeoutError(RestartError): pass
 
 def _build_restart_argv(event: str) -> list[str]:
     """Build argv for restart/update subprocess (POSIX). Windows uses Popen separately."""
+    from pathlib import Path
+    supercc_bin = str(Path(sys.executable).parent / "supercc")
     if event == "update":
-        return ["supercc", "update"]
-    # restart and switch both use `supercc gateway run`
-    return ["supercc", "gateway", "run"]
+        return [supercc_bin, "update"]
+    return [supercc_bin, "gateway", "run"]
 
 
 # Step labels for CLI display (short, single line)
