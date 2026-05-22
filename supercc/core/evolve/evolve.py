@@ -316,7 +316,7 @@ async def run_evolve(
     if worker is None or worker.integration_evolve is None:
         return
 
-    evo_resume = worker._sdk_session_id_evolve
+    evo_resume = worker._sdk_session_id_evolve or None
     evo_logger.info(f"[evolve] start — sdk_session_id={sdk_session_id}, resume={evo_resume}")
 
     # ── 决定执行哪个模式 ─────────────────────────────────────────────
@@ -603,6 +603,9 @@ async def run_evolve(
         evo_logger.info(f"[evolve] done for {key} (full={do_full})")
     except Exception as e:
         import traceback
+        # 清空 session ID，下次 evolve 自动开新 session（避免 session 损坏后一直重试失败）
+        worker._sdk_session_id_evolve = ""
+        worker._current_task_evolve = None
         evo_logger.warning(f"[evolve] failed: {e}\n{traceback.format_exc()}")
 
 
