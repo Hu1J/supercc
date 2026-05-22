@@ -489,7 +489,7 @@ class WeChatCoreWSClient:
                 # MSG 10：先 flush buf（如有），再发 RESPONSE
                 result = []
                 if state["buf"]:
-                    result.append("\n".join(state["buf"]))
+                    result.append(self._join_accumulated(state["buf"]))
                     state["buf"] = []
                     state["count"] += 1
                     logger.info(f"[WeChatCore] rate limit: flush accumulated ({len(result[0])} chars) as message {state['count']}")
@@ -544,6 +544,13 @@ class WeChatCoreWSClient:
             logger.debug(f"[WeChatCore] rate limit: normal send {state['count']}")
             return [content]
 
+    def _join_accumulated(self, items: list[str], max_chars: int = 2000) -> str:
+        """Join accumulated items, truncate at max_chars if exceeded."""
+        result = "\n".join(items)
+        if len(result) > max_chars:
+            result = result[:max_chars - 3] + "..."
+        return result
+
     async def _flush_accumulated(self, chat_id: str) -> None:
         """RESPONSE 通过 id 路径到达后，flush 积累 buf 并标记 final。
 
@@ -554,7 +561,7 @@ class WeChatCoreWSClient:
             return
         if state.get("final_sent"):
             return
-        flush_content = "\n".join(state["buf"])
+        flush_content = self._join_accumulated(state["buf"])
         state["buf"] = []
         state["final_sent"] = True
         state["mode"] = "normal"
