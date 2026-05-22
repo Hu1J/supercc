@@ -160,7 +160,11 @@ class FeishuCoreWSClient:
             except websockets.exceptions.ConnectionClosed:
                 if self._running:
                     logger.warning("Connection closed, reconnecting...")
-                    await self._reconnect()
+                    try:
+                        await self._reconnect()
+                    except Exception:
+                        logger.error("reconnect failed, _read_loop exits")
+                        break
                 else:
                     break
             except Exception:

@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.9] - 2026-05-22
+
+### Fixed
+- **Evolve 技能巡检不可用**：Write/Edit/Bash 被 Mode 1 的 `disallowed_tools` 继承拦截，技能巡检时无法修改 SKILL.md → Mode 3 清除 `disallowed_tools`，权限交 `can_use_tool` 回调控制
+- **FTS 索引无条件重建**：`update_project_memory` 使用 `conn.total_changes`（累计值）替代 `.rowcount`（本语句行数）→ 改为 `affected = conn.execute(...).rowcount`
+- **config 死代码校验**：`approved_directory` 为空检测在 `return` 之后永不执行 → 移到 `return` 前
+- **Feishu/WeCom reconnect 崩溃**：`_reconnect()` 异常未捕获导致 `_read_loop` 永久退出 → try/except 包裹
+- **Worker 竞态**：`setattr(_current_task, task)` 在锁外导致 `stop()` 无法 cancel → 移入锁内
+- **Memory cache 失效不精确**：缓存 key 是 4 元素但失效只匹配 2 元素 → 补上 `platform` + `bot_id`
+- **Executor 热路径读盘**：每次消息调 `reload_config()` 读 disk → 改为 `get_config()` 使用全局单例
+- **Server create_task 无追踪**：异常无声 → 加 `done_callback` 记录异常日志
+- **codex-mcp-server 死入口点**：模块已重构 → 删除
+
 ## [0.3.8] - 2026-05-22
 
 ### Added

@@ -564,7 +564,10 @@ class WsServer:
                         await connection.send(json.dumps(resp.to_dict()))
                         continue
 
-                    asyncio.create_task(self._handle_client_message(conn, data))
+                    task = asyncio.create_task(self._handle_client_message(conn, data))
+                    task.add_done_callback(lambda t: logger.error(
+                        "[WsServer] handler crashed\n%s", t.exception()
+                    ) if t.done() and not t.cancelled() and t.exception() else None)
 
             except websockets.exceptions.ConnectionClosed:
                 logger.info(f"[WsServer] Connection closed: {conn_id}")

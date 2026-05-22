@@ -352,6 +352,11 @@ def load_config(path: str, data_dir: str = "") -> Config:
                 **{k: v for k, v in entry.items() if k in _known_verbose_keys}
             )
 
+    # 校验 approved_directory 不能为空
+    approved_directory = raw.get("claude", {}).get("approved_directory", "")
+    if not approved_directory:
+        raise ValueError("claude.approved_directory cannot be empty")
+
     return Config(
         channels=channels_cfg,
         auth=AuthConfig(),
@@ -370,10 +375,6 @@ def load_config(path: str, data_dir: str = "") -> Config:
             password=raw.get("core", {}).get("password", ""),
         ),
     )
-
-    # 校验 approved_directory 不能为空
-    if not cfg.claude.approved_directory:
-        raise ValueError("claude.approved_directory cannot be empty")
 
 
 def save_config(path: str, feishu_app_id: str, feishu_app_secret: str,
