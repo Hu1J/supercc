@@ -516,6 +516,7 @@ async def run_evolve(
                 opts.permission_mode = "auto"
                 opts.sandbox = {"enabled": True, "excludedCommands": ["git"]}
                 opts.can_use_tool = skill_audit_can_use_tool
+                opts.disallowed_tools = []  # 清掉 Mode 1 的禁用列表，让 can_use_tool 做权限控制
 
             prompt_m3 = build_evolve_prompt(session_path, key.project_path, skills_dir, mode="skill_audit")
             cb3 = lambda msg: _cb_mode3(msg, push_fn, key, message_id, evo_logger, is_evo_verbose)
