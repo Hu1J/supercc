@@ -345,8 +345,11 @@ def install_windows(data_dir: str, project_slug: str) -> None:
     project_dir = Path(data_dir).resolve().parent
     supercc_path = _resolve_supercc()
     # 脚本直接调用 gateway run，由 manager.py 的 _spawn_detached 处理进程创建
+    # 捕获 PATH 确保 conda/virtualenv 下的工具可用
+    sane_path = os.environ.get("PATH", "")
     script_content = (
         f'@echo off\n'
+        f'set PATH={sane_path}\n'
         f'cd /d "{project_dir}"\n'
         f'"{supercc_path}" gateway run --working-dir "{project_dir}"\n'
     )
