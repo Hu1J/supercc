@@ -249,54 +249,6 @@ class WeComReplyFormatter:
         return msg
 
 
-class StreamAccumulator:
-    """Buffers streaming text chunks and flushes to WeCom in batches."""
-
-    def __init__(self, chat_id: str, message_id: str, send_fn, flush_timeout: float = 1.5):
-        self.chat_id = chat_id
-        self._message_id = message_id
-        self._send = send_fn
-        self._flush_timeout = flush_timeout
-        self._buffer = ""
-        self._lock = asyncio.Lock()
-        self._timer_task: asyncio.Task | None = None
-        self.sent_something = False
-
-    async def add_text(self, text: str) -> None:
-        if not text:
-            return
-        async with self._lock:
-            self._buffer += text
-            if self._timer_task:
-                self._timer_task.cancel()
-            self._timer_task = asyncio.create_task(self._flush_after(self._flush_timeout))
-
-    async def flush(self) -> None:
-        async with self._lock:
-            if self._timer_task:
-                self._timer_task.cancel()
-                self._timer_task = None
-            if self._buffer:
-                text = self._buffer
-                self._buffer = ""
-                if text.strip():
-                    await self._send(self.chat_id, self._message_id, text)
-                    self.sent_something = True
-
-    async def _flush_after(self, delay: float) -> None:
-        try:
-            await asyncio.sleep(delay)
-            async with self._lock:
-                if self._buffer:
-                    text = self._buffer
-                    self._buffer = ""
-                    if text.strip():
-                        await self._send(self.chat_id, self._message_id, text)
-                        self.sent_something = True
-        except asyncio.CancelledError:
-            pass
-
-
 class WeComCoreWSClient:
     """
     企业微信插件的 Thin Client。
@@ -339,8 +291,6 @@ class WeComCoreWSClient:
         self._streamed_msg_ids: set[str] = set()
         # WeComSendFile 调用标记：发文件后 WS 会被踢，下次发送前需重连
         self._wecom_sendfile_called: bool = False
-        # Stream accumulators keyed by message_id (for buffering streaming chunks)
-        self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
         # 当前 chat 上下文（用于 command_progress 进度卡片）
         self._last_chat_id: str = ""
         self._last_message_id: str = ""
@@ -474,10 +424,6 @@ class WeComCoreWSClient:
                 logger.debug(f"[WeComCore] response for req.id={req_id}, stored={stored}")
             if stored:
                 msg_id, chat_id = stored
-                # Flush and clean up the stream accumulator for this message
-                if msg_id in self._accumulator_by_msg_id:
-                    acc = self._accumulator_by_msg_id.pop(msg_id)
-                    await acc.flush()
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
@@ -506,7 +452,7 @@ class WeComCoreWSClient:
                 chat_id = params.get("chat_id", "")
                 await self.wecom.send_text(chat_id, session_info)
         elif method == Event.STREAM_CHUNK:
-            # 流式输出中 - use accumulator for buffering
+            # 流式输出中 - 直接发送
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
@@ -543,35 +489,23 @@ class WeComCoreWSClient:
         if not content:
             return
 
-        # 非流式 Event（如 restart/update）不经过 accumulator，直接发送
+        # 非流式 Event（如 restart/update）直接发送
         if message_id and event in ("restart", "update"):
             self._streamed_msg_ids.discard(message_id)
-            self._accumulator_by_msg_id.pop(message_id, None)
             await self.wecom.send_text(chat_id, content)
             return
 
-        # Buffer text chunks for efficient batched sending
+        # STREAM_CHUNK / RESPONSE：直接发送，不缓冲
         if message_id:
-            if message_id in self._accumulator_by_msg_id:
-                # 已有 accumulator
+            # RESPONSE：_streamed_msg_ids 去重（已有 STREAM_CHUNK 发出则跳过）
+            if event == Event.RESPONSE:
+                if message_id in self._streamed_msg_ids:
+                    return
                 self._streamed_msg_ids.add(message_id)
-                acc = self._accumulator_by_msg_id[message_id]
-                if event == Event.RESPONSE:
-                    # RESPONSE = 流式结束信号：立即 flush 并清理 accumulator
-                    await acc.flush()
-                    del self._accumulator_by_msg_id[message_id]
-                else:
-                    # STREAM_CHUNK：追加到缓冲区（accumulator 内部会定时 flush）
-                    await acc.add_text(content)
-            elif message_id:
-                # 首次收到该 message_id 的 chunk，创建 accumulator
+            else:
+                # STREAM_CHUNK：直接发送，并标记（供 RESPONSE 去重）
                 self._streamed_msg_ids.add(message_id)
-                self._accumulator_by_msg_id[message_id] = StreamAccumulator(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
-                )
-                await self._accumulator_by_msg_id[message_id].add_text(content)
+            await self._do_send_text(chat_id, content, message_id)
         else:
             # No message_id (e.g. final RESPONSE without streaming) - send directly
             await self.wecom.send_markdown(chat_id, content)
@@ -733,11 +667,6 @@ class WeComCoreWSClient:
         if tool_name and "WeComSendFile" in tool_name:
             logger.info("[WeComCore] WeComSendFile detected, will reconnect before next send")
             self._wecom_sendfile_called = True
-
-        # Flush any pending streaming text for this message before handling tool call
-        if msg_id and msg_id in self._accumulator_by_msg_id:
-            acc = self._accumulator_by_msg_id[msg_id]
-            await acc.flush()
 
         # 从 _msg_ctx 取出 user_open_id + bot_id
         user_open_id_from_ctx = ""

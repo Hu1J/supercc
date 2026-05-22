@@ -26,61 +26,6 @@ from dataclasses import replace as dataclass_replace
 logger = logging.getLogger("feishu")
 
 
-class StreamAccumulator:
-    """Buffers streaming text chunks and flushes to Feishu in batches.
-
-    Feishu message updates are expensive (one API call per message), so we buffer
-    chunks and flush when a tool call arrives or after a short idle period.
-    """
-
-    def __init__(self, chat_id: str, message_id: str, send_fn, flush_timeout: float = 1.5):
-        self.chat_id = chat_id
-        self._message_id = message_id
-        self._send = send_fn
-        self._flush_timeout = flush_timeout
-        self._buffer = ""
-        self._lock = asyncio.Lock()
-        self._timer_task: asyncio.Task | None = None
-        self.sent_something = False
-
-    async def add_text(self, text: str) -> None:
-        """Append text chunk and (re)start the flush timer."""
-        if not text:
-            return
-        async with self._lock:
-            self._buffer += text
-            if self._timer_task:
-                self._timer_task.cancel()
-            self._timer_task = asyncio.create_task(self._flush_after(self._flush_timeout))
-
-    async def flush(self) -> None:
-        """Send accumulated text immediately."""
-        async with self._lock:
-            if self._timer_task:
-                self._timer_task.cancel()
-                self._timer_task = None
-            if self._buffer:
-                text = self._buffer
-                self._buffer = ""
-                if text.strip():
-                    await self._send(self.chat_id, self._message_id, text)
-                    self.sent_something = True
-
-    async def _flush_after(self, delay: float) -> None:
-        """Flush after a delay, but cancel if more text arrives."""
-        try:
-            await asyncio.sleep(delay)
-            async with self._lock:
-                if self._buffer:
-                    text = self._buffer
-                    self._buffer = ""
-                    if text.strip():
-                        await self._send(self.chat_id, self._message_id, text)
-                        self.sent_something = True
-        except asyncio.CancelledError:
-            pass
-
-
 class FeishuCoreWSClient:
     """
     飞书插件的 Thin Client。
@@ -118,8 +63,6 @@ class FeishuCoreWSClient:
         self._pending_responses: dict[str, asyncio.Future] = {}
         self._pending_message_ids: dict[str, str] = {}  # req_id → incoming message_id
         self._id_counter = 0
-        # Stream accumulators keyed by incoming message_id (for buffering streaming chunks)
-        self._accumulator_by_msg_id: dict[str, StreamAccumulator] = {}
         # Tracks message_ids that received STREAM_CHUNK (distinguishes AI queries from commands)
         self._streamed_msg_ids: set[str] = set()
         # 当前 chat 上下文（用于 command_progress 进度卡片）
@@ -263,10 +206,6 @@ class FeishuCoreWSClient:
                     logger.info("[typing] [done] message_id=%s", msg_id)
                 except Exception:
                     pass
-                # Flush and clean up the stream accumulator for this message
-                if msg_id in self._accumulator_by_msg_id:
-                    acc = self._accumulator_by_msg_id.pop(msg_id)
-                    await acc.flush()
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 if not fut.done():
@@ -292,17 +231,7 @@ class FeishuCoreWSClient:
                 mention_xml = f'<at user_id="{sender_id}">{sender_name}</at>'
                 # 检查 AI 是否已自然 mention
                 if f'<at user_id="{sender_id}"' not in content:
-                    if msg_id and msg_id in self._accumulator_by_msg_id:
-                        # 流式模式：在 flush 前追加到 buffer
-                        acc = self._accumulator_by_msg_id[msg_id]
-                        async with acc._lock:
-                            buffered = acc._buffer
-                        if buffered:
-                            async with acc._lock:
-                                acc._buffer += f"\n{mention_xml}"
-                    else:
-                        # 非流式模式：在 content 末尾追加
-                        params["content"] = content + f"\n{mention_xml}"
+                    params["content"] = content + f"\n{mention_xml}"
 
             await self._render_and_send(params)
 
@@ -321,7 +250,7 @@ class FeishuCoreWSClient:
                 except Exception:
                     pass
         elif method == Event.STREAM_CHUNK:
-            # 流式输出中 - use accumulator for buffering
+            # 流式输出中 - 直接发送
             await self._render_and_send(params)
         elif method == Event.TOOL_CALL:
             await self._handle_tool_call(params)
@@ -483,12 +412,8 @@ class FeishuCoreWSClient:
     async def _render_and_send(self, params: dict):
         """渲染 OutboundMessage 为飞书格式并发送。
 
-        RESPONSE 事件：
-        - 有 accumulator（流式模式）：flush 后丢弃 RESPONSE 内容（内容已在 chunks 中）
-        - 无 accumulator（非流式模式）：格式化后 safe send
-
-        STREAM_CHUNK 事件：
-        - 走缓冲区累积，由 accumulator 在 idle 超时或 tool call 时 flush
+        STREAM_CHUNK：直接发送，不参与 _streamed_msg_ids 去重（同 msg_id 可能有多个 chunk）。
+        RESPONSE：用 _streamed_msg_ids 防止与 JSON-RPC result 路径重复发送。
         """
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
@@ -497,36 +422,27 @@ class FeishuCoreWSClient:
         if not content:
             return
 
-        # 非流式 Event（如 restart/update）不经过 accumulator，直接发送
+        # 非流式 Event（如 restart/update）
         if message_id and params.get("event") in ("restart", "update"):
             self._streamed_msg_ids.discard(message_id)
-            self._accumulator_by_msg_id.pop(message_id, None)
             formatted = self.formatter.format_text(content)
             await self._safe_send(chat_id, message_id, formatted)
             return
 
-        if message_id and message_id in self._accumulator_by_msg_id:
-            # 有 accumulator → 流式 chunks 或 RESPONSE flush 信号
-            self._streamed_msg_ids.add(message_id)
-            acc = self._accumulator_by_msg_id[message_id]
+        if message_id:
+            # RESPONSE：_streamed_msg_ids 去重（已有 STREAM_CHUNK 发出则跳过）
             if params.get("event") == Event.RESPONSE:
-                # RESPONSE = 流式结束信号：flush 并清理 accumulator
-                await acc.flush()
-                del self._accumulator_by_msg_id[message_id]
+                if message_id in self._streamed_msg_ids:
+                    logger.info("[FeishuCore] skip %s (already sent)", message_id[:20])
+                    return
+                self._streamed_msg_ids.add(message_id)
             else:
-                # STREAM_CHUNK：追加到缓冲区（accumulator 内部会定时 flush）
-                await acc.add_text(content)
-        elif message_id:
-            # 首次收到该 message_id 的 chunk，创建 accumulator
-            self._streamed_msg_ids.add(message_id)
-            self._accumulator_by_msg_id[message_id] = StreamAccumulator(
-                chat_id=chat_id,
-                message_id=message_id,
-                send_fn=lambda cid, mid, text: self._do_send_text(cid, text, mid),
-            )
-            await self._accumulator_by_msg_id[message_id].add_text(content)
+                # STREAM_CHUNK：直接发送，并标记（供 RESPONSE 去重）
+                self._streamed_msg_ids.add(message_id)
+            formatted = self.formatter.format_text(content)
+            await self._safe_send(chat_id, message_id, formatted)
         else:
-            # 非流式完整响应：格式化后 safe send
+            # 无 message_id：直接发送
             formatted = self.formatter.format_text(content)
             await self._safe_send(chat_id, message_id, formatted)
 
@@ -561,13 +477,6 @@ class FeishuCoreWSClient:
         except Exception as e:
             logger.warning(f"Failed to send message: {e}")
 
-    async def _do_send_text(self, chat_id: str, text: str, message_id: str) -> None:
-        """Send text to Feishu (called by StreamAccumulator after buffering).
-
-        Uses safe send: card → post → text fallback.
-        """
-        await self._safe_send(chat_id, message_id, text)
-
     async def _send_card(self, chat_id: str, card: dict, msg_id: str) -> None:
         """发卡片：有 msg_id 时 reply，无 msg_id 时新消息发（如 cron 场景）。"""
         await self.feishu.send_interactive(chat_id, card, reply_msg_id=msg_id or None)
@@ -587,11 +496,6 @@ class FeishuCoreWSClient:
         tool_call_id = params.get("tool_call_id", "") or extra.get("tool_call_id", "")
         chat_id = params.get("chat_id", "")
         msg_id = params.get("message_id", "")
-
-        # Flush any pending streaming text for this message before handling tool call
-        if msg_id and msg_id in self._accumulator_by_msg_id:
-            acc = self._accumulator_by_msg_id[msg_id]
-            await acc.flush()
 
         # 格式化工具结果
         tool_input_str = json.dumps(tool_input_raw) if isinstance(tool_input_raw, dict) else str(tool_input_raw or "")
@@ -1061,14 +965,15 @@ class FeishuCoreWSClient:
                                 self.formatter.format_text(result_content or f"正在处理 {result_event}..."),
                             )
                     elif result_content:
-                        # AI 流式响应（有 STREAM_CHUNK）已通过 accumulator flush 发送，不走此路
+                        # 非流式命令结果（/stop、/help、/status 等）：渲染并发送
                         msg_id = result.get("message_id", incoming.message_id)
                         if msg_id in self._streamed_msg_ids:
                             logger.info("[send_msg] skip %s (streamed)", msg_id)
                             return result
                         logger.info("[send_msg] send %s event=%s content_len=%d",
                                      msg_id, result_event, len(result_content))
-                        # 普通命令结果（/stop、/help、/status 等）：渲染并发送
+                        # 标记已发送，防止后续 STREAM_CHUNK / RESPONSE 事件重复发送
+                        self._streamed_msg_ids.add(msg_id)
                         await self._safe_send(
                             incoming.chat_id,
                             result.get("message_id", incoming.message_id),

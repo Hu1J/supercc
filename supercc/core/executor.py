@@ -467,7 +467,6 @@ class CoreExecutor:
 
     async def _run_evolve(self, key: SessionKey, sdk_session_id: str, message_id: str = "", evo_ctx: dict | None = None) -> None:
         from supercc.core.evolve.evolve import run_evolve
-
         try:
             worker = await self.pool.get(key)
         except Exception:
