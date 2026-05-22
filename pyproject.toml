@@ -29,7 +29,6 @@ authors = [
 
 [project.scripts]
 supercc = "supercc.main:main"
-supercc-codex-mcp-server = "supercc.claude.codex_mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -407,7 +407,8 @@ class MemoryManager:
             with self._prefs_cache_lock:
                 self._prefs_cache = {
                     k: v for k, v in self._prefs_cache.items()
-                    if not (k[0] == self.db_path and k[1] == user_open_id)
+                    if not (k[0] == self.db_path and k[1] == user_open_id
+                            and k[2] == platform and k[3] == bot_id)
                 }
         self._notify_system_prompt_stale()
         return affected > 0
