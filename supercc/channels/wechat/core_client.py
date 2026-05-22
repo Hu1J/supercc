@@ -615,10 +615,13 @@ class WeChatCoreWSClient:
         # normal 模式：直接发送，计入 count
         state["count"] += 1
         if state["count"] >= 8:
+            # MSG 8：用短格式纯文本 + 警告，避免格式化被微信丢弃
             state["mode"] = "warn"
+            short = self._fmt_accumulate_item("", is_tool_call=True, tool_name=tool_name, tool_input=tool_input)
+            result = short + "\n\n---\n⚠️ 消息较长，为避免触发微信限制，后续内容将合并后统一发送。"
             logger.info(f"[WeChatCore] rate limit: tool_call as message {state['count']}, entering warn")
-
-        result = self.formatter.format_tool_call(tool_name, tool_input)
+        else:
+            result = self.formatter.format_tool_call(tool_name, tool_input)
         if result and self._client:
             context_token = self._get_context_token(chat_id)
             try:
