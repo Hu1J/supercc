@@ -222,6 +222,10 @@ class WeChatCoreWSClient:
         self._group_history: dict[str, list[dict]] = {}
         self._MAX_GROUP_HISTORY = 10
 
+        # 微信消息限流状态：chat_id → {count, buf, mode}
+        # count: 已发送条数（不含跳过）；mode: "normal"|"warn"|"accumulate"
+        self._rate_state: dict[str, dict] = {}
+
         self.formatter = WeChatReplyFormatter()
 
     def _context_key(self, user_id: str) -> str:
@@ -400,10 +404,13 @@ class WeChatCoreWSClient:
                     logger.warning("[WeChatCore] notification send failed: %s", exc)
 
     async def _render_and_send(self, params: dict) -> None:
-        """渲染 OutboundMessage 并发送到微信。直接发送，不缓冲。
+        """渲染 OutboundMessage 并发送到微信，携带微信 10 条消息限流逻辑。
 
-        STREAM_CHUNK：直接发送，不参与 _streamed_msg_ids 去重。
-        RESPONSE：用 _streamed_msg_ids 防止与 JSON-RPC result 路径重复发送。
+        规则（按 chat_id 隔离）：
+        - 1-7 条：正常发送
+        - 第 8 条：末尾追加"消息过长"提示，正常发送，切换到 accumulate 模式
+        - 第 9 条：积累内容（本次内容 + 之前各条截断内容），正常发送，退出 accumulate
+        - 第 10+ 条：静默跳过
         """
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
@@ -419,18 +426,88 @@ class WeChatCoreWSClient:
                 await self._client.send_text(chat_id, content)
             return
 
+        # RESPONSE 去重
         if message_id:
-            # RESPONSE：_streamed_msg_ids 去重（已有 STREAM_CHUNK 发出则跳过）
             if event == Event.RESPONSE:
                 if message_id in self._streamed_msg_ids:
                     return
                 self._streamed_msg_ids.add(message_id)
             else:
-                # STREAM_CHUNK：直接发送，并标记（供 RESPONSE 去重）
                 self._streamed_msg_ids.add(message_id)
-            await self._do_send_text(chat_id, content)
+
+        # 限流处理
+        content, skip = self._apply_rate_limit(chat_id, content, event)
+        if skip:
+            return
+
+        await self._do_send_text(chat_id, content)
+
+    def _apply_rate_limit(self, chat_id: str, content: str, event: str) -> tuple[str, bool]:
+        """返回 (最终发送内容, 是否跳过)。
+
+        返回 skip=True 时 caller 应跳过发送。
+        """
+        state = self._rate_state.get(chat_id)
+        if state is None:
+            state = {"count": 0, "buf": "", "mode": "normal"}
+            self._rate_state[chat_id] = state
+
+        mode = state["mode"]
+
+        # RESPONSE：最终回复，特殊处理
+        if event == Event.RESPONSE:
+            if mode == "accumulate":
+                # 第 9 条：积累内容 + 最终回复，发送后退出 accumulate
+                buf_len = len(state["buf"])
+                final = state["buf"] + content
+                state["count"] += 1
+                state["buf"] = ""
+                state["mode"] = "normal"
+                logger.info(f"[WeChatCore] rate limit: flushing accumulated (buf len={buf_len}) as message {state['count']}")
+                return final, False
+            elif mode == "warn":
+                # 之前第 8 条已发了警告，RESPONSE 正常发
+                state["count"] += 1
+                return content, False
+            else:
+                # normal 模式：检查是否触发 warn
+                # RESPONSE（count 6→7）：第 8 条发警告；STREAM_CHUNK（count 7→8）：第 8 条发警告
+                if state["count"] >= 6:
+                    warning = (
+                        "\n\n---\n⚠️ 消息较长，为避免触发微信限制，后续内容将合并后统一发送。"
+                    )
+                    state["count"] += 1
+                    state["mode"] = "warn"
+                    return content + warning, False
+                else:
+                    state["count"] += 1
+                    return content, False
+
+        # STREAM_CHUNK
+        if mode == "accumulate":
+            # 第 9 条及之后：积累到缓冲区，跳过本次发送
+            state["buf"] += content
+            logger.debug(f"[WeChatCore] rate limit: accumulate chunk len={len(content)}, buf total={len(state['buf'])}")
+            return "", True  # skip
+        elif mode == "warn":
+            # 第 9 条：积累内容 + 切换状态
+            state["buf"] += content
+            state["mode"] = "accumulate"
+            # 不发送，等待 RESPONSE 来时 flush
+            logger.info(f"[WeChatCore] rate limit: entering accumulate mode, buf len={len(state['buf'])}")
+            return "", True  # skip
         else:
-            await self._do_send_text(chat_id, content)
+            # normal：正常发，发完检查是否进入 warn
+            state["count"] += 1
+            if state["count"] >= 7:
+                warning = (
+                    "\n\n---\n⚠️ 消息较长，为避免触发微信限制，后续内容将合并后统一发送。"
+                )
+                state["mode"] = "warn"
+                logger.info(f"[WeChatCore] rate limit: send {state['count']} -> appending warning, entering warn mode")
+                return content + warning, False
+            logger.debug(f"[WeChatCore] rate limit: normal send {state['count']}")
+            return content, False
 
     async def _do_send_text(self, chat_id: str, text: str) -> None:
         """发送文本到微信。"""
