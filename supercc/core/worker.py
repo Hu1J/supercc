@@ -232,7 +232,8 @@ class WorkerPool:
             task = asyncio.create_task(
                 integ.query(prompt=prompt, on_stream=on_stream, on_start=on_start)
             )
-            setattr(worker, current_task_ref, task)
+            async with worker._lock:
+                setattr(worker, current_task_ref, task)
             result, new_sid, cost = await task
             if new_sid:
                 setattr(worker, sdk_sid_ref, new_sid)

@@ -731,13 +731,12 @@ class MemoryManager:
         """更新一条项目记忆"""
         now = datetime.utcnow().isoformat()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+            affected = conn.execute(
                 "UPDATE project_memories "
                 "SET title=?, content=?, keywords=?, updated_at=? "
                 "WHERE id=? AND project_path=? AND platform=? AND chat_id=?",
                 (title, content, keywords, now, memory_id, project_path, platform, chat_id)
             ).rowcount
-            affected = conn.total_changes
             if affected > 0:
                 conn.execute(
                     "DELETE FROM project_memories_fts WHERE id = ?", (memory_id,)
