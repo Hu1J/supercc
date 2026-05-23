@@ -381,6 +381,8 @@ class WeChatCoreWSClient:
                         self._streamed_msg_ids.add(msg_id)
                         await self._do_send_text(chat_id, content)
                         await self._flush_accumulated(chat_id)
+                    else:
+                        logger.warning("[WeChatCore] RESPONSE with id=%s has empty content, result=%s", req_id, str(result)[:80])
             if req_id in self._pending_responses:
                 fut = self._pending_responses.pop(req_id)
                 fut.set_result(data.get("result"))
@@ -477,9 +479,10 @@ class WeChatCoreWSClient:
             state = {"count": 0, "buf": [], "mode": "normal", "final_sent": False}
             self._rate_state[chat_id] = state
 
-        # final_sent：所有消息已发完
+        # final_sent：上一个 RESPONSE 已发完，但新 RESPONSE 不应被阻塞
+        # reset 以允许新消息响应通过
         if state["final_sent"]:
-            return []
+            state["final_sent"] = False
 
         mode = state["mode"]
 
@@ -654,6 +657,9 @@ class WeChatCoreWSClient:
         self._last_chat_id = sender_id
         self._last_message_id = message_id
 
+        # 重置限流状态：新消息到来 = 新对话开始
+        self._rate_state[sender_id] = {"count": 0, "buf": [], "mode": "normal", "final_sent": False}
+
         # 提取文本
         item_list = msg.get("item_list") or []
         text = _extract_text(item_list)
@@ -765,6 +771,12 @@ class WeChatCoreWSClient:
         group_context = ""
         if is_group_chat:
             group_context = self._enrich_group_context(chat_id, message_id)
+
+        # /restart 指令：plugin 本地立即发确认，不等 core 回传
+        if text.strip() == "/restart":
+            ctx_token = self._get_context_token(sender_id)
+            if self._client:
+                await self._client.send_text(sender_id, "正在重启，请稍作等待...", ctx_token)
 
         # 发送到核心
         logger.debug("[WeChatCore] → sending to core: message_type=%s, media_path=%s, content=%s",

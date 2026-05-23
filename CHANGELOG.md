@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.10] - 2026-05-23
+
+### Fixed
+- **微信消息限流状态残留**：`_rate_state` 在对话结束后未清理，导致新对话错误继承旧状态显示限流警告 → 收到新消息时重置状态
+- **final_sent 阻塞新响应**：accumulate 模式下 `final_sent=True` 导致新对话的 RESPONSE 被静默跳过 → 改为重置而非返回空
+- **微信 /restart 无本地确认**：飞书收到 /restart 会立即发"正在重启..."，微信无此反馈 → 同步实现
+- **RESPONSE 空内容无日志**：pending_ids 分支空内容时静默跳过 → 增加警告日志
+
 ## [0.3.9] - 2026-05-22
 
 ### Fixed
