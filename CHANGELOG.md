@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.11] - 2026-05-24
+
+### Fixed
+- **WeChat 消息限流状态残留 + /restart 本地确认**：限流状态未清理导致新对话继承旧状态；/restart 指令微信无本地确认反馈
+- **query 前校验 options 关键字段**：AUTH_TOKEN/BASE_URL/MODEL 为空时抛错并展示实际值
+
 ## [0.3.10] - 2026-05-23
 
 ### Fixed
