@@ -237,6 +237,22 @@ class ClaudeIntegration:
                 "ClaudeIntegration not initialized. Call _init_options() first."
             )
 
+        # 校验 options 关键字段：settings 中的 model 配置不可为空
+        try:
+            _settings_raw = getattr(self._options, "settings", None)
+            if _settings_raw:
+                _parsed = json.loads(_settings_raw)
+                _env = _parsed.get("env", {})
+                _missing = [k for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL") if not _env.get(k)]
+                if _missing:
+                    raise ValueError(
+                        f"[Worker] options.settings.env 缺失关键字段: {_missing}，实际值: {_env}"
+                    )
+        except json.JSONDecodeError:
+            raise ValueError(
+                f"[Worker] options.settings 不是合法 JSON: settings={_settings_raw!r}"
+            )
+
         import time as time_module
 
         async with self._query_lock:
