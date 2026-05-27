@@ -132,10 +132,9 @@ def _migrate_from_old_format(raw: dict, project_path: str) -> dict:
 
 
 def _load_json() -> dict:
-    """读取全局 model.json，返回字典。无文件则从旧项目配置迁移。
+    """读取全局 model.json，返回字典。
 
-    每次读取时，同步预置供应商的 models 列表（保留 api_key，projects 不变）。
-    如果文件不存在，尝试从旧项目级 model.json 迁移。
+    顺序：1) 确保内置供应商写入 model.json → 2) 再读取返回。
     """
     if not os.path.exists(GLOBAL_MODEL_PATH):
         # 尝试从旧项目级 model.json 迁移
@@ -169,22 +168,27 @@ def _load_json() -> dict:
         logger.info("迁移完成")
         return raw
 
-    # 同步预置供应商的 models 列表和 base_url（保留已有 api_key，projects 不变）
+    # 1) 先写入：同步内置供应商（新增 + 更新已有，保留 api_key 和 projects）
     changed = False
     for pid, provider in PROVIDERS.items():
         if pid in raw.get("providers", {}):
             if raw["providers"][pid]["models"] != provider.models:
                 raw["providers"][pid]["models"] = provider.models.copy()
                 changed = True
-            # 同步 base_url（如果缺失或为空）
             if not raw["providers"][pid].get("base_url"):
                 raw["providers"][pid]["base_url"] = provider.base_url
                 changed = True
-
-    # 如果有同步变更，保存回去
+        else:
+            raw["providers"][pid] = {
+                "api_key": "",
+                "base_url": provider.base_url,
+                "models": provider.models.copy(),
+            }
+            changed = True
     if changed:
         _save_json(raw)
 
+    # 2) 返回（raw 已包含最新数据，不需要再读磁盘）
     return raw
 
 
@@ -345,8 +349,7 @@ def add_custom_provider(provider_id: str, api_key: str, base_url: str, models: l
     raw = _load_json()
     providers: dict[str, dict] = raw.get("providers", {})
 
-    if provider_id in providers:
-        return False, f"供应商 {provider_id} 已存在，请使用 SetModel 更新"
+    overwriting = provider_id in providers
 
     if get_provider(provider_id) is not None:
         return False, f"无法添加内置供应商 {provider_id}"
@@ -373,7 +376,7 @@ def add_custom_provider(provider_id: str, api_key: str, base_url: str, models: l
     # 无条件刷新单例
     global _model_env_instance
     _model_env_instance = _resolve_active_env(_current_project_path)
-    return True, ""
+    return True, ("overwritten" if overwriting else "")
 
 
 def set_project_model(project_path: str, provider_id: str, model_id: str) -> tuple[bool, str]:

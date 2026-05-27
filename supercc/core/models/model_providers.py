@@ -123,7 +123,9 @@ PROVIDERS: dict[str, Provider] = {
         auth_type="bearer",
         models=[
             "mimo-v2.5-pro",
-            "mimo-v2.5-max",
+            "mimo-v2.5",
+            "mimo-v2-pro",
+            "mimo-v2-omni",
         ],
         description="小米 MiMo（V2.5 Pro/Max，Token Plan）",
     ),

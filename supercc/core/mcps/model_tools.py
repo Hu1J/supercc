@@ -229,7 +229,7 @@ async def set_model_tool(args: dict) -> dict:
   "base_url": "https://...",      // 必填，API 端点
   "models": ["model-1", "model-2"] // 必填，模型 ID 列表
 }
-说明：新增后可用 SetModel 切换到该供应商的模型。
+说明：新增后可用 SetModel 切换到该供应商的模型。如果供应商已存在，将用最新配置覆盖。
 ```json
 {"provider": "myProvider", "api_key": "sk-xxx", "base_url": "https://api.example.com/v1", "models": ["gpt-4", "gpt-3.5"]}
 ```
@@ -284,9 +284,13 @@ async def add_custom_provider_tool(args: dict) -> dict:
     if not ok:
         return {"content": [{"type": "text", "text": f"❌ 新增失败：{err}"}], "is_error": True}
 
+    warn = ""
+    if err == "overwritten":
+        warn = "\n\n⚠️ 供应商已存在，已用最新配置覆盖。"
+
     return {
         "content": [{
             "type": "text",
-            "text": f"✅ 自定义供应商 `{provider_id}` 已添加。\n\nBase URL: `{base_url}`\n模型: {', '.join(f'`{m}`' for m in models)}\n\n可用 SetModel 切换到该供应商的模型。"
+            "text": f"✅ 自定义供应商 `{provider_id}` 已添加。\n\nBase URL: `{base_url}`\n模型: {', '.join(f'`{m}`' for m in models)}{warn}\n\n可用 SetModel 切换到该供应商的模型。"
         }]
     }
