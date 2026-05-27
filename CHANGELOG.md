@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.12] - 2026-05-26
+
+### Added
+- **小米 MiMo 预置供应商**：新增 xiaomi 供应商（Token Plan 端点），含 mimo-v2.5-pro / mimo-v2.5 / mimo-v2-pro / mimo-v2-omni 四款模型
+- **AddCustomProvider 覆盖支持**：供应商已存在时自动覆盖，返回警告提示
+- **_load_json 自动同步新内置供应商**：启动时自动写入 model.json，无需手动添加
+
+### Changed
+- **关闭 Claude Code attribution header**：env 加 CLAUDE_CODE_ATTRIBUTION_HEADER=0，避免缓存干扰
+
 ## [0.3.11] - 2026-05-24
 
 ### Fixed
