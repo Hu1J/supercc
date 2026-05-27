@@ -173,6 +173,7 @@ class ClaudeIntegration:
                         "ANTHROPIC_AUTH_TOKEN": auth_token,
                         "ANTHROPIC_BASE_URL": base_url,
                         "ANTHROPIC_MODEL": model_name,
+                        "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
                     }
                 }
                 model_settings_json = json.dumps(settings_obj)

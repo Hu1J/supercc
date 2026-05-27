@@ -117,6 +117,17 @@ PROVIDERS: dict[str, Provider] = {
         description="Kimi（K2 系列）",
     ),
 
+    "xiaomi": Provider(
+        id="xiaomi",
+        base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+        auth_type="bearer",
+        models=[
+            "mimo-v2.5-pro",
+            "mimo-v2.5-max",
+        ],
+        description="小米 MiMo（V2.5 Pro/Max，Token Plan）",
+    ),
+
     # ── 海外 ──────────────────────────────────────────────────────────────────
 
     "anthropic": Provider(
